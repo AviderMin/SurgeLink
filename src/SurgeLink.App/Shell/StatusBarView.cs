@@ -29,57 +29,44 @@ internal static class StatusBarView
         var active = snapshot.ActiveTab;
         var state = active?.State ?? ConnectionState.Disconnected;
 
-        var items = new List<Element>
-        {
+        var status = HStack(AppTheme.SpacingS,
             TextBlock(active is null ? "\uE8C8" : AppTheme.StatusGlyph(state))
-                .FontFamily(SymbolFont)
-                .FontSize(12)
+                .FontFamily(SymbolFont).FontSize(12)
                 .Foreground(active is null ? Theme.SecondaryText : AppTheme.StatusBrush(state))
                 .VAlign(VerticalAlignment.Center)
-                .AutomationName(active is null
-                    ? Str.T("shell.status.noSession", "No session")
-                    : AppTheme.StatusText(state)),
+                .AutomationName(active is null ? Str.T("shell.status.noSession", "No session") : AppTheme.StatusText(state)),
             Caption(active is null ? Str.T("shell.status.ready", "Ready") : AppTheme.StatusText(state))
-                .Foreground(Theme.PrimaryText)
                 .VAlign(VerticalAlignment.Center)
-                .AutomationId("StatusConnectionState"),
-        };
+                .AutomationId("StatusConnectionState"));
 
-        if (active is not null)
-        {
-            items.Add(Divider());
-            items.Add(Caption(Endpoint(active)).Foreground(Theme.SecondaryText).VAlign(VerticalAlignment.Center));
-            items.Add(Caption(active.Session.Protocol.DisplayName).Foreground(Theme.SecondaryText).VAlign(VerticalAlignment.Center));
-            items.Add(Caption(active.Session.HostInfo.Summary).Foreground(Theme.TertiaryText).VAlign(VerticalAlignment.Center));
-        }
-
+        var detail = active is null ? string.Empty :
+            $"{Endpoint(active)} · {active.Session.Protocol.DisplayName} · {active.Session.HostInfo.Summary}";
         if (!string.IsNullOrWhiteSpace(active?.Message))
         {
-            items.Add(Divider());
-            items.Add(Caption(active!.Message!).Foreground(Theme.SecondaryText).VAlign(VerticalAlignment.Center));
+            detail += " · " + active.Message;
         }
 
-        if (active is not null && active.State is ConnectionState.Disconnected or ConnectionState.Faulted)
-        {
-            var reconnect = Str.T("shell.status.reconnect", "Reconnect");
-            items.Add(Button(reconnect, () => props.Reconnect(active))
-                .SubtleButton()
-                .AutomationName(reconnect)
-                .AutomationId("ReconnectButton"));
-        }
+        var reconnect = Str.T("shell.status.reconnect", "Reconnect");
+        var trailing = HStack(AppTheme.SpacingM,
+            active is not null && active.State is ConnectionState.Disconnected or ConnectionState.Faulted
+                ? Button(reconnect, () => props.Reconnect(active)).SubtleButton()
+                    .AutomationName(reconnect).AutomationId("ReconnectButton")
+                : Empty(),
+            Caption(snapshot.Tabs.Count == 1
+                    ? Str.F("shell.status.sessionsOne", "{0} session", snapshot.Tabs.Count)
+                    : Str.F("shell.status.sessionsMany", "{0} sessions", snapshot.Tabs.Count))
+                .Foreground(Theme.SecondaryText).VAlign(VerticalAlignment.Center)
+                .AutomationId("StatusSessionCount"));
 
-        items.Add(Border(Empty()).Flex(grow: 1, basis: 0));
-        items.Add(Caption(snapshot.Tabs.Count == 1
-                ? Str.F("shell.status.sessionsOne", "{0} session", snapshot.Tabs.Count)
-                : Str.F("shell.status.sessionsMany", "{0} sessions", snapshot.Tabs.Count))
-            .Foreground(Theme.SecondaryText)
-            .VAlign(VerticalAlignment.Center)
-            .AutomationId("StatusSessionCount"));
-        items.Add(Caption(active is null ? "SurgeLink" : $"{active.Profile.Username}@{active.Profile.Host}")
-            .Foreground(Theme.TertiaryText)
-            .VAlign(VerticalAlignment.Center));
-
-        return Border(HStack(AppTheme.SpacingM, items.ToArray()).Padding(AppTheme.SpacingM, 0))
+        return Border(Grid(
+                columns: [GridSize.Auto, GridSize.Star(), GridSize.Auto],
+                rows: [GridSize.Auto],
+                status.Grid(column: 0),
+                Caption(detail).Foreground(Theme.SecondaryText)
+                    .TextTrimming(TextTrimming.CharacterEllipsis).ToolTip(detail)
+                    .VAlign(VerticalAlignment.Center).Margin(AppTheme.SpacingM, 0)
+                    .Grid(column: 1),
+                trailing.Grid(column: 2)).Padding(AppTheme.SpacingM, 0))
             .Background(Theme.LayerFill)
             .BorderBrush(Theme.DividerStroke)
             .BorderThickness(0, 1, 0, 0)
@@ -89,9 +76,6 @@ internal static class StatusBarView
 
     private static readonly Microsoft.UI.Xaml.Media.FontFamily SymbolFont =
         new("Segoe Fluent Icons, Segoe MDL2 Assets");
-
-    private static Element Divider() =>
-        TextBlock("\u00b7").Foreground(Theme.TertiaryText).VAlign(VerticalAlignment.Center);
 
     private static string Endpoint(WorkspaceTab tab) =>
         $"{tab.Profile.Username}@{tab.Profile.Host}" +

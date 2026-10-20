@@ -378,15 +378,31 @@ internal sealed class SftpView : Component<SftpViewProps>
             [
                 GridSize.Auto,
                 GridSize.Auto,
-                GridSize.Auto,
                 GridSize.Star(),
                 GridSize.Auto,
             ],
             toolbar.Grid(row: 0),
             bannerBar is null ? null : bannerBar.Grid(row: 1),
-            SftpEntryList.Header(sortColumn, ascending, SortBy).Grid(row: 2),
-            content.Grid(row: 3),
-            transferPanel is null ? null : transferPanel.Grid(row: 4),
-            dialogs.Count == 0 ? null : Grid(columns: [GridSize.Star()], rows: [GridSize.Star()], dialogs.ToArray()).Grid(row: 0, rowSpan: 5));
+            // One horizontal viewport keeps the header and every file column together.
+            // The ListView still owns vertical scrolling and keyboard selection.
+            ScrollView(
+                    Grid(
+                        columns: [GridSize.Star()],
+                        rows: [GridSize.Auto, GridSize.Star()],
+                        SftpEntryList.Header(sortColumn, ascending, SortBy).Grid(row: 0),
+                        content.Grid(row: 1))
+                    .MinWidth(SftpEntryList.MinimumWidth))
+                .Set(viewer =>
+                {
+                    viewer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                    viewer.VerticalContentAlignment = VerticalAlignment.Stretch;
+                    viewer.HorizontalScrollMode = ScrollingScrollMode.Enabled;
+                    viewer.HorizontalScrollBarVisibility = ScrollingScrollBarVisibility.Auto;
+                    viewer.VerticalScrollMode = ScrollingScrollMode.Disabled;
+                    viewer.VerticalScrollBarVisibility = ScrollingScrollBarVisibility.Hidden;
+                })
+                .Grid(row: 2),
+            transferPanel is null ? null : transferPanel.Grid(row: 3),
+            dialogs.Count == 0 ? null : Grid(columns: [GridSize.Star()], rows: [GridSize.Star()], dialogs.ToArray()).Grid(row: 0, rowSpan: 4));
     }
 }

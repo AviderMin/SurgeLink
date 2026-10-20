@@ -75,6 +75,8 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
                             }
                         })
                     .SubtleButton()
+                    .Padding(0)
+                    .HAlign(HorizontalAlignment.Left)
                     .AutomationName(Str.F("monitor.process.sortBy", "Sort processes by {0}", headers[column]))
                     .MinHeight(32)
                     .Grid(row: 0, column: column));
@@ -92,14 +94,14 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
             Grid(
                 columns: Columns,
                 rows: [GridSize.Auto],
-                headerCells.ToArray()).Padding(AppTheme.SpacingS, 0),
+                headerCells.ToArray())
+                .Set(grid => grid.ColumnSpacing = AppTheme.SpacingM)
+                .Padding(AppTheme.SpacingS, 0),
             Border(Empty()).Height(1).Background(Theme.DividerStroke),
-            ScrollView(
-                    Grid(
-                        columns: [GridSize.Star()],
-                        rows: rows.Select((_, index) => GridSize.Auto).ToArray(),
-                        body.ToArray()))
-                .MaxHeight(320));
+            Grid(
+                columns: [GridSize.Star()],
+                rows: rows.Select(_ => GridSize.Auto).ToArray(),
+                body.ToArray()));
     }
 
     private static IReadOnlyList<string> Headers() =>
@@ -139,7 +141,8 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
                     .FontSize(12)
                     .Foreground(Theme.SecondaryText)
                     .Grid(row: 0, column: 5))
-            .Padding(0, 4, 0, 4)
+            .Set(grid => grid.ColumnSpacing = AppTheme.SpacingM)
+            .Padding(AppTheme.SpacingS, AppTheme.SpacingXs)
             .AutomationName(process.Name + " " + process.ProcessId);
 
     private static IEnumerable<RemoteProcessInfo> Sort(IReadOnlyList<RemoteProcessInfo> processes, int column, bool descending)

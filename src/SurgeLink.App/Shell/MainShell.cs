@@ -288,23 +288,35 @@ internal sealed class MainShell : Component
             workspaceSurface.IsVisible(section == ShellSection.Workspace).Grid(row: 0),
             Component<SettingsPage>().IsVisible(section == ShellSection.Settings).Grid(row: 0));
 
-        var navigation = NavigationView(
-                [NavItem(Str.T("shell.nav.sessions", "Sessions"), "\uE8A9", "workspace")],
-                BuildContent())
-            .PaneDisplayMode(NavigationViewPaneDisplayMode.Left)
-            // In "Left" display mode WinUI keeps the pane permanently expanded, so
-            // the shell's toggle hides it explicitly instead of relying on IsPaneOpen.
-            .PaneVisible(paneOpen)
-            .IsPaneOpen(true, _ => { })
-            .OpenPaneLength(AppTheme.SidebarWidth)
-            .PaneTitle("SurgeLink")
-            .PaneCustomContent(sidebar)
-            .FooterMenuItems([NavItem(Str.T("shell.nav.settings", "Settings"), "\uE713", "settings")])
-            .ItemInvoked(tag => HandleNavigation(tag, setSection))
-            .Set(view => view.IsSettingsVisible = false) with
-        {
-            SelectedTag = section == ShellSection.Settings ? "settings" : "workspace",
-        };
+        // A bounded star row gives the session list the remaining pane height.
+        // NavigationView.PaneCustomContent is measured in an Auto row instead.
+        Element NavigationButton(string label, string glyph, ShellSection target) =>
+            Button(HStack(AppTheme.SpacingS, Icon(FontIcon(glyph, fontSize: 16)), Body(label)),
+                    () => setSection(target))
+                .SubtleButton()
+                .HAlign(HorizontalAlignment.Stretch)
+                .Set(button => button.HorizontalContentAlignment = HorizontalAlignment.Left)
+                .AutomationName(label);
+
+        var pane = Border(Grid(
+                columns: [GridSize.Star()],
+                rows: [GridSize.Auto, GridSize.Star(), GridSize.Auto],
+                NavigationButton(Str.T("shell.nav.sessions", "Sessions"), "\uE8A9", ShellSection.Workspace)
+                    .Margin(AppTheme.SpacingM, AppTheme.SpacingS, AppTheme.SpacingM, 0).Grid(row: 0),
+                sidebar.Grid(row: 1),
+                NavigationButton(Str.T("shell.nav.settings", "Settings"), "\uE713", ShellSection.Settings)
+                    .Margin(AppTheme.SpacingM, 0, AppTheme.SpacingM, AppTheme.SpacingM).Grid(row: 2)))
+            .Background(Theme.LayerFill)
+            .BorderBrush(Theme.DividerStroke)
+            .BorderThickness(0, 0, 1, 0)
+            .IsVisible(paneOpen)
+            .AutomationId("SessionSidebar");
+
+        var navigation = Grid(
+            columns: [GridSize.Px(paneOpen ? AppTheme.SidebarWidth : 0), GridSize.Star()],
+            rows: [GridSize.Star()],
+            pane.Grid(column: 0),
+            BuildContent().Grid(column: 1));
 
         // Status bar ----------------------------------------------------------
         var statusBar = StatusBarView.Render(new StatusBarProps(snapshot, settings, Reconnect));
@@ -354,19 +366,6 @@ internal sealed class MainShell : Component
 
     private static void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs args) =>
         CrashLog.Write("WinUI", args.Exception);
-
-    private static void HandleNavigation(string? tag, Action<ShellSection> setSection)
-    {
-        switch (tag)
-        {
-            case "settings":
-                setSection(ShellSection.Settings);
-                break;
-            case "workspace":
-                setSection(ShellSection.Workspace);
-                break;
-        }
-    }
 
     private static async Task<ConnectOptions?> BuildConnectOptionsAsync(AppServices services, SessionProfile profile)
     {

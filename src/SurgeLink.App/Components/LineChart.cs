@@ -166,9 +166,10 @@ internal sealed class LineChart : Component<LineChartProps>
 
         if (values.Count == 1)
         {
-            // A single sample would draw nothing; duplicate it so a dot shows up.
-            figure.StartPoint = new Point(PlotPadding, PlotPadding + usableHeight);
-            figure.Segments.Add(new LineSegment { Point = new Point(PlotPadding + usableWidth, PlotPadding + usableHeight) });
+            // Keep the first sample at its actual height on the right edge.
+            var point = figure.StartPoint;
+            figure.StartPoint = new Point(point.X - 1, point.Y);
+            figure.Segments.Add(new LineSegment { Point = point });
         }
 
         return new PathGeometry { Figures = { figure } };

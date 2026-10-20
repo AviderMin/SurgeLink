@@ -69,8 +69,7 @@ internal sealed class SidebarView : Component<SidebarProps>
             .AccentButton()
             .HAlign(HorizontalAlignment.Stretch)
             .AutomationName(newSession)
-            .AutomationId("NewSessionButton")
-            .Flex(grow: 1, basis: 0);
+            .AutomationId("NewSessionButton");
 
         var demoLabel = Str.T("shell.sidebar.demo", "Open demo session");
         var demoButton = Button(Icon(FontIcon("\uE768", fontSize: 14)), props.OpenDemo)
@@ -89,14 +88,24 @@ internal sealed class SidebarView : Component<SidebarProps>
                 AppServices.EnsureInitialized().Workspace.SetSearchText(string.Empty);
             });
 
-        return FlexColumn(
-                searchBox,
-                HStack(AppTheme.SpacingS, newSessionButton, demoButton),
-                body.Flex(grow: 1, basis: 0),
+        return Grid(
+                columns: [GridSize.Star()],
+                rows: [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto],
+                searchBox.Grid(row: 0),
+                (Grid(
+                    columns: [GridSize.Star(), GridSize.Auto],
+                    rows: [GridSize.Auto],
+                    newSessionButton.Grid(column: 0),
+                    demoButton.Grid(column: 1)) with { ColumnSpacing = AppTheme.SpacingS }).Grid(row: 1),
+                body.Grid(row: 2),
                 Caption(Str.T("shell.sidebar.hint", "Right-click a session for edit, duplicate and delete."))
                     .Foreground(Theme.SecondaryText)
-                    .TextWrapping(TextWrapping.Wrap))
-            .FlexPadding(AppTheme.SpacingM, AppTheme.SpacingS);
+                    .TextWrapping(TextWrapping.Wrap)
+                    .Grid(row: 3)) with
+        {
+            RowSpacing = AppTheme.SpacingM,
+            Padding = new Thickness(AppTheme.SpacingM),
+        };
     }
 
     private static List<Element> BuildGroups(SidebarProps props, IReadOnlyList<SessionProfile> profiles)
@@ -155,6 +164,7 @@ internal sealed class SidebarView : Component<SidebarProps>
                 () => props.Connect(profile))
             .SubtleButton()
             .HAlign(HorizontalAlignment.Stretch)
+            .Set(button => button.HorizontalContentAlignment = HorizontalAlignment.Stretch)
             .MinHeight(AppTheme.RowMinHeight)
             .ToolTip($"{profile.Name}\n{subtitle}")
             .AutomationName(profile.Name)

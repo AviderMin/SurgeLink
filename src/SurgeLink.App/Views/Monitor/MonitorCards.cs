@@ -52,7 +52,11 @@ internal static class MonitorCards
             detail = Grid(
                 columns: [GridSize.Star(), GridSize.Star()],
                 rows: Enumerable.Repeat(GridSize.Auto, (cores.Count + 1) / 2).ToArray(),
-                perCore.ToArray());
+                perCore.ToArray()) with
+            {
+                ColumnSpacing = AppTheme.SpacingM,
+                RowSpacing = AppTheme.SpacingS,
+            };
         }
 
         var body = VStack(
@@ -157,7 +161,7 @@ internal static class MonitorCards
                 Stat(Str.T("monitor.card.network.download", "Download"), DataFormat.Rate(history.ReceiveRate))
                     .Grid(row: 0, column: 0),
                 Stat(Str.T("monitor.card.network.upload", "Upload"), DataFormat.Rate(history.SendRate))
-                    .Grid(row: 0, column: 1)),
+                    .Grid(row: 0, column: 1)).Set(grid => grid.ColumnSpacing = AppTheme.SpacingL),
             Component<LineChart, LineChartProps>(new LineChartProps(
                     [
                         new ChartSeries(Str.T("monitor.chart.seriesDownload", "Download"), history.ReceiveHistory),
@@ -201,7 +205,11 @@ internal static class MonitorCards
             Stat(
                     Str.T("monitor.card.system.threads", "Threads"),
                     cpu.ThreadCount > 0 ? DataFormat.Count(cpu.ThreadCount) : na)
-                .Grid(row: 1, column: 2));
+                .Grid(row: 1, column: 2)) with
+        {
+            ColumnSpacing = AppTheme.SpacingM,
+            RowSpacing = AppTheme.SpacingL,
+        };
 
         return Card(
             Str.T("monitor.card.system.title", "System"),
@@ -241,7 +249,7 @@ internal static class MonitorCards
     /// <summary>Label plus a monospaced value, so changing digits do not jitter.</summary>
     private static Element Stat(string label, string value) =>
         VStack(
-            2,
+            AppTheme.SpacingXs,
             Caption(label).Foreground(Theme.SecondaryText),
             BodyStrong(value).FontFamily(AppTheme.Monospace));
 }

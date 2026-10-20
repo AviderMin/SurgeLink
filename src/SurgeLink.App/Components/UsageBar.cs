@@ -42,7 +42,10 @@ internal sealed class UsageBar : Component<UsageBarProps>
             columns: [GridSize.Star(), GridSize.Auto],
             rows: [GridSize.Auto],
             TextBlock(Props.Label ?? string.Empty).TextTrimming(TextTrimming.CharacterEllipsis).Grid(row: 0, column: 0),
-            Caption(Props.Detail ?? string.Empty).Foreground(Theme.SecondaryText).Grid(row: 0, column: 1));
+            Caption(Props.Detail ?? string.Empty)
+                .Foreground(Theme.SecondaryText)
+                .TextWrapping(TextWrapping.Wrap)
+                .Grid(row: 0, column: 1)) with { ColumnSpacing = AppTheme.SpacingS };
 
         return VStack(AppTheme.SpacingXs, header, bar)
             .AutomationName(Str.F(

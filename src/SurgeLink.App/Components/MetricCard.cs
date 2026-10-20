@@ -20,12 +20,14 @@ internal sealed class MetricCard : Component<MetricCardProps>
                 VStack(
                     AppTheme.SpacingM,
                     VStack(
-                        2,
+                        AppTheme.SpacingXs,
                         BodyStrong(Props.Title)
                             .HeadingLevel(Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level2),
                         Props.Caption is null
                             ? null
-                            : Caption(Props.Caption).Foreground(Theme.SecondaryText)),
+                            : Caption(Props.Caption)
+                                .Foreground(Theme.SecondaryText)
+                                .TextWrapping(Microsoft.UI.Xaml.TextWrapping.Wrap)),
                     Props.Content))
             .AutomationName(Props.Title);
 }

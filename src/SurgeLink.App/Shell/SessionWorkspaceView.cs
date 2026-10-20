@@ -67,20 +67,19 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
                 }
             });
 
-        var header = HStack(
-                AppTheme.SpacingM,
-                HStack(
-                        AppTheme.SpacingS,
-                        TextBlock("*").FontFamily(AppTheme.Monospace).FontSize(16)
-                            .Foreground(props.State == ConnectionState.Connected ? Theme.Accent : Theme.SecondaryText),
-                        BodyStrong(tab.Title),
-                        Caption(tab.Profile.Username + "@" + tab.Profile.Host).Foreground(Theme.SecondaryText))
-                    .VAlign(VerticalAlignment.Center),
-                selector,
-                Box(),
-                string.IsNullOrEmpty(props.Message) ? string.Empty : Caption(props.Message).Foreground(Theme.SecondaryText))
+        var header = Grid(
+                columns: [GridSize.Star(), GridSize.Auto],
+                rows: [GridSize.Auto],
+                VStack(AppTheme.SpacingXs,
+                    BodyStrong(tab.Title).TextTrimming(TextTrimming.CharacterEllipsis),
+                    Caption(tab.Profile.Username + "@" + tab.Profile.Host)
+                        .Foreground(Theme.SecondaryText).TextTrimming(TextTrimming.CharacterEllipsis))
+                    .VAlign(VerticalAlignment.Center)
+                    .ToolTip(string.IsNullOrEmpty(props.Message) ? tab.Title : props.Message)
+                    .Margin(0, 0, AppTheme.SpacingM, 0).Grid(column: 0),
+                selector.VAlign(VerticalAlignment.Center).Grid(column: 1))
             .Padding(AppTheme.SpacingM, AppTheme.SpacingS)
-            .Height(48);
+            .MinHeight(56);
 
         Element content = props.View switch
         {

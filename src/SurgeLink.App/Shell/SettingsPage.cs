@@ -32,6 +32,10 @@ internal sealed class SettingsPage : Component
         var services = AppServices.EnsureInitialized();
         var store = services.Settings;
         var settings = UseExternalStore(store.Subscribe, () => store.Current);
+        var (wide, setWide) = UseState(false);
+
+        Element SettingsCard(string title, string description, Element control, bool stacked = false) =>
+            BuildSettingsCard(title, description, control, wide && !stacked);
 
         void Apply(Func<AppSettings, AppSettings> mutate) => store.Update(mutate);
 
@@ -41,7 +45,7 @@ internal sealed class SettingsPage : Component
         var onText = Str.T("shell.settings.on", "On");
         var offText = Str.T("shell.settings.off", "Off");
 
-        return ScrollView(
+        return Border(ScrollView(
             VStack(
                 AppTheme.SpacingXl,
                 VStack(
@@ -109,7 +113,7 @@ internal sealed class SettingsPage : Component
                                     })
                                     .AutomationName(Str.T("shell.settings.fontSize", "Font size"))
                                     .AutomationId("SettingsFontSize")
-                                    .Width(220),
+                                    .Width(200),
                                 Caption(Str.F("shell.settings.fontSize.value", "{0} pt", settings.TerminalFontSize.ToString("0")))
                                     .Width(56))
                             .VAlign(VerticalAlignment.Center)),
@@ -207,7 +211,7 @@ internal sealed class SettingsPage : Component
                                 .AutomationName(Str.T("shell.settings.preview.confirmation", "Confirmation")),
                             Button(Str.T("shell.settings.preview.error", "Error dialog"),
                                     () => _ = PreviewErrorAsync())
-                                .AutomationName(Str.T("shell.settings.preview.error", "Error dialog"))))),
+                                .AutomationName(Str.T("shell.settings.preview.error", "Error dialog"))), stacked: true),
                     SettingsCard(
                         Str.T("shell.settings.storage", "Storage"),
                         Str.T("shell.settings.storage.description",
@@ -215,18 +219,24 @@ internal sealed class SettingsPage : Component
                         VStack(
                                 AppTheme.SpacingXs,
                                 TextBlock(AppPaths.Root).FontFamily(AppTheme.Monospace).FontSize(13)
-                                    .IsTextSelectionEnabled(true),
+                                    .IsTextSelectionEnabled(true)
+                                    .TextWrapping(TextWrapping.Wrap),
                                 Caption($"SurgeLink {typeof(SettingsPage).Assembly.GetName().Version}")
                                     .Foreground(Theme.SecondaryText))
-                            .HAlign(HorizontalAlignment.Left)),
+                            .HAlign(HorizontalAlignment.Stretch), stacked: true),
                     SettingsCard(
                         Str.T("shell.settings.reset", "Reset"),
                         Str.T("shell.settings.reset.description", "Restore every preference to its default value."),
                         Button(Str.T("shell.settings.reset.action", "Reset settings"), () => Apply(_ => AppSettings.Default))
                             .AutomationName(Str.T("shell.settings.reset.action", "Reset settings"))))
                 .MaxWidth(880)
-                .HAlign(HorizontalAlignment.Left)
-                .Padding(AppTheme.SpacingXl));
+                .HAlign(HorizontalAlignment.Stretch)
+                .Padding(AppTheme.SpacingXl))))
+            .OnSizeChanged((_, args) =>
+            {
+                var next = args.NewSize.Width >= 800;
+                if (next != wide) setWide(next);
+            });
     }
 
     /// <summary>
@@ -267,22 +277,21 @@ internal sealed class SettingsPage : Component
             SubHeading(title).HeadingLevel(AutomationHeadingLevel.Level2),
             VStack(AppTheme.SpacingS, rows));
 
-    /// <summary>Label + description on the left, the control on the right.</summary>
-    private static Element SettingsCard(string title, string description, Element control) =>
-        Card(
-            Grid(
-                columns: [GridSize.Star(), GridSize.Auto],
-                rows: [GridSize.Auto, GridSize.Auto],
-                BodyStrong(title).Grid(row: 0, column: 0),
-                Caption(description)
-                    .Foreground(Theme.SecondaryText)
-                    .TextWrapping(TextWrapping.Wrap)
-                    .Grid(row: 1, column: 0)
-                    .Margin(0, AppTheme.SpacingXs, AppTheme.SpacingM, 0),
-                control.Grid(row: 0, column: 1, rowSpan: 2).VAlign(VerticalAlignment.Center)) with
-            {
-                ColumnSpacing = AppTheme.SpacingL,
-            });
+    /// <summary>Use a shared editor column on wide pages, stack within narrow cards.</summary>
+    private static Element BuildSettingsCard(string title, string description, Element control, bool wide) =>
+        Card(Grid(
+            columns: wide ? [GridSize.Star(), GridSize.Px(280)] : [GridSize.Star()],
+            rows: wide ? [GridSize.Auto] : [GridSize.Auto, GridSize.Auto],
+            VStack(AppTheme.SpacingXs,
+                BodyStrong(title).TextWrapping(TextWrapping.Wrap),
+                Caption(description).Foreground(Theme.SecondaryText).TextWrapping(TextWrapping.Wrap))
+                .VAlign(VerticalAlignment.Center).Grid(row: 0, column: 0),
+            control.HAlign(HorizontalAlignment.Stretch).VAlign(VerticalAlignment.Center)
+                .Grid(row: wide ? 0 : 1, column: wide ? 1 : 0)) with
+        {
+            ColumnSpacing = AppTheme.SpacingL,
+            RowSpacing = AppTheme.SpacingM,
+        });
 
     private static Element WrapButtons(params Element[] buttons) =>
         FlexRow(buttons) with

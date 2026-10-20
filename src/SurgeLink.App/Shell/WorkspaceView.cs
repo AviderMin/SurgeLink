@@ -85,7 +85,7 @@ internal static class WorkspaceView
             rows: [GridSize.Star()],
             VStack(
                     AppTheme.SpacingM,
-                    Icon(FontIcon("\uE756", fontSize: 44)),
+                    Icon(FontIcon("\uE756", fontSize: 44)).HAlign(HorizontalAlignment.Center),
                     Title(Str.T("shell.workspace.emptyTitle", "No session open")).HAlign(HorizontalAlignment.Center),
                     Body(Str.T(
                             "shell.workspace.emptyBody",
@@ -106,6 +106,7 @@ internal static class WorkspaceView
                 .HAlign(HorizontalAlignment.Center)
                 .VAlign(VerticalAlignment.Center)
                 .MaxWidth(560)
+                .Margin(AppTheme.SpacingXl)
                 .Grid(row: 0));
     }
 }

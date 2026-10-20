@@ -48,7 +48,7 @@ internal static class SftpTransferPanel
                     AppTheme.SpacingS,
                     header,
                     Divider(),
-                    VStack(AppTheme.SpacingXs, rows)))
+                    ScrollView(VStack(AppTheme.SpacingXs, rows)).MaxHeight(160)))
             .Padding(AppTheme.SpacingM)
             .Background(Theme.LayerFill)
             .WithBorder(Theme.DividerStroke, 1)

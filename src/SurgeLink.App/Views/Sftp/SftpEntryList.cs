@@ -16,6 +16,9 @@ namespace SurgeLink.App.Views.Sftp;
 /// </summary>
 internal static class SftpEntryList
 {
+    // Includes the shared cell gutters and row-container padding.
+    public const double MinimumWidth = 724;
+
     private static readonly GridSize[] Columns =
     [
         GridSize.Px(24),
@@ -40,6 +43,7 @@ internal static class SftpEntryList
             SortHeader(Str.T("sftp.column.modified", "Modified"), SftpSortColumn.Modified, sort, ascending, sortBy).Grid(row: 0, column: 3),
             SortHeader(Str.T("sftp.column.permissions", "Permissions"), SftpSortColumn.Permissions, sort, ascending, sortBy).Grid(row: 0, column: 4),
             SortHeader(Str.T("sftp.column.owner", "Owner"), SftpSortColumn.Owner, sort, ascending, sortBy).Grid(row: 0, column: 5))
+        .Set(grid => grid.ColumnSpacing = AppTheme.SpacingM)
         .Padding(AppTheme.SpacingS, 0);
 
     /// <summary>The file list. Selection and key handling are owned by the caller.</summary>
@@ -97,6 +101,8 @@ internal static class SftpEntryList
 
         return Button(content, () => sortBy(column))
             .SubtleButton()
+            .Padding(0)
+            .HAlign(HorizontalAlignment.Left)
             .AutomationName(Str.F("sftp.column.sortBy", "Sort by {0}", label))
             .MinHeight(32);
     }
@@ -129,6 +135,7 @@ internal static class SftpEntryList
                 TextBlock(entry.Owner ?? string.Empty)
                     .Foreground(Theme.SecondaryText)
                     .Grid(row: 0, column: 5))
+            .Set(grid => grid.ColumnSpacing = AppTheme.SpacingM)
             .Padding(0, 4, 0, 4)
             .AutomationName(entry.Name);
     }

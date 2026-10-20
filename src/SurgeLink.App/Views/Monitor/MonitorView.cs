@@ -43,7 +43,7 @@ internal sealed class MonitorView : Component<MonitorViewProps>
         var (paused, setPaused) = UseState(false);
         var (reload, setReload) = UseState(0);
         var sampleRequested = UseRef(false);
-        var wide = UseBreakpoint(1100);
+        var (wide, setWide) = UseState(false);
         var historyRef = UseRef<MonitorHistory?>(null);
         historyRef.Current ??= new MonitorHistory();
         var history = historyRef.Current;
@@ -193,7 +193,16 @@ internal sealed class MonitorView : Component<MonitorViewProps>
                     header,
                     banner,
                     body))
-            .Padding(AppTheme.SpacingL);
+            .Padding(AppTheme.SpacingL)
+            .OnSizeChanged((_, args) =>
+            {
+                // Measure this view: window breakpoints include the sidebar.
+                var nextWide = args.NewSize.Width - 2 * AppTheme.SpacingL >= 1000;
+                if (nextWide != wide)
+                {
+                    setWide(nextWide);
+                }
+            });
     }
 
     private static Element BuildHeader(
@@ -219,21 +228,21 @@ internal sealed class MonitorView : Component<MonitorViewProps>
             .IsEnabled(!paused);
 
         return Grid(
-            columns: [GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
-            rows: [GridSize.Auto],
+            columns: [GridSize.Star(), GridSize.Auto],
+            rows: [GridSize.Auto, GridSize.Auto],
             SubHeading(Str.T("monitor.title", "Remote performance"))
                 .HeadingLevel(Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level1)
-                .Grid(row: 0, column: 0),
+                .Grid(row: 0, column: 0, columnSpan: 2),
             Caption(updatedAt is null
                     ? Str.T("monitor.waitingFirstSample", "Waiting for the first sample")
                     : Str.F("monitor.lastUpdate", "Last update {0}", DataFormat.Clock(updatedAt.Value)))
                 .Foreground(Theme.SecondaryText)
                 .VAlign(VerticalAlignment.Center)
-                .Margin(AppTheme.SpacingM, 0, 0, 0)
-                .Grid(row: 0, column: 1),
-            intervalSelector.Grid(row: 0, column: 2).Margin(0, 0, AppTheme.SpacingS, 0),
+                .TextTrimming(TextTrimming.CharacterEllipsis)
+                .Grid(row: 1, column: 0),
             HStack(
                     AppTheme.SpacingS,
+                    intervalSelector,
                     Button(
                             paused
                                 ? Str.T("monitor.resume", "Resume")
@@ -249,7 +258,7 @@ internal sealed class MonitorView : Component<MonitorViewProps>
                         .SubtleButton()
                         .ToolTip(Str.T("monitor.sampleNowToolTip", "Sample now"))
                         .AutomationName(Str.T("monitor.sampleNow", "Sample now")))
-                .Grid(row: 0, column: 3));
+                .Grid(row: 1, column: 1)) with { RowSpacing = AppTheme.SpacingS, ColumnSpacing = AppTheme.SpacingM };
     }
 
     private static Element BuildCards(

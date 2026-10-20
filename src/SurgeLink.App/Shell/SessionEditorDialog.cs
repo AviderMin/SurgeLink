@@ -191,6 +191,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                     .AutomationName(nameLabel),
                 ComboBox(plugins.Select(p => p.Descriptor.DisplayName).ToArray(), Optional<int>.Of(protocolIndex), setProtocolIndex)
                     .Set(combo => combo.Header = Str.T("shell.editor.protocol", "Protocol"))
+                    .HAlign(HorizontalAlignment.Stretch)
                     .AutomationName(Str.T("shell.editor.protocol", "Protocol")),
                 FieldGrid(
                     TextBox(Optional<string>.Of(host), setHost, header: hostLabel,
@@ -211,6 +212,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                         .Grid(column: 1)),
                 ComboBox(authNames, Optional<int>.Of(authIndex), setAuthIndex)
                     .Set(combo => combo.Header = authLabel)
+                    .HAlign(HorizontalAlignment.Stretch)
                     .AutomationName(authLabel),
             };
 
