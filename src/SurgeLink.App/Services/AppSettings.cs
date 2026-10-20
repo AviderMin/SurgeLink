@@ -1,0 +1,118 @@
+using SurgeLink.Core.Storage;
+
+namespace SurgeLink.App.Services;
+
+/// <summary>How the app picks light or dark.</summary>
+public enum ThemeMode
+{
+    System,
+    Light,
+    Dark,
+}
+
+/// <summary>
+/// User preferences. Persisted as one JSON document; every consumer reads
+/// <see cref="IAppSettingsStore.Current"/> and re-renders on
+/// <see cref="IAppSettingsStore.Changed"/>.
+/// </summary>
+public sealed record AppSettings
+{
+    public static AppSettings Default { get; } = new();
+
+    /// <summary>Light, dark, or follow Windows.</summary>
+    public ThemeMode Theme { get; init; } = ThemeMode.System;
+
+    /// <summary>Monospace family for the terminal, empty for auto detection.</summary>
+    public string TerminalFontFamily { get; init; } = string.Empty;
+
+    /// <summary>Terminal font size in points.</summary>
+    public double TerminalFontSize { get; init; } = 13;
+
+    /// <summary>Terminal colour scheme name from <c>TerminalThemes.All</c>.</summary>
+    public string TerminalPalette { get; init; } = "Campbell";
+
+    /// <summary>Scrollback lines kept in memory per terminal.</summary>
+    public int TerminalScrollbackLines { get; init; } = 10000;
+
+    /// <summary>Ask before closing a tab whose session is still connected.</summary>
+    public bool ConfirmCloseConnectedTab { get; init; } = true;
+
+    /// <summary>Remote monitor sampling interval in seconds.</summary>
+    public int MonitorIntervalSeconds { get; init; } = 2;
+
+    /// <summary>Show dot files in the SFTP browser.</summary>
+    public bool ShowHiddenFiles { get; init; } = true;
+}
+
+/// <summary>Reads and updates <see cref="AppSettings"/>; notifies the UI on change.</summary>
+public interface IAppSettingsStore
+{
+    /// <summary>Current settings snapshot.</summary>
+    AppSettings Current { get; }
+
+    /// <summary>Raised after <see cref="Update"/> persists a new snapshot.</summary>
+    event EventHandler? Changed;
+
+    /// <summary>Subscription helper shaped for <c>UseExternalStore</c>.</summary>
+    Action Subscribe(Action listener);
+
+    /// <summary>Applies a mutation and persists it.</summary>
+    void Update(Func<AppSettings, AppSettings> mutate);
+}
+
+/// <summary>JSON backed settings store.</summary>
+public sealed class AppSettingsStore : IAppSettingsStore
+{
+    private readonly object _gate = new();
+    private readonly string _path;
+    private AppSettings _current;
+
+    /// <summary>Creates the store and loads the existing settings file.</summary>
+    public AppSettingsStore(string path)
+    {
+        _path = path;
+        _current = AtomicJsonFile.Read(path, AppSettings.Default);
+    }
+
+    /// <inheritdoc />
+    public AppSettings Current
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _current;
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public event EventHandler? Changed;
+
+    /// <inheritdoc />
+    public Action Subscribe(Action listener)
+    {
+        EventHandler handler = (_, _) => listener();
+        Changed += handler;
+        return () => Changed -= handler;
+    }
+
+    /// <inheritdoc />
+    public void Update(Func<AppSettings, AppSettings> mutate)
+    {
+        ArgumentNullException.ThrowIfNull(mutate);
+        lock (_gate)
+        {
+            var next = mutate(_current);
+            if (next == _current)
+            {
+                return;
+            }
+
+            _current = next;
+            AtomicJsonFile.Write(_path, next);
+        }
+
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+}

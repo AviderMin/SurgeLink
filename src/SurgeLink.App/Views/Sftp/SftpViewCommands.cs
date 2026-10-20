@@ -1,0 +1,78 @@
+using Microsoft.UI.Reactor.Core;
+using Microsoft.UI.Xaml.Controls;
+using SurgeLink.Core.Files;
+using Windows.Storage;
+
+namespace SurgeLink.App.Views.Sftp;
+
+/// <summary>
+/// The two transfer commands of the file manager. They are separate from the
+/// view so the picker plumbing (which must run on the UI thread through the
+/// Reactor picker hooks) is one small, readable unit; the view supplies the
+/// pickers and the queue.
+/// </summary>
+internal static class SftpViewCommands
+{
+    /// <summary>Picks one local file and queues it for upload into the current folder.</summary>
+    public static async Task UploadAsync(
+        IRemoteFileSystem fileSystem,
+        string workingDirectory,
+        SftpTransferQueue queue,
+        Func<Task<StorageFile?>> pickFile,
+        Action<SftpBanner?> setBanner)
+    {
+        try
+        {
+            var file = await pickFile().ConfigureAwait(true);
+            if (file is null)
+            {
+                return;
+            }
+
+            var localPath = file.Path;
+            var name = string.IsNullOrEmpty(file.Name) ? Path.GetFileName(localPath) : file.Name;
+            queue.Enqueue(SftpOperations.CreateUpload(workingDirectory, localPath, name), fileSystem);
+            setBanner(null);
+        }
+        catch (Exception ex)
+        {
+            setBanner(new SftpBanner(InfoBarSeverity.Error, "Upload", ex.Message));
+        }
+    }
+
+    /// <summary>Picks a local folder and queues every selected file for download into it.</summary>
+    public static async Task DownloadAsync(
+        IRemoteFileSystem fileSystem,
+        IReadOnlyList<RemoteFileEntry> selected,
+        SftpTransferQueue queue,
+        Func<Task<StorageFolder?>> pickFolder,
+        Action<SftpBanner?> setBanner)
+    {
+        var files = selected.Where(entry => !entry.IsDirectory).ToList();
+        if (files.Count == 0)
+        {
+            setBanner(new SftpBanner(InfoBarSeverity.Warning, "Download", "Select at least one file to download."));
+            return;
+        }
+
+        try
+        {
+            var folder = await pickFolder().ConfigureAwait(true);
+            if (folder is null)
+            {
+                return;
+            }
+
+            foreach (var entry in files)
+            {
+                queue.Enqueue(SftpOperations.CreateDownload(entry, folder.Path), fileSystem);
+            }
+
+            setBanner(null);
+        }
+        catch (Exception ex)
+        {
+            setBanner(new SftpBanner(InfoBarSeverity.Error, "Download", ex.Message));
+        }
+    }
+}

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>SurgeLink.App</RootNamespace>
+    <AssemblyName>SurgeLink</AssemblyName>
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <ApplicationIcon>Assets\\AppIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" />
+    <PackageReference Include="Microsoft.UI.Reactor" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SurgeLink.Core\SurgeLink.Core.csproj" />
+    <ProjectReference Include="..\SurgeLink.Terminal\SurgeLink.Terminal.csproj" />
+    <ProjectReference Include="..\SurgeLink.Protocols.Demo\SurgeLink.Protocols.Demo.csproj" />
+    <ProjectReference Include="..\SurgeLink.Protocols.Ssh\SurgeLink.Protocols.Ssh.csproj" />
+  </ItemGroup>
+
+</Project>
