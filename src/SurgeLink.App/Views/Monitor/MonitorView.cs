@@ -3,6 +3,7 @@ using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SurgeLink.App.Components;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Monitoring;
 using static Microsoft.UI.Reactor.Factories;
@@ -13,7 +14,8 @@ namespace SurgeLink.App.Views.Monitor;
 /// The remote performance dashboard. One sampling loop feeds cards, charts and
 /// the process table; the loop honours <see cref="AppSettings.MonitorIntervalSeconds"/>
 /// and stops while paused. Chart history lives outside the render tree so a
-/// re-render never restarts the rolling window.
+/// re-render never restarts the rolling window, and every visible label is
+/// resolved through <see cref="Str"/> so the language switch applies.
 /// </summary>
 internal sealed class MonitorView : Component<MonitorViewProps>
 {
@@ -137,10 +139,10 @@ internal sealed class MonitorView : Component<MonitorViewProps>
 
         var banner = error is null
             ? null
-            : (InfoBar("Monitor unavailable", error) with
+            : (InfoBar(Str.T("monitor.unavailable.title", "Monitor unavailable"), error) with
             {
                 Severity = InfoBarSeverity.Error,
-                ActionButtonContent = "Retry",
+                ActionButtonContent = Str.T("monitor.retry", "Retry"),
                 OnActionButtonClick = () =>
                 {
                     setError(null);
@@ -157,7 +159,8 @@ internal sealed class MonitorView : Component<MonitorViewProps>
                     columns: [GridSize.Star()],
                     rows: [GridSize.Star()],
                     ProgressRing().HAlign(HorizontalAlignment.Center).VAlign(VerticalAlignment.Center))
-                : Caption("Waiting for the first successful sample.").Foreground(Theme.SecondaryText);
+                : Caption(Str.T("monitor.waitingSuccessfulSample", "Waiting for the first successful sample."))
+                    .Foreground(Theme.SecondaryText);
         }
         else
         {
@@ -188,22 +191,22 @@ internal sealed class MonitorView : Component<MonitorViewProps>
         }
 
         var intervalSelector = ComboBox(
-                Intervals.Select(value => value + " s").ToArray(),
+                Intervals.Select(value => Str.F("monitor.interval.seconds", "{0} s", value)).ToArray(),
                 Optional<int>.Of(currentIndex),
                 selectInterval)
-            .AutomationName("Sampling interval")
+            .AutomationName(Str.T("monitor.interval.automation", "Sampling interval"))
             .MinWidth(96)
             .IsEnabled(!paused);
 
         return Grid(
             columns: [GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
             rows: [GridSize.Auto],
-            SubHeading("Remote performance")
+            SubHeading(Str.T("monitor.title", "Remote performance"))
                 .HeadingLevel(Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level1)
                 .Grid(row: 0, column: 0),
             Caption(updatedAt is null
-                    ? "Waiting for the first sample"
-                    : "Last update " + DataFormat.Clock(updatedAt.Value))
+                    ? Str.T("monitor.waitingFirstSample", "Waiting for the first sample")
+                    : Str.F("monitor.lastUpdate", "Last update {0}", DataFormat.Clock(updatedAt.Value)))
                 .Foreground(Theme.SecondaryText)
                 .VAlign(VerticalAlignment.Center)
                 .Margin(AppTheme.SpacingM, 0, 0, 0)
@@ -211,13 +214,21 @@ internal sealed class MonitorView : Component<MonitorViewProps>
             intervalSelector.Grid(row: 0, column: 2).Margin(0, 0, AppTheme.SpacingS, 0),
             HStack(
                     AppTheme.SpacingS,
-                    Button(paused ? "Resume" : "Pause", togglePause)
-                        .ToolTip(paused ? "Resume live sampling" : "Pause live sampling")
-                        .AutomationName(paused ? "Resume sampling" : "Pause sampling"),
+                    Button(
+                            paused
+                                ? Str.T("monitor.resume", "Resume")
+                                : Str.T("monitor.pause", "Pause"),
+                            togglePause)
+                        .ToolTip(paused
+                            ? Str.T("monitor.resumeToolTip", "Resume live sampling")
+                            : Str.T("monitor.pauseToolTip", "Pause live sampling"))
+                        .AutomationName(paused
+                            ? Str.T("monitor.resumeAutomation", "Resume sampling")
+                            : Str.T("monitor.pauseAutomation", "Pause sampling")),
                     Button(Icon(FontIcon("\uE72C", fontSize: 14)), sampleNow)
                         .SubtleButton()
-                        .ToolTip("Sample now")
-                        .AutomationName("Sample now"))
+                        .ToolTip(Str.T("monitor.sampleNowToolTip", "Sample now"))
+                        .AutomationName(Str.T("monitor.sampleNow", "Sample now")))
                 .Grid(row: 0, column: 3));
     }
 
@@ -233,8 +244,8 @@ internal sealed class MonitorView : Component<MonitorViewProps>
         var host = MonitorCards.Host(snapshot);
         var disks = MonitorCards.Disks(snapshot);
         var processCard = Component<MetricCard, MetricCardProps>(new MetricCardProps(
-            "Top processes",
-            "Busiest " + Math.Min(15, processes.Count) + " processes",
+            Str.T("monitor.process.title", "Top processes"),
+            Str.F("monitor.process.caption", "Busiest {0} processes", Math.Min(15, processes.Count)),
             Component<MonitorProcessTable, MonitorProcessTableProps>(
                 new MonitorProcessTableProps(processes))));
 
@@ -283,8 +294,10 @@ internal sealed class MonitorView : Component<MonitorViewProps>
             VStack(
                     AppTheme.SpacingS,
                     Icon(FontIcon("\uE9D9", fontSize: 32)),
-                    BodyStrong("Performance monitoring is not available"),
-                    Caption("This protocol does not expose remote system counters, so there is nothing to chart.")
+                    BodyStrong(Str.T("monitor.notAvailable.title", "Performance monitoring is not available")),
+                    Caption(Str.T(
+                            "monitor.notAvailable.hint",
+                            "This protocol does not expose remote system counters, so there is nothing to chart."))
                         .Foreground(Theme.SecondaryText)
                         .MaxWidth(420)
                         .TextWrapping(TextWrapping.Wrap))

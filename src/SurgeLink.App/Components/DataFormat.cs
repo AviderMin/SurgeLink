@@ -1,4 +1,5 @@
 using System.Globalization;
+using SurgeLink.App.Localization;
 
 namespace SurgeLink.App.Components;
 
@@ -35,7 +36,9 @@ internal static class DataFormat
 
     /// <summary>Formats a byte rate, e.g. <c>2.4 MB/s</c>; negative values mean "not available".</summary>
     public static string Rate(double bytesPerSecond) =>
-        bytesPerSecond < 0 ? "n/a" : Bytes((long)bytesPerSecond) + "/s";
+        bytesPerSecond < 0
+            ? Str.T("monitor.na", "n/a")
+            : Bytes((long)bytesPerSecond) + "/s";
 
     /// <summary>Formats a 0..1 fraction as a percentage, e.g. <c>63%</c>.</summary>
     public static string Percent(double fraction) =>
@@ -50,25 +53,26 @@ internal static class DataFormat
     {
         if (value <= TimeSpan.Zero)
         {
-            return "n/a";
+            return Str.T("monitor.na", "n/a");
         }
 
         if (value.TotalDays >= 1)
         {
-            return $"{(int)value.TotalDays}d {value.Hours}h {value.Minutes}m";
+            return Str.F("monitor.duration.days", "{0}d {1}h {2}m",
+                (int)value.TotalDays, value.Hours, value.Minutes);
         }
 
         if (value.TotalHours >= 1)
         {
-            return $"{value.Hours}h {value.Minutes}m";
+            return Str.F("monitor.duration.hours", "{0}h {1}m", value.Hours, value.Minutes);
         }
 
         if (value.TotalMinutes >= 1)
         {
-            return $"{value.Minutes}m {value.Seconds}s";
+            return Str.F("monitor.duration.minutes", "{0}m {1}s", value.Minutes, value.Seconds);
         }
 
-        return $"{value.Seconds}s";
+        return Str.F("monitor.duration.seconds", "{0}s", value.Seconds);
     }
 
     /// <summary>Formats a sample timestamp as local wall clock time, e.g. <c>14:02:11</c>.</summary>

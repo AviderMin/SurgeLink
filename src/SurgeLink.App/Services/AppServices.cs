@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Sessions;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
@@ -25,6 +26,7 @@ public sealed class AppServices
         ISessionManager sessions,
         InteractionService interaction,
         IAppSettingsStore settings,
+        LocalizationService localization,
         WorkspaceStore workspace)
     {
         Logs = loggerFactory;
@@ -36,6 +38,7 @@ public sealed class AppServices
         Sessions = sessions;
         Interaction = interaction;
         Settings = settings;
+        Localization = localization;
         Workspace = workspace;
     }
 
@@ -58,8 +61,11 @@ public sealed class AppServices
 
     public InteractionService Interaction { get; }
 
-    /// <summary>User preferences (theme, fonts, intervals).</summary>
+    /// <summary>User preferences (theme, fonts, intervals, language).</summary>
     public IAppSettingsStore Settings { get; }
+
+    /// <summary>UI language and translated text resolution.</summary>
+    public LocalizationService Localization { get; }
 
     public WorkspaceStore Workspace { get; }
 
@@ -103,6 +109,7 @@ public sealed class AppServices
 
         interaction = new InteractionService(dispatcher);
         var settings = new AppSettingsStore(Path.Combine(AppPaths.Root, "settings.json"));
+        var localization = new LocalizationService(settings);
 
         var sessions = new SessionManager(
             protocols,
@@ -127,6 +134,7 @@ public sealed class AppServices
             sessions,
             interaction,
             settings,
+            localization,
             workspace);
     }
 }

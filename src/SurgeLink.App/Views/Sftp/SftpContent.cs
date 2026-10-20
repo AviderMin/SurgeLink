@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using SurgeLink.App.Components;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Files;
 using static Microsoft.UI.Reactor.Factories;
@@ -43,10 +44,10 @@ internal static class SftpContent
             return Grid(
                 columns: [GridSize.Star()],
                 rows: [GridSize.Auto],
-                (InfoBar("Could not load the folder", error) with
+                (InfoBar(Str.T("sftp.error.loadTitle", "Could not load the folder"), error) with
                 {
                     Severity = InfoBarSeverity.Error,
-                    ActionButtonContent = "Retry",
+                    ActionButtonContent = Str.T("sftp.error.retry", "Retry"),
                     OnActionButtonClick = refresh,
                     IsClosable = false,
                 }).Grid(row: 0, column: 0));
@@ -60,9 +61,10 @@ internal static class SftpContent
                 VStack(
                         AppTheme.SpacingS,
                         Icon(FontIcon("\uE8B7", fontSize: 32)),
-                        BodyStrong("This folder is empty"),
-                        Caption("Upload a file or create a folder to get started.").Foreground(Theme.SecondaryText),
-                        Button("New folder", () =>
+                        BodyStrong(Str.T("sftp.empty.title", "This folder is empty")),
+                        Caption(Str.T("sftp.empty.hint", "Upload a file or create a folder to get started."))
+                            .Foreground(Theme.SecondaryText),
+                        Button(Str.T("sftp.command.newFolder", "New folder"), () =>
                         {
                             setDialogText(string.Empty);
                             setDialog(new SftpDialogState(SftpDialogKind.NewFolder));
@@ -83,8 +85,8 @@ internal static class SftpContent
             VStack(
                     AppTheme.SpacingS,
                     Icon(FontIcon("\uE72E", fontSize: 32)),
-                    BodyStrong("File transfer is not available"),
-                    Caption("This protocol does not expose an SFTP file system, so there is nothing to browse.")
+                    BodyStrong(Str.T("sftp.unavailable.title", "File transfer is not available")),
+                    Caption(Str.T("sftp.unavailable.hint", "This protocol does not expose an SFTP file system, so there is nothing to browse."))
                         .Foreground(Theme.SecondaryText)
                         .MaxWidth(420)
                         .TextWrapping(TextWrapping.Wrap))

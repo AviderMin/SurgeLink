@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using SurgeLink.App.Components;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Monitoring;
 using static Microsoft.UI.Reactor.Factories;
@@ -30,8 +31,6 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
         GridSize.Star(),
     ];
 
-    private static readonly string[] Headers = ["PID", "User", "CPU", "MEM", "RSS", "Command"];
-
     public override Element Render()
     {
         // Column index of the active sort and its direction.
@@ -46,11 +45,14 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
 
         if (Props.Processes.Count == 0)
         {
-            return Caption("Process list is not available on this host.").Foreground(Theme.SecondaryText);
+            return Caption(Str.T("monitor.process.unavailable", "Process list is not available on this host."))
+                .Foreground(Theme.SecondaryText);
         }
 
-        var headerCells = new List<Element>(Headers.Length);
-        for (var index = 0; index < Headers.Length; index++)
+        // Headers are resolved per render so a language switch shows new labels.
+        var headers = Headers();
+        var headerCells = new List<Element>(headers.Count);
+        for (var index = 0; index < headers.Count; index++)
         {
             var column = index;
             var active = sortIndex == column;
@@ -58,7 +60,7 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
                 Button(
                         HStack(
                             AppTheme.SpacingXs,
-                            Caption(Headers[column]).SemiBold(),
+                            Caption(headers[column]).SemiBold(),
                             active ? Icon(FontIcon(descending ? "\uE70D" : "\uE70E", fontSize: 10)) : null),
                         () =>
                         {
@@ -73,7 +75,7 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
                             }
                         })
                     .SubtleButton()
-                    .AutomationName("Sort processes by " + Headers[column])
+                    .AutomationName(Str.F("monitor.process.sortBy", "Sort processes by {0}", headers[column]))
                     .MinHeight(32)
                     .Grid(row: 0, column: column));
         }
@@ -100,12 +102,22 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
                 .MaxHeight(320));
     }
 
+    private static IReadOnlyList<string> Headers() =>
+    [
+        Str.T("monitor.process.pid", "PID"),
+        Str.T("monitor.process.user", "User"),
+        Str.T("monitor.process.cpu", "CPU"),
+        Str.T("monitor.process.mem", "MEM"),
+        Str.T("monitor.process.rss", "RSS"),
+        Str.T("monitor.process.command", "Command"),
+    ];
+
     private static Element Row(RemoteProcessInfo process) =>
         Grid(
                 columns: Columns,
                 rows: [GridSize.Auto],
                 TextBlock(process.ProcessId.ToString()).FontFamily(AppTheme.Monospace).FontSize(12).Grid(row: 0, column: 0),
-                TextBlock(process.User ?? "n/a")
+                TextBlock(process.User ?? Str.T("monitor.na", "n/a"))
                     .TextTrimming(TextTrimming.CharacterEllipsis)
                     .Foreground(Theme.SecondaryText)
                     .Grid(row: 0, column: 1),

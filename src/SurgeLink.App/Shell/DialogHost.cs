@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Protocols;
@@ -70,24 +71,37 @@ internal sealed class DialogHost : Component
     {
         var rows = new List<Element>
         {
-            FactRow("Endpoint", challenge.Endpoint, monospace: false),
-            FactRow("Key algorithm", challenge.Algorithm, monospace: false),
-            FactRow("SHA256 fingerprint", challenge.FingerprintSha256, monospace: true),
+            FactRow(Str.T("shell.dialog.hostKey.endpoint", "Endpoint"), challenge.Endpoint, monospace: false),
+            FactRow(Str.T("shell.dialog.hostKey.algorithm", "Key algorithm"), challenge.Algorithm, monospace: false),
+            FactRow(Str.T("shell.dialog.hostKey.fingerprint", "SHA256 fingerprint"), challenge.FingerprintSha256, monospace: true),
         };
 
         rows.Add(challenge.IsChanged
-            ? InfoBar("Host key changed", $"The key presented by {challenge.Endpoint} does not match the fingerprint trusted before. " +
-                                          "This can mean the server was reinstalled \u2014 or that the connection is being intercepted. " +
-                                          "Only trust it when you can explain the change.")
+            ? InfoBar(
+                    Str.T("shell.dialog.hostKey.changedTitle", "Host key changed"),
+                    Str.F(
+                        "shell.dialog.hostKey.changedBody",
+                        "The key presented by {0} does not match the fingerprint trusted before. This can mean the server " +
+                        "was reinstalled — or that the connection is being intercepted. Only trust it when you can " +
+                        "explain the change.",
+                        challenge.Endpoint))
                 .Error()
-            : InfoBar("Unknown host", "This is the first connection to this host. Compare the fingerprint with the server administrator before trusting it.")
+            : InfoBar(
+                    Str.T("shell.dialog.hostKey.unknownTitle", "Unknown host"),
+                    Str.T(
+                        "shell.dialog.hostKey.unknownBody",
+                        "This is the first connection to this host. Compare the fingerprint with the server " +
+                        "administrator before trusting it."))
                 .Informational());
 
-        var dialog = ContentDialog("Verify host key", VStack(AppTheme.SpacingM, rows.ToArray()), primaryButtonText: "Trust once") with
+        var dialog = ContentDialog(
+                Str.T("shell.dialog.hostKey.title", "Verify host key"),
+                VStack(AppTheme.SpacingM, rows.ToArray()),
+                primaryButtonText: Str.T("shell.dialog.hostKey.trustOnce", "Trust once")) with
         {
             IsOpen = true,
-            SecondaryButtonText = "Trust always",
-            CloseButtonText = "Reject",
+            SecondaryButtonText = Str.T("shell.dialog.hostKey.trustAlways", "Trust always"),
+            CloseButtonText = Str.T("shell.dialog.hostKey.reject", "Reject"),
             DefaultButton = ContentDialogButton.Close,
             OnClosed = result => Finish(interaction, pending, result switch
             {
@@ -107,10 +121,12 @@ internal sealed class DialogHost : Component
         PendingInteraction pending,
         InteractionService interaction)
     {
+        var passwordLabel = Str.T("shell.dialog.secret.password", "Password");
         Element input = request.IsPassword
-            ? PasswordBox(Optional<string>.Of(answer), setAnswer, placeholderText: "Password")
-                .AutomationName("Password")
-            : TextBox(Optional<string>.Of(answer), setAnswer, placeholderText: "Value")
+            ? PasswordBox(Optional<string>.Of(answer), setAnswer, placeholderText: passwordLabel)
+                .AutomationName(passwordLabel)
+            : TextBox(Optional<string>.Of(answer), setAnswer,
+                    placeholderText: Str.T("shell.dialog.secret.value", "Value"))
                 .AutomationName(request.Title);
 
         var content = VStack(
@@ -118,10 +134,13 @@ internal sealed class DialogHost : Component
             TextBlock(request.Description).TextWrapping(TextWrapping.Wrap).Foreground(Theme.SecondaryText),
             input);
 
-        var dialog = ContentDialog(request.Title, content, primaryButtonText: "Continue") with
+        var dialog = ContentDialog(
+                request.Title,
+                content,
+                primaryButtonText: Str.T("shell.dialog.secret.continue", "Continue")) with
         {
             IsOpen = true,
-            CloseButtonText = "Cancel",
+            CloseButtonText = Str.T("common.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result => Finish(
                 interaction,
@@ -164,10 +183,13 @@ internal sealed class DialogHost : Component
                 .AutomationName(request.Label),
             Caption(request.Title).Foreground(Theme.SecondaryText));
 
-        var dialog = ContentDialog(request.Title, content, primaryButtonText: "OK") with
+        var dialog = ContentDialog(
+                request.Title,
+                content,
+                primaryButtonText: Str.T("common.ok", "OK")) with
         {
             IsOpen = true,
-            CloseButtonText = "Cancel",
+            CloseButtonText = Str.T("common.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result => Finish(
                 interaction,
@@ -189,10 +211,13 @@ internal sealed class DialogHost : Component
 
         // An explicit positive button keeps the dialog's command space non-empty;
         // an empty primary label made WinUI tear down the dialog incorrectly.
-        var dialog = ContentDialog(request.Title, content, primaryButtonText: "OK") with
+        var dialog = ContentDialog(
+                request.Title,
+                content,
+                primaryButtonText: Str.T("common.ok", "OK")) with
         {
             IsOpen = true,
-            CloseButtonText = "Close",
+            CloseButtonText = Str.T("common.close", "Close"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = _ => Finish(interaction, pending, null),
         };

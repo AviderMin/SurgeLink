@@ -1,6 +1,7 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Sessions;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Sessions;
@@ -72,25 +73,31 @@ internal static class WorkspaceView
             });
     }
 
-    private static Element BuildEmptyWorkspace(WorkspaceProps props) =>
-        Grid(
+    private static Element BuildEmptyWorkspace(WorkspaceProps props)
+    {
+        var newSession = Str.T("shell.workspace.newSession", "New session");
+        var openDemo = Str.T("shell.workspace.openDemo", "Open demo session");
+
+        return Grid(
             columns: [GridSize.Star()],
             rows: [GridSize.Star()],
             VStack(
                     AppTheme.SpacingM,
                     Icon(FontIcon("\uE756", fontSize: 44)),
-                    Title("No session open").HAlign(HorizontalAlignment.Center),
-                    Body("Pick a saved session on the left, create a new connection, or explore the offline demo.")
+                    Title(Str.T("shell.workspace.emptyTitle", "No session open")).HAlign(HorizontalAlignment.Center),
+                    Body(Str.T(
+                            "shell.workspace.emptyBody",
+                            "Pick a saved session on the left, create a new connection, or explore the offline demo."))
                         .Foreground(Theme.SecondaryText)
                         .TextWrapping(TextWrapping.Wrap)
                         .TextAlignment(TextAlignment.Center),
                     HStack(
                             AppTheme.SpacingS,
-                            Button("New session", () => props.NewSession(null))
+                            Button(newSession, () => props.NewSession(null))
                                 .AccentButton()
-                                .AutomationName("New session"),
-                            Button("Open demo session", props.OpenDemo)
-                                .AutomationName("Open demo session")
+                                .AutomationName(newSession),
+                            Button(openDemo, props.OpenDemo)
+                                .AutomationName(openDemo)
                                 .AutomationId("EmptyStateOpenDemo"))
                         .HAlign(HorizontalAlignment.Center)
                         .Margin(0, AppTheme.SpacingM, 0, 0))
@@ -98,4 +105,5 @@ internal static class WorkspaceView
                 .VAlign(VerticalAlignment.Center)
                 .MaxWidth(560)
                 .Grid(row: 0));
+    }
 }

@@ -8,6 +8,8 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
 using Windows.System;
 
+using SurgeLink.App.Localization;
+
 namespace SurgeLink.App.Views.Terminal;
 
 /// <summary>
@@ -289,10 +291,10 @@ internal sealed partial class TerminalSurface
     private void ShowContextMenu(Point position)
     {
         var flyout = new MenuFlyout();
-        flyout.Items.Add(CreateMenuItem("Copy", "\uE8C8", () => CopySelection(), HasSelection));
-        flyout.Items.Add(CreateMenuItem("Paste", "\uE77F", PasteFromClipboard, true));
-        flyout.Items.Add(CreateMenuItem("Select all", "\uE8B3", SelectAll, true));
-        flyout.Items.Add(CreateMenuItem("Clear", "\uE894", ClearScreen, true));
+        flyout.Items.Add(CreateMenuItem(Str.T("terminal.copy", "Copy"), "\uE8C8", () => CopySelection(), HasSelection));
+        flyout.Items.Add(CreateMenuItem(Str.T("terminal.paste", "Paste"), "\uE77F", PasteFromClipboard, true));
+        flyout.Items.Add(CreateMenuItem(Str.T("terminal.selectAll", "Select all"), "\uE8B3", SelectAll, true));
+        flyout.Items.Add(CreateMenuItem(Str.T("terminal.clear", "Clear"), "\uE894", ClearScreen, true));
         flyout.ShowAt(this, new FlyoutShowOptions { Position = position });
     }
 

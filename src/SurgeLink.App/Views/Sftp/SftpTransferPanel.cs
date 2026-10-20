@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using SurgeLink.App.Components;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -25,12 +26,17 @@ internal static class SftpTransferPanel
         var header = Grid(
             columns: [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto],
             rows: [GridSize.Auto],
-            BodyStrong("Transfers").Grid(row: 0, column: 0),
-            Caption(active > 0 ? active + " active" : "idle").Foreground(Theme.SecondaryText)
+            BodyStrong(Str.T("sftp.transfers.title", "Transfers")).Grid(row: 0, column: 0),
+            Caption(active > 0
+                    ? Str.F("sftp.transfers.activeCount", "{0} active", active)
+                    : Str.T("sftp.transfers.idle", "idle"))
+                .Foreground(Theme.SecondaryText)
                 .Margin(AppTheme.SpacingS, 0, 0, 0)
                 .Grid(row: 0, column: 1),
             items.Any(item => !item.IsActive)
-                ? Button("Clear finished", clearFinished).SubtleButton().Grid(row: 0, column: 3)
+                ? Button(Str.T("sftp.transfers.clearFinished", "Clear finished"), clearFinished)
+                    .SubtleButton()
+                    .Grid(row: 0, column: 3)
                 : null);
 
         var rows = items
@@ -47,7 +53,7 @@ internal static class SftpTransferPanel
             .Background(Theme.LayerFill)
             .WithBorder(Theme.DividerStroke, 1)
             .CornerRadius(AppTheme.CardRadius)
-            .AutomationName("Transfers");
+            .AutomationName(Str.T("sftp.transfers.automation", "Transfers"));
     }
 
     private static Element Divider() =>
@@ -66,8 +72,8 @@ internal static class SftpTransferRow
         Element cancelButton = item.IsActive
             ? Button(Icon(FontIcon("\uE711", fontSize: 12)), () => cancel(item.Id))
                 .SubtleButton()
-                .ToolTip("Cancel transfer")
-                .AutomationName("Cancel " + item.Name)
+                .ToolTip(Str.T("sftp.transfers.cancel", "Cancel transfer"))
+                .AutomationName(Str.F("sftp.transfers.cancelAutomation", "Cancel {0}", item.Name))
             : Border(Empty());
 
         return Grid(
@@ -88,12 +94,19 @@ internal static class SftpTransferRow
 
     private static string DescribeStatus(TransferItem item) => item.Status switch
     {
-        TransferStatus.Queued => "Queued · " + DataFormat.Bytes(item.TotalBytes),
-        TransferStatus.Running => DataFormat.Percent(item.Fraction) + " · "
-                                  + DataFormat.Bytes(item.DoneBytes) + " of " + DataFormat.Bytes(item.TotalBytes),
-        TransferStatus.Completed => "Completed · " + DataFormat.Bytes(item.DoneBytes),
-        TransferStatus.Cancelled => "Cancelled",
-        TransferStatus.Failed => "Failed · " + (item.Error ?? "unknown error"),
+        TransferStatus.Queued => Str.F("sftp.transfers.queued", "Queued · {0}", DataFormat.Bytes(item.TotalBytes)),
+        TransferStatus.Running => Str.F(
+            "sftp.transfers.running",
+            "{0} · {1} of {2}",
+            DataFormat.Percent(item.Fraction),
+            DataFormat.Bytes(item.DoneBytes),
+            DataFormat.Bytes(item.TotalBytes)),
+        TransferStatus.Completed => Str.F("sftp.transfers.completed", "Completed · {0}", DataFormat.Bytes(item.DoneBytes)),
+        TransferStatus.Cancelled => Str.T("sftp.transfers.cancelled", "Cancelled"),
+        TransferStatus.Failed => Str.F(
+            "sftp.transfers.failed",
+            "Failed · {0}",
+            item.Error ?? Str.T("sftp.transfers.unknownError", "unknown error")),
         _ => item.Status.ToString(),
     };
 }

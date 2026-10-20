@@ -68,6 +68,14 @@ $p = Get-Process SurgeLink | Select-Object -First 1
   component throws during render (the most common UI regression in this project).
 - Terminal content appears as text inside the terminal surface's automation peer.
 
+**Localization**
+
+`tools/verify-app.ps1` runs two phases against the same build: it forces `settings.json` to
+`{"language":1}` (English) and drives the demo session end to end, then relaunches with
+`{"language":2}` (Chinese) and asserts Chinese text is present in the accessibility tree
+(no "Render error", key wording such as 会话/设置/新建). Afterwards it restores
+`{"language":0}` so a manual run follows the Windows UI language again.
+
 **End-to-end smoke test (no SSH server required)**
 
 1. Launch the app.

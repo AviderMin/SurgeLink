@@ -3,6 +3,7 @@ using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
 using Windows.Foundation;
 using static Microsoft.UI.Reactor.Factories;
@@ -81,7 +82,10 @@ internal sealed class Gauge : Component<GaugeProps>
                 rows: [GridSize.Star()],
                 ring,
                 labels)
-            .AutomationName($"Gauge {Props.ValueText ?? DataFormat.Percent(fraction)}");
+            .AutomationName(Str.F(
+                "monitor.gauge.automation",
+                "Gauge {0}",
+                Props.ValueText ?? DataFormat.Percent(fraction)));
     }
 
     /// <summary>Builds a clockwise arc from the start angle covering <paramref name="fraction"/> of the sweep.</summary>

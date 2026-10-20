@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.App.Sessions;
 using SurgeLink.App.Styling;
@@ -44,6 +45,11 @@ internal sealed class MainShell : Component
         var snapshot = UseExternalStore(workspace.Subscribe, () => workspace.Snapshot);
         var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
 
+        // The localization service bumps Revision on every language change; the
+        // root element is keyed by it so the whole tree rebuilds with new text.
+        var localization = services.Localization;
+        var localeRevision = UseExternalStore(localization.Subscribe, () => localization.Revision);
+
         // WinUI terminates the process when an exception escapes a UI callback;
         // record it before that happens so the crash is diagnosable.
         UseEffect(
@@ -68,8 +74,10 @@ internal sealed class MainShell : Component
         void OpenSettings() => setSection(ShellSection.Settings);
 
         void ShowAbout() => _ = services.Interaction.ShowInfoAsync(
-            "SurgeLink",
-            "A multi-protocol terminal for Windows. Terminal, SFTP and remote monitoring, built with WinUI 3 + Reactor.");
+            Str.T("app.aboutTitle", "About SurgeLink"),
+            Str.T(
+                "app.aboutBody",
+                "A multi-protocol terminal for Windows. Terminal, SFTP and remote monitoring, built with WinUI 3 + Reactor."));
 
         void Connect(SessionProfile profile) => _ = ConnectAsync(profile);
 
@@ -93,14 +101,16 @@ internal sealed class MainShell : Component
             }
             catch (ProtocolException ex)
             {
-                await services.Interaction.ShowErrorAsync("Connection failed", ex.Message);
+                await services.Interaction.ShowErrorAsync(
+                    Str.T("shell.error.connectionFailed", "Connection failed"), ex.Message);
             }
             catch (OperationCanceledException)
             {
             }
             catch (Exception ex)
             {
-                await services.Interaction.ShowErrorAsync("Unexpected error", ex.Message);
+                await services.Interaction.ShowErrorAsync(
+                    Str.T("shell.error.unexpected", "Unexpected error"), ex.Message);
             }
         }
 
@@ -108,7 +118,12 @@ internal sealed class MainShell : Component
         {
             setSection(ShellSection.Workspace);
             var profile = workspace.Snapshot.Profiles.FirstOrDefault(p => p.ProtocolId == "demo")
-                          ?? SessionProfile.New("demo", "demo-host", 0, Environment.UserName, "Demo session");
+                          ?? SessionProfile.New(
+                              "demo",
+                              "demo-host",
+                              0,
+                              Environment.UserName,
+                              Str.T("shell.demo.profileName", "Demo session"));
             workspace.SaveProfile(profile, new StoredCredential { Password = "demo" });
             Connect(profile);
         }
@@ -129,10 +144,13 @@ internal sealed class MainShell : Component
         {
             var confirmed = await services.Interaction.RequestConfirmationAsync(
                 new ConfirmationRequest(
-                    "Delete session",
-                    $"Delete '{profile.Name}'? The saved password is removed as well. Open tabs stay open.",
-                    "Delete",
-                    "Cancel"),
+                    Str.T("shell.confirm.deleteSession.title", "Delete session"),
+                    Str.F(
+                        "shell.confirm.deleteSession.body",
+                        "Delete '{0}'? The saved password is removed as well. Open tabs stay open.",
+                        profile.Name),
+                    Str.T("common.delete", "Delete"),
+                    Str.T("common.cancel", "Cancel")),
                 CancellationToken.None);
 
             if (confirmed)
@@ -149,10 +167,10 @@ internal sealed class MainShell : Component
             {
                 var confirmed = await services.Interaction.RequestConfirmationAsync(
                     new ConfirmationRequest(
-                        "Close session",
-                        $"'{tab.Title}' is still connected. Close it?",
-                        "Close",
-                        "Keep open"),
+                        Str.T("shell.confirm.closeTab.title", "Close session"),
+                        Str.F("shell.confirm.closeTab.body", "'{0}' is still connected. Close it?", tab.Title),
+                        Str.T("common.close", "Close"),
+                        Str.T("shell.confirm.closeTab.keepOpen", "Keep open")),
                     CancellationToken.None);
 
                 if (!confirmed)
@@ -204,11 +222,13 @@ internal sealed class MainShell : Component
             }
             catch (ProtocolException ex)
             {
-                await services.Interaction.ShowErrorAsync("Reconnect failed", ex.Message);
+                await services.Interaction.ShowErrorAsync(
+                    Str.T("shell.error.reconnectFailed", "Reconnect failed"), ex.Message);
             }
             catch (Exception ex)
             {
-                await services.Interaction.ShowErrorAsync("Reconnect failed", ex.Message);
+                await services.Interaction.ShowErrorAsync(
+                    Str.T("shell.error.reconnectFailed", "Reconnect failed"), ex.Message);
             }
         }
 
@@ -218,11 +238,11 @@ internal sealed class MainShell : Component
         // Title bar -----------------------------------------------------------
         var activeTab = snapshot.ActiveTab;
         var subtitle = section == ShellSection.Settings
-            ? "Settings"
+            ? Str.T("shell.subtitle.settings", "Settings")
             : snapshot.IsConnecting
-                ? "Connecting\u2026"
+                ? Str.T("shell.subtitle.connecting", "Connecting\u2026")
                 : activeTab is null
-                    ? "No session open"
+                    ? Str.T("shell.subtitle.noSession", "No session open")
                     : $"{activeTab.Title}  \u00b7  {AppTheme.StatusText(activeTab.State)}  \u00b7  {activeTab.Session.HostInfo.Summary}";
 
         var titleBar = TitleBarView.Render(new TitleBarProps(
@@ -259,7 +279,7 @@ internal sealed class MainShell : Component
             Component<SettingsPage>().IsVisible(section == ShellSection.Settings).Grid(row: 0));
 
         var navigation = NavigationView(
-                [NavItem("Sessions", "\uE8A9", "workspace")],
+                [NavItem(Str.T("shell.nav.sessions", "Sessions"), "\uE8A9", "workspace")],
                 BuildContent())
             .PaneDisplayMode(NavigationViewPaneDisplayMode.Left)
             // In "Left" display mode WinUI keeps the pane permanently expanded, so
@@ -269,7 +289,7 @@ internal sealed class MainShell : Component
             .OpenPaneLength(AppTheme.SidebarWidth)
             .PaneTitle("SurgeLink")
             .PaneCustomContent(sidebar)
-            .FooterMenuItems([NavItem("Settings", "\uE713", "settings")])
+            .FooterMenuItems([NavItem(Str.T("shell.nav.settings", "Settings"), "\uE713", "settings")])
             .ItemInvoked(tag => HandleNavigation(tag, setSection))
             .Set(view => view.IsSettingsVisible = false) with
         {
@@ -315,7 +335,11 @@ internal sealed class MainShell : Component
             () => CycleTab(-1),
             OpenSettings);
 
-        return CommandHost(commands, root).RequestedTheme(ThemeController.ToElementTheme(settings.Theme));
+        // Keying the root by the locale revision rebuilds the whole tree in the new
+        // language; sessions and terminal state live in the stores, not in the tree.
+        return CommandHost(commands, root)
+            .RequestedTheme(ThemeController.ToElementTheme(settings.Theme))
+            .WithKey("locale-" + localeRevision);
     }
 
     private static void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs args) =>
@@ -363,8 +387,9 @@ internal sealed class MainShell : Component
 
                 var secret = await services.Interaction.RequestSecretAsync(
                     new SecretRequest(
-                        $"Password for {profile.Username}@{profile.Host}",
-                        "This login is not saved. Enter the password for this session.",
+                        Str.F("shell.prompt.password.title", "Password for {0}@{1}", profile.Username, profile.Host),
+                        Str.T("shell.prompt.password.body",
+                            "This login is not saved. Enter the password for this session."),
                         IsPassword: true),
                     CancellationToken.None);
 

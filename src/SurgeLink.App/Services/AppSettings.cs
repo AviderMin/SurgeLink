@@ -1,3 +1,4 @@
+using SurgeLink.App.Localization;
 using SurgeLink.Core.Storage;
 
 namespace SurgeLink.App.Services;
@@ -21,6 +22,9 @@ public sealed record AppSettings
 
     /// <summary>Light, dark, or follow Windows.</summary>
     public ThemeMode Theme { get; init; } = ThemeMode.System;
+
+    /// <summary>UI language; <see cref="AppLanguage.System"/> follows Windows.</summary>
+    public AppLanguage Language { get; init; } = AppLanguage.System;
 
     /// <summary>Monospace family for the terminal, empty for auto detection.</summary>
     public string TerminalFontFamily { get; init; } = string.Empty;

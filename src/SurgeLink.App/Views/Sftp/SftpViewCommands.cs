@@ -1,5 +1,6 @@
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml.Controls;
+using SurgeLink.App.Localization;
 using SurgeLink.Core.Files;
 using Windows.Storage;
 
@@ -36,7 +37,7 @@ internal static class SftpViewCommands
         }
         catch (Exception ex)
         {
-            setBanner(new SftpBanner(InfoBarSeverity.Error, "Upload", ex.Message));
+            setBanner(new SftpBanner(InfoBarSeverity.Error, Str.T("sftp.command.upload", "Upload"), ex.Message));
         }
     }
 
@@ -51,7 +52,10 @@ internal static class SftpViewCommands
         var files = selected.Where(entry => !entry.IsDirectory).ToList();
         if (files.Count == 0)
         {
-            setBanner(new SftpBanner(InfoBarSeverity.Warning, "Download", "Select at least one file to download."));
+            setBanner(new SftpBanner(
+                InfoBarSeverity.Warning,
+                Str.T("sftp.command.download", "Download"),
+                Str.T("sftp.warning.selectFiles", "Select at least one file to download.")));
             return;
         }
 
@@ -72,7 +76,7 @@ internal static class SftpViewCommands
         }
         catch (Exception ex)
         {
-            setBanner(new SftpBanner(InfoBarSeverity.Error, "Download", ex.Message));
+            setBanner(new SftpBanner(InfoBarSeverity.Error, Str.T("sftp.command.download", "Download"), ex.Message));
         }
     }
 }

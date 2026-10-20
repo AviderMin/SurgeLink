@@ -1,6 +1,7 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Sessions;
 using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
@@ -35,8 +36,10 @@ internal static class StatusBarView
                 .FontSize(12)
                 .Foreground(active is null ? Theme.SecondaryText : AppTheme.StatusBrush(state))
                 .VAlign(VerticalAlignment.Center)
-                .AutomationName(active is null ? "No session" : AppTheme.StatusText(state)),
-            Caption(active is null ? "Ready" : AppTheme.StatusText(state))
+                .AutomationName(active is null
+                    ? Str.T("shell.status.noSession", "No session")
+                    : AppTheme.StatusText(state)),
+            Caption(active is null ? Str.T("shell.status.ready", "Ready") : AppTheme.StatusText(state))
                 .Foreground(Theme.PrimaryText)
                 .VAlign(VerticalAlignment.Center)
                 .AutomationId("StatusConnectionState"),
@@ -58,14 +61,17 @@ internal static class StatusBarView
 
         if (active is not null && active.State is ConnectionState.Disconnected or ConnectionState.Faulted)
         {
-            items.Add(Button("Reconnect", () => props.Reconnect(active))
+            var reconnect = Str.T("shell.status.reconnect", "Reconnect");
+            items.Add(Button(reconnect, () => props.Reconnect(active))
                 .SubtleButton()
-                .AutomationName("Reconnect session")
+                .AutomationName(reconnect)
                 .AutomationId("ReconnectButton"));
         }
 
         items.Add(Border(Empty()).Flex(grow: 1, basis: 0));
-        items.Add(Caption($"{snapshot.Tabs.Count} session{(snapshot.Tabs.Count == 1 ? string.Empty : "s")}")
+        items.Add(Caption(snapshot.Tabs.Count == 1
+                ? Str.F("shell.status.sessionsOne", "{0} session", snapshot.Tabs.Count)
+                : Str.F("shell.status.sessionsMany", "{0} sessions", snapshot.Tabs.Count))
             .Foreground(Theme.SecondaryText)
             .VAlign(VerticalAlignment.Center)
             .AutomationId("StatusSessionCount"));

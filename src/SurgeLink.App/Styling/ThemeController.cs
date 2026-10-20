@@ -1,6 +1,7 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 
 namespace SurgeLink.App.Styling;
@@ -29,8 +30,8 @@ internal static class ThemeController
     /// <summary>Caption used in the settings page.</summary>
     public static string Describe(ThemeMode mode) => mode switch
     {
-        ThemeMode.Light => "Always light",
-        ThemeMode.Dark => "Always dark",
-        _ => "Follow Windows",
+        ThemeMode.Light => Str.T("shell.theme.alwaysLight", "Always light"),
+        ThemeMode.Dark => Str.T("shell.theme.alwaysDark", "Always dark"),
+        _ => Str.T("shell.theme.followSystem", "Follow Windows"),
     };
 }

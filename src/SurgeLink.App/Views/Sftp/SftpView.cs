@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using SurgeLink.App.Components;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Files;
 using Windows.System;
@@ -112,12 +113,14 @@ internal sealed class SftpView : Component<SftpViewProps>
         {
             TransferStatus.Completed => new SftpBanner(
                 InfoBarSeverity.Success,
-                item.Direction == TransferDirection.Upload ? "Upload complete" : "Download complete",
+                item.Direction == TransferDirection.Upload
+                    ? Str.T("sftp.banner.uploadComplete", "Upload complete")
+                    : Str.T("sftp.banner.downloadComplete", "Download complete"),
                 item.Name + " · " + DataFormat.Bytes(item.DoneBytes)),
             TransferStatus.Failed => new SftpBanner(
                 InfoBarSeverity.Error,
-                "Transfer failed",
-                item.Name + " · " + (item.Error ?? "unknown error")),
+                Str.T("sftp.banner.transferFailed", "Transfer failed"),
+                item.Name + " · " + (item.Error ?? Str.T("sftp.transfers.unknownError", "unknown error"))),
             _ => null,
         });
         _queue ??= new SftpTransferQueue(

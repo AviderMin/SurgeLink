@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.App.Sessions;
 using SurgeLink.App.Styling;
@@ -27,7 +28,8 @@ internal sealed record SidebarProps(
 /// </summary>
 internal sealed class SidebarView : Component<SidebarProps>
 {
-    private const string NoGroupBucket = "Sessions";
+    /// <summary>Internal grouping key for profiles without a group; never shown as-is.</summary>
+    private const string NoGroupBucket = "\u0000ungrouped";
 
     public override Element Render()
     {
@@ -56,22 +58,25 @@ internal sealed class SidebarView : Component<SidebarProps>
             search,
             props.Snapshot.SearchText);
 
-        var searchBox = TextBox(Optional<string>.Of(search), setSearch, placeholderText: "Filter sessions")
-            .AutomationName("Filter sessions")
+        var filterLabel = Str.T("shell.sidebar.filter", "Filter sessions");
+        var searchBox = TextBox(Optional<string>.Of(search), setSearch, placeholderText: filterLabel)
+            .AutomationName(filterLabel)
             .AccessKey("F")
             .AutomationId("SessionFilter");
 
-        var newSessionButton = Button("New session", () => props.CreateSession(null))
+        var newSession = Str.T("shell.sidebar.newSession", "New session");
+        var newSessionButton = Button(newSession, () => props.CreateSession(null))
             .AccentButton()
             .HAlign(HorizontalAlignment.Stretch)
-            .AutomationName("New session")
+            .AutomationName(newSession)
             .AutomationId("NewSessionButton")
             .Flex(grow: 1, basis: 0);
 
+        var demoLabel = Str.T("shell.sidebar.demo", "Open demo session");
         var demoButton = Button(Icon(FontIcon("\uE768", fontSize: 14)), props.OpenDemo)
             .SubtleButton()
-            .ToolTip("Open the offline demo session")
-            .AutomationName("Open demo session")
+            .ToolTip(Str.T("shell.sidebar.demoTooltip", "Open the offline demo session"))
+            .AutomationName(demoLabel)
             .AccessKey("D")
             .AutomationId("OpenDemoButton");
 
@@ -84,7 +89,7 @@ internal sealed class SidebarView : Component<SidebarProps>
                 searchBox,
                 HStack(AppTheme.SpacingS, newSessionButton, demoButton),
                 body.Flex(grow: 1, basis: 0),
-                Caption("Right-click a session for edit, duplicate and delete.")
+                Caption(Str.T("shell.sidebar.hint", "Right-click a session for edit, duplicate and delete."))
                     .Foreground(Theme.SecondaryText)
                     .TextWrapping(TextWrapping.Wrap))
             .FlexPadding(AppTheme.SpacingM, AppTheme.SpacingS);
@@ -101,7 +106,12 @@ internal sealed class SidebarView : Component<SidebarProps>
 
         foreach (var group in groups)
         {
-            elements.Add(Caption(group.Key)
+            // The bucket for ungrouped profiles is labelled; user groups keep their name.
+            var header = string.Equals(group.Key, NoGroupBucket, StringComparison.Ordinal)
+                ? Str.T("shell.sidebar.group.other", "Sessions")
+                : group.Key;
+
+            elements.Add(Caption(header)
                 .SemiBold()
                 .Foreground(Theme.SecondaryText)
                 .Margin(AppTheme.SpacingS, AppTheme.SpacingS, 0, AppTheme.SpacingXs)
@@ -147,11 +157,11 @@ internal sealed class SidebarView : Component<SidebarProps>
             .AutomationId("Session-" + profile.Id)
             .PositionInSet(position, total)
             .WithContextFlyout(MenuItems(
-                MenuItem("Connect", () => props.Connect(profile)),
-                MenuItem("Edit", () => props.Edit(profile)),
-                MenuItem("Duplicate", () => props.Duplicate(profile)),
+                MenuItem(Str.T("shell.sidebar.menu.connect", "Connect"), () => props.Connect(profile)),
+                MenuItem(Str.T("shell.sidebar.menu.edit", "Edit"), () => props.Edit(profile)),
+                MenuItem(Str.T("shell.sidebar.menu.duplicate", "Duplicate"), () => props.Duplicate(profile)),
                 MenuSeparator(),
-                MenuItem("Delete", () => props.Delete(profile))));
+                MenuItem(Str.T("shell.sidebar.menu.delete", "Delete"), () => props.Delete(profile))));
     }
 
     private static Element BuildEmptyState(SidebarProps props, string search)
@@ -160,19 +170,24 @@ internal sealed class SidebarView : Component<SidebarProps>
         return VStack(
                 AppTheme.SpacingS,
                 Icon(FontIcon(isFiltered ? "\uE721" : "\uE774", fontSize: 28)),
-                BodyStrong(isFiltered ? "No matching sessions" : "No saved sessions yet"),
+                BodyStrong(isFiltered
+                    ? Str.T("shell.sidebar.empty.noMatches", "No matching sessions")
+                    : Str.T("shell.sidebar.empty.noSessions", "No saved sessions yet")),
                 Caption(isFiltered
-                        ? $"Nothing matches \"{search.Trim()}\". Clear the filter to see every session."
-                        : "Create a connection to get started, or explore the offline demo session.")
+                        ? Str.F("shell.sidebar.empty.noMatchesHint",
+                            "Nothing matches \"{0}\". Clear the filter to see every session.", search.Trim())
+                        : Str.T("shell.sidebar.empty.noSessionsHint",
+                            "Create a connection to get started, or explore the offline demo session."))
                     .Foreground(Theme.SecondaryText)
                     .TextWrapping(TextWrapping.Wrap)
                     .TextAlignment(TextAlignment.Center),
                 isFiltered
-                    ? Button("Clear filter", () => AppServices.EnsureInitialized().Workspace.SetSearchText(string.Empty))
-                        .AutomationName("Clear session filter")
-                    : Button("New session", () => props.CreateSession(null))
+                    ? Button(Str.T("shell.sidebar.clearFilter", "Clear filter"),
+                            () => AppServices.EnsureInitialized().Workspace.SetSearchText(string.Empty))
+                        .AutomationName(Str.T("shell.sidebar.clearFilterAutomation", "Clear session filter"))
+                    : Button(Str.T("shell.sidebar.createFirst", "New session"), () => props.CreateSession(null))
                         .AccentButton()
-                        .AutomationName("Create first session"))
+                        .AutomationName(Str.T("shell.sidebar.createFirstAutomation", "Create first session")))
             .HAlign(HorizontalAlignment.Center)
             .VAlign(VerticalAlignment.Center)
             .Margin(AppTheme.SpacingL, AppTheme.SpacingXl);

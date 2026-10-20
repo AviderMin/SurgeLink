@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using SurgeLink.App.Components;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Files;
 using static Microsoft.UI.Reactor.Factories;
@@ -32,13 +33,13 @@ internal static class SftpEntryList
         Grid(
             columns: Columns,
             rows: [GridSize.Auto],
-            SortHeader("Name", SftpSortColumn.Name, sort, ascending, sortBy).Grid(row: 0, column: 1),
-            SortHeader("Size", SftpSortColumn.Size, sort, ascending, sortBy)
+            SortHeader(Str.T("sftp.column.name", "Name"), SftpSortColumn.Name, sort, ascending, sortBy).Grid(row: 0, column: 1),
+            SortHeader(Str.T("sftp.column.size", "Size"), SftpSortColumn.Size, sort, ascending, sortBy)
                 .HAlign(HorizontalAlignment.Right)
                 .Grid(row: 0, column: 2),
-            SortHeader("Modified", SftpSortColumn.Modified, sort, ascending, sortBy).Grid(row: 0, column: 3),
-            SortHeader("Permissions", SftpSortColumn.Permissions, sort, ascending, sortBy).Grid(row: 0, column: 4),
-            SortHeader("Owner", SftpSortColumn.Owner, sort, ascending, sortBy).Grid(row: 0, column: 5))
+            SortHeader(Str.T("sftp.column.modified", "Modified"), SftpSortColumn.Modified, sort, ascending, sortBy).Grid(row: 0, column: 3),
+            SortHeader(Str.T("sftp.column.permissions", "Permissions"), SftpSortColumn.Permissions, sort, ascending, sortBy).Grid(row: 0, column: 4),
+            SortHeader(Str.T("sftp.column.owner", "Owner"), SftpSortColumn.Owner, sort, ascending, sortBy).Grid(row: 0, column: 5))
         .Padding(AppTheme.SpacingS, 0);
 
     /// <summary>The file list. Selection and key handling are owned by the caller.</summary>
@@ -68,7 +69,7 @@ internal static class SftpEntryList
                     list.ItemContainerStyle = style;
                 }
             })
-            .AutomationName("Files in the current folder");
+            .AutomationName(Str.T("sftp.list.automation", "Files in the current folder"));
 
     private static Element SortHeader(
         string label,
@@ -85,7 +86,7 @@ internal static class SftpEntryList
 
         return Button(content, () => sortBy(column))
             .SubtleButton()
-            .AutomationName("Sort by " + label)
+            .AutomationName(Str.F("sftp.column.sortBy", "Sort by {0}", label))
             .MinHeight(32);
     }
 
@@ -94,7 +95,8 @@ internal static class SftpEntryList
         var name = TextBlock(entry.Name).TextTrimming(TextTrimming.CharacterEllipsis);
         if (!string.IsNullOrEmpty(entry.LinkTarget))
         {
-            name = (TextBlockElement)name.ToolTip(entry.Name + " -> " + entry.LinkTarget);
+            name = (TextBlockElement)name.ToolTip(
+                Str.F("sftp.list.linkTarget", "{0} -> {1}", entry.Name, entry.LinkTarget));
         }
 
         return Grid(

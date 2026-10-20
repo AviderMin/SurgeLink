@@ -3,6 +3,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Protocols;
@@ -47,8 +48,6 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 {
     private const int MaxPort = 65535;
 
-    private static readonly string[] AuthNames = { "Password", "Private key", "Keyboard interactive" };
-
     public override Element Render()
     {
         var services = AppServices.EnsureInitialized();
@@ -80,6 +79,12 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         var protocol = plugins.Count > 0 ? plugins[Math.Clamp(protocolIndex, 0, plugins.Count - 1)].Descriptor : null;
         var isPassword = authIndex == (int)AuthenticationMethod.Password;
         var isKey = authIndex == (int)AuthenticationMethod.PublicKey;
+        var authNames = new[]
+        {
+            Str.T("shell.editor.auth.password", "Password"),
+            Str.T("shell.editor.auth.key", "Private key"),
+            Str.T("shell.editor.auth.keyboard", "Keyboard interactive"),
+        };
 
         var errors = Validate();
         var showErrors = errors.Count > 0 && (attempted || pickerError is not null);
@@ -100,11 +105,11 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         var dialog = ContentDialog(
                 TitleFor(props.Mode),
                 ScrollView(VStack(AppTheme.SpacingM, BuildFields()).MaxWidth(560)).MaxHeight(520),
-                primaryButtonText: "Save & connect") with
+                primaryButtonText: Str.T("shell.editor.saveAndConnect", "Save & connect")) with
         {
             IsOpen = true,
-            SecondaryButtonText = "Save",
-            CloseButtonText = "Cancel",
+            SecondaryButtonText = Str.T("shell.editor.save", "Save"),
+            CloseButtonText = Str.T("common.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result => SubmitOrCancel(result),
         };
@@ -159,75 +164,95 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
         Element[] BuildFields()
         {
+            var nameLabel = Str.T("shell.editor.name", "Session name");
+            var hostLabel = Str.T("shell.editor.host", "Host");
+            var portLabel = Str.T("shell.editor.port", "Port");
+            var userLabel = Str.T("shell.editor.userName", "User name");
+            var groupLabel = Str.T("shell.editor.group", "Group (optional)");
+            var authLabel = Str.T("shell.editor.auth", "Authentication");
+            var passwordLabel = Str.T("shell.editor.password", "Password");
+            var keyLabel = Str.T("shell.editor.keyFile", "Private key file");
+            var passphraseLabel = Str.T("shell.editor.passphrase", "Key passphrase (optional)");
+
             var fields = new List<Element>
             {
-                TextBox(Optional<string>.Of(name), setName, header: "Session name", placeholderText: "Defaults to user@host")
-                    .AutomationName("Session name"),
+                TextBox(Optional<string>.Of(name), setName, header: nameLabel,
+                        placeholderText: Str.T("shell.editor.namePlaceholder", "Defaults to user@host"))
+                    .AutomationName(nameLabel),
                 ComboBox(plugins.Select(p => p.Descriptor.DisplayName).ToArray(), Optional<int>.Of(protocolIndex), setProtocolIndex)
-                    .Set(combo => combo.Header = "Protocol")
-                    .AutomationName("Protocol"),
+                    .Set(combo => combo.Header = Str.T("shell.editor.protocol", "Protocol"))
+                    .AutomationName(Str.T("shell.editor.protocol", "Protocol")),
                 FieldGrid(
-                    TextBox(Optional<string>.Of(host), setHost, header: "Host", placeholderText: "host name or IP address")
-                        .AutomationName("Host")
+                    TextBox(Optional<string>.Of(host), setHost, header: hostLabel,
+                            placeholderText: Str.T("shell.editor.hostPlaceholder", "host name or IP address"))
+                        .AutomationName(hostLabel)
                         .Grid(column: 0),
-                    TextBox(Optional<string>.Of(port), setPort, header: "Port",
+                    TextBox(Optional<string>.Of(port), setPort, header: portLabel,
                             placeholderText: (protocol?.DefaultPort ?? 22).ToString(CultureInfo.InvariantCulture))
-                        .AutomationName("Port")
+                        .AutomationName(portLabel)
                         .Grid(column: 1)),
                 FieldGrid(
-                    TextBox(Optional<string>.Of(userName), setUserName, header: "User name")
-                        .AutomationName("User name")
+                    TextBox(Optional<string>.Of(userName), setUserName, header: userLabel)
+                        .AutomationName(userLabel)
                         .Grid(column: 0),
-                    TextBox(Optional<string>.Of(group), setGroup, header: "Group (optional)", placeholderText: "e.g. Production")
-                        .AutomationName("Group")
+                    TextBox(Optional<string>.Of(group), setGroup, header: groupLabel,
+                            placeholderText: Str.T("shell.editor.groupPlaceholder", "e.g. Production"))
+                        .AutomationName(groupLabel)
                         .Grid(column: 1)),
-                ComboBox(AuthNames, Optional<int>.Of(authIndex), setAuthIndex)
-                    .Set(combo => combo.Header = "Authentication")
-                    .AutomationName("Authentication"),
+                ComboBox(authNames, Optional<int>.Of(authIndex), setAuthIndex)
+                    .Set(combo => combo.Header = authLabel)
+                    .AutomationName(authLabel),
             };
 
             if (isPassword)
             {
-                fields.Add(PasswordBox(Optional<string>.Of(password), setPassword, placeholderText: "Password")
-                    .AutomationName("Password"));
-                fields.Add(CheckBox(Optional<bool?>.Of(remember), setRemember,
-                        label: "Remember password (stored encrypted with Windows DPAPI)")
-                    .AutomationName("Remember password"));
+                fields.Add(PasswordBox(Optional<string>.Of(password), setPassword, placeholderText: passwordLabel)
+                    .AutomationName(passwordLabel));
+                var rememberLabel = Str.T(
+                    "shell.editor.rememberPassword",
+                    "Remember password (stored encrypted with Windows DPAPI)");
+                fields.Add(CheckBox(Optional<bool?>.Of(remember), setRemember, label: rememberLabel)
+                    .AutomationName(rememberLabel));
             }
 
             if (isKey)
             {
                 fields.Add(FieldGrid(
-                    TextBox(Optional<string>.Of(keyPath), setKeyPath, header: "Private key file",
+                    TextBox(Optional<string>.Of(keyPath), setKeyPath, header: keyLabel,
                             placeholderText: @"C:\Users\you\.ssh\id_ed25519")
-                        .AutomationName("Private key file")
+                        .AutomationName(keyLabel)
                         .Grid(column: 0),
-                    Button("Browse\u2026", BrowseKey)
-                        .AutomationName("Browse for private key")
+                    Button(Str.T("shell.editor.browse", "Browse…"), BrowseKey)
+                        .AutomationName(Str.T("shell.editor.browseAutomation", "Browse for private key"))
                         .VAlign(VerticalAlignment.Bottom)
                         .Grid(column: 1)));
-                fields.Add(PasswordBox(Optional<string>.Of(passphrase), setPassphrase, placeholderText: "Key passphrase (optional)")
-                    .AutomationName("Key passphrase"));
-                fields.Add(CheckBox(Optional<bool?>.Of(remember), setRemember,
-                        label: "Remember passphrase (stored encrypted with Windows DPAPI)")
-                    .AutomationName("Remember passphrase"));
+                fields.Add(PasswordBox(Optional<string>.Of(passphrase), setPassphrase, placeholderText: passphraseLabel)
+                    .AutomationName(passphraseLabel));
+                var rememberPassphrase = Str.T(
+                    "shell.editor.rememberPassphrase",
+                    "Remember passphrase (stored encrypted with Windows DPAPI)");
+                fields.Add(CheckBox(Optional<bool?>.Of(remember), setRemember, label: rememberPassphrase)
+                    .AutomationName(rememberPassphrase));
             }
 
             if (authIndex == (int)AuthenticationMethod.KeyboardInteractive)
             {
                 fields.Add(InfoBar(
-                    "Keyboard interactive",
-                    "The server prompts for one-time codes after the connection is opened.").Informational());
+                    Str.T("shell.editor.keyboardTitle", "Keyboard interactive"),
+                    Str.T("shell.editor.keyboardBody",
+                        "The server prompts for one-time codes after the connection is opened.")).Informational());
             }
 
-            fields.Add(Caption(protocol?.Description ?? "Pick a protocol to see what the connection offers.")
+            fields.Add(Caption(protocol?.Description ?? Str.T(
+                    "shell.editor.protocolHint",
+                    "Pick a protocol to see what the connection offers."))
                 .Foreground(Theme.SecondaryText)
                 .TextWrapping(TextWrapping.Wrap));
 
             if (showErrors)
             {
                 var message = pickerError ?? string.Join(Environment.NewLine, errors);
-                fields.Insert(0, InfoBar("Check the connection details", message).Warning());
+                fields.Insert(0, InfoBar(Str.T("shell.editor.invalidTitle", "Check the connection details"), message).Warning());
             }
 
             return fields.ToArray();
@@ -238,22 +263,25 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             var problems = new List<string>(3);
             if (string.IsNullOrWhiteSpace(host))
             {
-                problems.Add("Host is required.");
+                problems.Add(Str.T("shell.editor.hostRequired", "Host is required."));
             }
 
             if (string.IsNullOrWhiteSpace(userName))
             {
-                problems.Add("User name is required.");
+                problems.Add(Str.T("shell.editor.userRequired", "User name is required."));
             }
 
             if (port.Length > 0 && ParsePort(port) < 0)
             {
-                problems.Add($"Port must be a number between 1 and {MaxPort}.");
+                problems.Add(Str.F(
+                    "shell.editor.portInvalid",
+                    "Port must be a number between 1 and {0}.",
+                    MaxPort));
             }
 
             if (isKey && string.IsNullOrWhiteSpace(keyPath))
             {
-                problems.Add("Pick the private key file to use.");
+                problems.Add(Str.T("shell.editor.keyRequired", "Pick the private key file to use."));
             }
 
             return problems;
@@ -261,7 +289,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
         Task<StorageFile?> PickKeyFileAsync() => this.UseFilePickerAsync(new FilePickerOptions(
             FileTypeFilter: new[] { ".pem", ".key", ".ppk", "*" },
-            CommitButtonText: "Use key"));
+            CommitButtonText: Str.T("shell.editor.useKey", "Use key")));
 
         async void BrowseKey()
         {
@@ -276,7 +304,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             }
             catch (Exception ex)
             {
-                setPickerError("Could not open the file picker: " + ex.Message);
+                setPickerError(Str.F("shell.editor.pickerFailed", "Could not open the file picker: {0}", ex.Message));
             }
         }
 
@@ -349,9 +377,9 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
     private static string TitleFor(SessionEditorMode mode) => mode switch
     {
-        SessionEditorMode.Edit => "Edit session",
-        SessionEditorMode.Duplicate => "Duplicate session",
-        _ => "New session",
+        SessionEditorMode.Edit => Str.T("shell.editor.editTitle", "Edit session"),
+        SessionEditorMode.Duplicate => Str.T("shell.editor.duplicateTitle", "Duplicate session"),
+        _ => Str.T("shell.editor.createTitle", "New session"),
     };
 
     private static int IndexOfProtocol(IReadOnlyList<IProtocolPlugin> plugins, string? protocolId)

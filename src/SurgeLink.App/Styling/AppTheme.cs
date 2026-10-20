@@ -1,5 +1,6 @@
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml.Media;
+using SurgeLink.App.Localization;
 using SurgeLink.Core.Sessions;
 
 namespace SurgeLink.App.Styling;
@@ -89,12 +90,12 @@ public static class AppTheme
     /// <summary>Short human readable state used by the title and status bar.</summary>
     public static string StatusText(ConnectionState state) => state switch
     {
-        ConnectionState.Connected => "Connected",
-        ConnectionState.Connecting => "Connecting…",
-        ConnectionState.Reconnecting => "Reconnecting…",
-        ConnectionState.Disconnecting => "Disconnecting…",
-        ConnectionState.Disconnected => "Disconnected",
-        ConnectionState.Faulted => "Connection failed",
+        ConnectionState.Connected => Str.T("shell.status.connected", "Connected"),
+        ConnectionState.Connecting => Str.T("shell.status.connecting", "Connecting…"),
+        ConnectionState.Reconnecting => Str.T("shell.status.reconnecting", "Reconnecting…"),
+        ConnectionState.Disconnecting => Str.T("shell.status.disconnecting", "Disconnecting…"),
+        ConnectionState.Disconnected => Str.T("shell.status.disconnected", "Disconnected"),
+        ConnectionState.Faulted => Str.T("shell.status.faulted", "Connection failed"),
         _ => state.ToString(),
     };
 

@@ -1,6 +1,7 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -44,6 +45,10 @@ internal sealed class UsageBar : Component<UsageBarProps>
             Caption(Props.Detail ?? string.Empty).Foreground(Theme.SecondaryText).Grid(row: 0, column: 1));
 
         return VStack(AppTheme.SpacingXs, header, bar)
-            .AutomationName($"{Props.Label ?? "Usage"} {DataFormat.Percent(fraction)}");
+            .AutomationName(Str.F(
+                "monitor.usageBar.automation",
+                "{0} {1}",
+                Props.Label ?? Str.T("monitor.usageBar.fallback", "Usage"),
+                DataFormat.Percent(fraction)));
     }
 }

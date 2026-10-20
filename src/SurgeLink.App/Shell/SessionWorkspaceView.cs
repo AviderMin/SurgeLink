@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.App.Sessions;
@@ -38,19 +39,19 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
         if ((capabilities & SessionCapabilities.Terminal) != 0)
         {
             views.Add(SessionViewKind.Terminal);
-            items.Add(new SelectorBarItemData("Terminal"));
+            items.Add(new SelectorBarItemData(Str.T("shell.workspace.tab.terminal", "Terminal")));
         }
 
         if ((capabilities & SessionCapabilities.FileSystem) != 0)
         {
             views.Add(SessionViewKind.Files);
-            items.Add(new SelectorBarItemData("Files"));
+            items.Add(new SelectorBarItemData(Str.T("shell.workspace.tab.files", "Files")));
         }
 
         if ((capabilities & SessionCapabilities.Monitor) != 0)
         {
             views.Add(SessionViewKind.Monitor);
-            items.Add(new SelectorBarItemData("Monitor"));
+            items.Add(new SelectorBarItemData(Str.T("shell.workspace.tab.monitor", "Monitor")));
         }
 
         var selected = Math.Max(0, views.IndexOf(props.View));

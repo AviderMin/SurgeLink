@@ -66,6 +66,21 @@ Monospace text uses `AppTheme.Monospace` (Cascadia Mono / Consolas fallback).
   for interactive surfaces.
 - Observe `SizeChanged` rather than polling layout.
 
+## Localization (zh-CN / en-US)
+
+- Every user-visible string is written as `Str.T("area.key", "English text")` (or `Str.F` when it has
+  placeholders). The English copy stays at the call site; the Chinese copy lives in
+  `Localization/Zh/ZhShell.cs`, `ZhData.cs` (SFTP/monitor) or `ZhTerminal.cs` (terminal).
+- Never build user text with `string.Format` using a literal — use `Str.F("...", "{0} items", n)` so
+  Chinese can reorder placeholders.
+- Do not localize: `AutomationId`, protocol ids, host names, file names/paths, units
+  (B/KB/MB/GB, %, MB/s), log lines.
+- `AutomationName` may be localized (it is read by screen readers); harnesses match on
+  `AutomationId` when a stable hook is needed.
+- The UI language follows `AppSettings.Language` (System/English/ChineseSimplified). A change bumps
+  `LocalizationService.Revision`; the shell remounts its tree with `.WithKey("locale-" + revision)`
+  so every string is re-evaluated without restarting the app or dropping sessions.
+
 ## Error handling
 
 - Expected failures (bad credentials, missing permissions, unavailable capability) are presented

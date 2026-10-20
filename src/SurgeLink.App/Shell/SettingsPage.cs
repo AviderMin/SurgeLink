@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Reactor.Layout;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Protocols;
@@ -34,46 +35,69 @@ internal sealed class SettingsPage : Component
 
         void Apply(Func<AppSettings, AppSettings> mutate) => store.Update(mutate);
 
-        var fontChoices = new List<string> { "(auto detect)" };
+        var fontChoices = new List<string> { Str.T("shell.settings.fontFamily.auto", "(auto detect)") };
         fontChoices.AddRange(AppTheme.MonospaceCandidates);
+
+        var onText = Str.T("shell.settings.on", "On");
+        var offText = Str.T("shell.settings.off", "Off");
 
         return ScrollView(
             VStack(
                 AppTheme.SpacingXl,
                 VStack(
                     AppTheme.SpacingXs,
-                    Heading("Settings").HeadingLevel(AutomationHeadingLevel.Level1),
-                    Caption("Changes apply immediately and are saved to disk.")
+                    Heading(Str.T("shell.settings.title", "Settings")).HeadingLevel(AutomationHeadingLevel.Level1),
+                    Caption(Str.T("shell.settings.subtitle", "Changes apply immediately and are saved to disk."))
                         .Foreground(Theme.SecondaryText))
                     .Margin(0, 0, 0, AppTheme.SpacingS),
 
                 Section(
-                    "Appearance",
+                    Str.T("shell.settings.general", "General"),
                     SettingsCard(
-                        "Theme",
-                        "Light, dark, or follow the Windows setting. High Contrast keeps working in every mode.",
-                        RadioButtons(["System", "Light", "Dark"], Optional<int>.Of((int)settings.Theme), index =>
-                                Apply(current => current with { Theme = (ThemeMode)index }))
-                            .AutomationName("Theme")
+                        Str.T("shell.settings.language", "Interface language"),
+                        Str.T("shell.settings.language.description",
+                            "Language used by the menus, dialogs and this page."),
+                        ComboBox(LanguageNames(), Optional<int>.Of(IndexOfLanguage(settings.Language)),
+                                index => Apply(current => current with { Language = LanguageOrder[index] }))
+                            .AutomationName(Str.T("shell.settings.language", "Interface language"))
+                            .AutomationId("SettingsLanguage")
+                            .MinWidth(220))),
+
+                Section(
+                    Str.T("shell.settings.appearance", "Appearance"),
+                    SettingsCard(
+                        Str.T("shell.settings.theme", "Theme"),
+                        Str.T("shell.settings.theme.description",
+                            "Light, dark, or follow the Windows setting. High Contrast keeps working in every mode."),
+                        RadioButtons(
+                                [
+                                    Str.T("shell.settings.theme.system", "System"),
+                                    Str.T("shell.settings.theme.light", "Light"),
+                                    Str.T("shell.settings.theme.dark", "Dark"),
+                                ],
+                                Optional<int>.Of((int)settings.Theme),
+                                index => Apply(current => current with { Theme = (ThemeMode)index }))
+                            .AutomationName(Str.T("shell.settings.theme", "Theme"))
                             .AutomationId("SettingsTheme"))),
 
                 Section(
-                    "Terminal",
+                    Str.T("shell.settings.terminal", "Terminal"),
                     SettingsCard(
-                        "Font family",
-                        "Monospace face used by every terminal tab.",
+                        Str.T("shell.settings.fontFamily", "Font family"),
+                        Str.T("shell.settings.fontFamily.description", "Monospace face used by every terminal tab."),
                         ComboBox(fontChoices.ToArray(),
                                 Optional<int>.Of(FontIndex(fontChoices, settings.TerminalFontFamily)), index =>
                                     Apply(current => current with
                                     {
                                         TerminalFontFamily = index <= 0 ? string.Empty : fontChoices[index],
                                     }))
-                            .AutomationName("Terminal font family")
+                            .AutomationName(Str.T("shell.settings.fontFamily", "Font family"))
                             .AutomationId("SettingsFontFamily")
                             .MinWidth(220)),
                     SettingsCard(
-                        "Font size",
-                        "Terminal text size in points. Ctrl+wheel inside a terminal changes this too.",
+                        Str.T("shell.settings.fontSize", "Font size"),
+                        Str.T("shell.settings.fontSize.description",
+                            "Terminal text size in points. Ctrl+wheel inside a terminal changes this too."),
                         HStack(
                                 AppTheme.SpacingM,
                                 Slider(Optional<double>.Of(settings.TerminalFontSize), 9, 28, value =>
@@ -83,14 +107,15 @@ internal sealed class SettingsPage : Component
                                         slider.StepFrequency = 1;
                                         slider.TickFrequency = 1;
                                     })
-                                    .AutomationName("Terminal font size")
+                                    .AutomationName(Str.T("shell.settings.fontSize", "Font size"))
                                     .AutomationId("SettingsFontSize")
                                     .Width(220),
-                                Caption($"{settings.TerminalFontSize:0} pt").Width(48))
+                                Caption(Str.F("shell.settings.fontSize.value", "{0} pt", settings.TerminalFontSize.ToString("0")))
+                                    .Width(56))
                             .VAlign(VerticalAlignment.Center)),
                     SettingsCard(
-                        "Colour palette",
-                        "ANSI scheme used by the terminal renderer.",
+                        Str.T("shell.settings.palette", "Colour palette"),
+                        Str.T("shell.settings.palette.description", "ANSI scheme used by the terminal renderer."),
                         ComboBox(TerminalThemes.All.Select(theme => theme.Name).ToArray(),
                                 Optional<int>.Of(PaletteIndex(settings.TerminalPalette)),
                                 index => Apply(current => current with
@@ -99,80 +124,94 @@ internal sealed class SettingsPage : Component
                                         ? TerminalThemes.All[index].Name
                                         : current.TerminalPalette,
                                 }))
-                            .AutomationName("Terminal colour palette")
+                            .AutomationName(Str.T("shell.settings.palette", "Colour palette"))
                             .AutomationId("SettingsPalette")
                             .MinWidth(220)),
                     SettingsCard(
-                        "Scrollback",
-                        "Lines of history kept in memory for each terminal tab.",
-                        ComboBox(ScrollbackOptions.Select(lines => lines.ToString("N0") + " lines").ToArray(),
+                        Str.T("shell.settings.scrollback", "Scrollback"),
+                        Str.T("shell.settings.scrollback.description",
+                            "Lines of history kept in memory for each terminal tab."),
+                        ComboBox(
+                                ScrollbackOptions.Select(lines => Str.F(
+                                    "shell.settings.scrollback.value", "{0} lines", lines.ToString("N0"))).ToArray(),
                                 Optional<int>.Of(ClosestIndex(ScrollbackOptions, settings.TerminalScrollbackLines)),
                                 index => Apply(current => current with
                                 {
                                     TerminalScrollbackLines = ScrollbackOptions[index],
                                 }))
-                            .AutomationName("Terminal scrollback")
+                            .AutomationName(Str.T("shell.settings.scrollback", "Scrollback"))
                             .AutomationId("SettingsScrollback")
                             .MinWidth(220))),
 
                 Section(
-                    "Monitoring",
+                    Str.T("shell.settings.monitoring", "Monitoring"),
                     SettingsCard(
-                        "Sample interval",
-                        "How often the remote performance dashboard polls the server.",
-                        ComboBox(IntervalOptions.Select(seconds => seconds + " seconds").ToArray(),
+                        Str.T("shell.settings.monitorInterval", "Sample interval"),
+                        Str.T("shell.settings.monitorInterval.description",
+                            "How often the remote performance dashboard polls the server."),
+                        ComboBox(
+                                IntervalOptions.Select(seconds => Str.F(
+                                    "shell.settings.monitorInterval.value", "{0} seconds", seconds)).ToArray(),
                                 Optional<int>.Of(ClosestIndex(IntervalOptions, settings.MonitorIntervalSeconds)),
                                 index => Apply(current => current with
                                 {
                                     MonitorIntervalSeconds = IntervalOptions[index],
                                 }))
-                            .AutomationName("Monitor sample interval")
+                            .AutomationName(Str.T("shell.settings.monitorInterval", "Sample interval"))
                             .AutomationId("SettingsMonitorInterval")
                             .MinWidth(220))),
 
                 Section(
-                    "Files",
+                    Str.T("shell.settings.files", "Files"),
                     SettingsCard(
-                        "Show hidden files",
-                        "List dot files in the SFTP browser.",
+                        Str.T("shell.settings.hiddenFiles", "Show hidden files"),
+                        Str.T("shell.settings.hiddenFiles.description", "List dot files in the SFTP browser."),
                         ToggleSwitch(Optional<bool>.Of(settings.ShowHiddenFiles),
                                 value => Apply(current => current with { ShowHiddenFiles = value }),
-                                onContent: "On",
-                                offContent: "Off")
-                            .AutomationName("Show hidden files")
+                                onContent: onText,
+                                offContent: offText)
+                            .AutomationName(Str.T("shell.settings.hiddenFiles", "Show hidden files"))
                             .AutomationId("SettingsHiddenFiles"))),
 
                 Section(
-                    "Sessions",
+                    Str.T("shell.settings.sessions", "Sessions"),
                     SettingsCard(
-                        "Confirm closing connected tabs",
-                        "Ask before a tab whose session is still connected is closed.",
+                        Str.T("shell.settings.confirmClose", "Confirm closing connected tabs"),
+                        Str.T("shell.settings.confirmClose.description",
+                            "Ask before a tab whose session is still connected is closed."),
                         ToggleSwitch(Optional<bool>.Of(settings.ConfirmCloseConnectedTab),
                                 value => Apply(current => current with { ConfirmCloseConnectedTab = value }),
-                                onContent: "On",
-                                offContent: "Off")
-                            .AutomationName("Confirm closing connected tabs")
+                                onContent: onText,
+                                offContent: offText)
+                            .AutomationName(Str.T("shell.settings.confirmClose", "Confirm closing connected tabs"))
                             .AutomationId("SettingsConfirmClose"))),
 
                 Section(
-                    "Diagnostics",
+                    Str.T("shell.settings.diagnostics", "Diagnostics"),
                     SettingsCard(
-                        "Prompt previews",
-                        "Render each protocol prompt without a server. Useful for checking the dialog layer and accessibility.",
+                        Str.T("shell.settings.previews", "Prompt previews"),
+                        Str.T("shell.settings.previews.description",
+                            "Render each protocol prompt without a server. Useful for checking the dialog layer and accessibility."),
                         WrapButtons(
-                            Button("Host key prompt", () => _ = PreviewHostKeyAsync(isChanged: false))
-                                .AutomationName("Preview host key prompt"),
-                            Button("Changed key warning", () => _ = PreviewHostKeyAsync(isChanged: true))
-                                .AutomationName("Preview changed host key"),
-                            Button("Password prompt", () => _ = PreviewSecretAsync())
-                                .AutomationName("Preview password prompt"),
-                            Button("Confirmation", () => _ = PreviewConfirmationAsync())
-                                .AutomationName("Preview confirmation"),
-                            Button("Error dialog", () => _ = PreviewErrorAsync())
-                                .AutomationName("Preview error dialog"))),
+                            Button(Str.T("shell.settings.preview.hostKey", "Host key prompt"),
+                                    () => _ = PreviewHostKeyAsync(isChanged: false))
+                                .AutomationName(Str.T("shell.settings.preview.hostKey", "Host key prompt")),
+                            Button(Str.T("shell.settings.preview.changedKey", "Changed key warning"),
+                                    () => _ = PreviewHostKeyAsync(isChanged: true))
+                                .AutomationName(Str.T("shell.settings.preview.changedKey", "Changed key warning")),
+                            Button(Str.T("shell.settings.preview.secret", "Password prompt"),
+                                    () => _ = PreviewSecretAsync())
+                                .AutomationName(Str.T("shell.settings.preview.secret", "Password prompt")),
+                            Button(Str.T("shell.settings.preview.confirmation", "Confirmation"),
+                                    () => _ = PreviewConfirmationAsync())
+                                .AutomationName(Str.T("shell.settings.preview.confirmation", "Confirmation")),
+                            Button(Str.T("shell.settings.preview.error", "Error dialog"),
+                                    () => _ = PreviewErrorAsync())
+                                .AutomationName(Str.T("shell.settings.preview.error", "Error dialog"))))),
                     SettingsCard(
-                        "Storage",
-                        "Profiles, credentials and logs live in one folder.",
+                        Str.T("shell.settings.storage", "Storage"),
+                        Str.T("shell.settings.storage.description",
+                            "Profiles, credentials and logs live in one folder."),
                         VStack(
                                 AppTheme.SpacingXs,
                                 TextBlock(AppPaths.Root).FontFamily(AppTheme.Monospace).FontSize(13)
@@ -181,13 +220,45 @@ internal sealed class SettingsPage : Component
                                     .Foreground(Theme.SecondaryText))
                             .HAlign(HorizontalAlignment.Left)),
                     SettingsCard(
-                        "Reset",
-                        "Restore every preference to its default value.",
-                        Button("Reset settings", () => Apply(_ => AppSettings.Default))
-                            .AutomationName("Reset settings"))))
+                        Str.T("shell.settings.reset", "Reset"),
+                        Str.T("shell.settings.reset.description", "Restore every preference to its default value."),
+                        Button(Str.T("shell.settings.reset.action", "Reset settings"), () => Apply(_ => AppSettings.Default))
+                            .AutomationName(Str.T("shell.settings.reset.action", "Reset settings"))))
                 .MaxWidth(880)
                 .HAlign(HorizontalAlignment.Left)
                 .Padding(AppTheme.SpacingXl));
+    }
+
+    /// <summary>
+    /// Picker order. It is deliberately not the enum order, so the index must be
+    /// mapped through this table instead of casting to <see cref="AppLanguage"/>.
+    /// </summary>
+    private static readonly AppLanguage[] LanguageOrder =
+    {
+        AppLanguage.System,
+        AppLanguage.ChineseSimplified,
+        AppLanguage.English,
+    };
+
+    /// <summary>Language choices shown in the picker; Chinese and English are self-named.</summary>
+    private static string[] LanguageNames() =>
+    [
+        Str.T("shell.settings.language.system", "System default"),
+        "简体中文",
+        "English",
+    ];
+
+    private static int IndexOfLanguage(AppLanguage language)
+    {
+        for (var index = 0; index < LanguageOrder.Length; index++)
+        {
+            if (LanguageOrder[index] == language)
+            {
+                return index;
+            }
+        }
+
+        return 0;
     }
 
     private static Element Section(string title, params Element[] rows) =>
@@ -279,36 +350,52 @@ internal sealed class SettingsPage : Component
             CancellationToken.None);
 
         await interaction.ShowInfoAsync(
-            "Host key decision",
+            Str.T("shell.preview.hostKey.title", "Host key decision"),
             decision.Trusted
-                ? decision.Remember ? "Trusted and remembered." : "Trusted for this session only."
-                : "Rejected. The connection would have been aborted.");
+                ? decision.Remember
+                    ? Str.T("shell.preview.hostKey.trustedRemembered", "Trusted and remembered.")
+                    : Str.T("shell.preview.hostKey.trustedOnce", "Trusted for this session only.")
+                : Str.T("shell.preview.hostKey.rejected", "Rejected. The connection would have been aborted."));
     }
 
     private static async Task PreviewSecretAsync()
     {
         var interaction = AppServices.EnsureInitialized().Interaction;
         var secret = await interaction.RequestSecretAsync(
-            new SecretRequest("Password for admin@demo-host.example.com", "This login is not saved. Enter the password for this session."),
+            new SecretRequest(
+                Str.T("shell.preview.secret.title", "Password for admin@demo-host.example.com"),
+                Str.T("shell.preview.secret.body",
+                    "This login is not saved. Enter the password for this session.")),
             CancellationToken.None);
 
         await interaction.ShowInfoAsync(
-            "Password prompt",
-            secret is null ? "Dismissed without an answer." : $"Received {secret.Length} character(s).");
+            Str.T("shell.preview.secret.infoTitle", "Password prompt"),
+            secret is null
+                ? Str.T("shell.preview.secret.dismissed", "Dismissed without an answer.")
+                : Str.F("shell.preview.secret.received", "Received {0} character(s).", secret.Length));
     }
 
     private static async Task PreviewConfirmationAsync()
     {
         var interaction = AppServices.EnsureInitialized().Interaction;
         var confirmed = await interaction.RequestConfirmationAsync(
-            new ConfirmationRequest("Close session", "This session is still connected. Close it?", "Close", "Keep open"),
+            new ConfirmationRequest(
+                Str.T("shell.preview.confirmation.requestTitle", "Close session"),
+                Str.T("shell.preview.confirmation.requestBody", "This session is still connected. Close it?"),
+                Str.T("common.close", "Close"),
+                Str.T("shell.preview.confirmation.keepOpen", "Keep open")),
             CancellationToken.None);
 
-        await interaction.ShowInfoAsync("Confirmation", confirmed ? "Confirmed." : "Cancelled.");
+        await interaction.ShowInfoAsync(
+            Str.T("shell.preview.confirmation.title", "Confirmation"),
+            confirmed
+                ? Str.T("shell.preview.confirmation.confirmed", "Confirmed.")
+                : Str.T("shell.preview.confirmation.cancelled", "Cancelled."));
     }
 
     private static Task PreviewErrorAsync() =>
         AppServices.EnsureInitialized().Interaction.ShowErrorAsync(
-            "Connection failed",
-            "This is a preview of the error dialog. Protocol failures arrive here with a plain message.");
+            Str.T("shell.preview.error.title", "Connection failed"),
+            Str.T("shell.preview.error.body",
+                "This is a preview of the error dialog. Protocol failures arrive here with a plain message."));
 }

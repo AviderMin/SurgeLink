@@ -1,6 +1,8 @@
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 
+using SurgeLink.App.Localization;
+
 namespace SurgeLink.App.Views.Terminal;
 
 /// <summary>
@@ -34,7 +36,7 @@ internal sealed class TerminalSurfaceAutomationPeer : FrameworkElementAutomation
     protected override string GetNameCore()
     {
         string text = VisibleText;
-        return string.IsNullOrEmpty(text) ? "Terminal" : text;
+        return string.IsNullOrEmpty(text) ? Str.T("terminal.label", "Terminal") : text;
     }
 
     /// <inheritdoc />

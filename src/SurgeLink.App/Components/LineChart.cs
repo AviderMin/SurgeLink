@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
+using SurgeLink.App.Localization;
 using Windows.Foundation;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -102,8 +103,11 @@ internal sealed class LineChart : Component<LineChartProps>
 
     private string DescribeSeries() =>
         Props.Series.Count == 0
-            ? "Chart, no data"
-            : "Chart: " + string.Join(", ", Props.Series.Select(series => series.Name));
+            ? Str.T("monitor.chart.empty", "Chart, no data")
+            : Str.F(
+                "monitor.chart.title",
+                "Chart: {0}",
+                string.Join(", ", Props.Series.Select(series => series.Name)));
 
     private double ResolveMax()
     {

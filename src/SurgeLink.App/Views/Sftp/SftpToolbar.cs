@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -53,33 +54,45 @@ internal static class SftpToolbar
                     props.Navigate(path);
                 }
             })
-            .AutomationName("Current path");
+            .AutomationName(Str.T("sftp.breadcrumb.automation", "Current path"));
 
         var navigation = HStack(
             AppTheme.SpacingXs,
-            IconButton("Up one level", "\uE74A", props.CanGoUp ? props.GoUp : null),
-            IconButton("Home directory", "\uE80F", props.GoHome),
-            IconButton("Refresh listing", "\uE72C", props.Refresh));
+            IconButton(Str.T("sftp.nav.up", "Up one level"), "\uE74A", props.CanGoUp ? props.GoUp : null),
+            IconButton(Str.T("sftp.nav.home", "Home directory"), "\uE80F", props.GoHome),
+            IconButton(Str.T("sftp.nav.refresh", "Refresh listing"), "\uE72C", props.Refresh));
 
         var commands = CommandBar(
                 primaryCommands:
                 [
-                    AppBarButton("New folder", props.NewFolder, "\uE8F4"),
-                    AppBarButton("Upload", props.Upload, "\uE898"),
-                    AppBarButton("Download", props.Download, "\uE896") with { IsEnabled = props.HasSelection },
+                    AppBarButton(Str.T("sftp.command.newFolder", "New folder"), props.NewFolder, "\uE8F4"),
+                    AppBarButton(Str.T("sftp.command.upload", "Upload"), props.Upload, "\uE898"),
+                    AppBarButton(Str.T("sftp.command.download", "Download"), props.Download, "\uE896") with
+                    {
+                        IsEnabled = props.HasSelection,
+                    },
                     AppBarSeparator(),
-                    AppBarButton("Rename", props.Rename, "\uE8AC") with { IsEnabled = props.SingleSelection },
-                    AppBarButton("Delete", props.Delete, "\uE74D") with { IsEnabled = props.HasSelection },
-                    AppBarButton("Permissions", props.EditPermissions, "\uE72E") with
+                    AppBarButton(Str.T("sftp.command.rename", "Rename"), props.Rename, "\uE8AC") with
+                    {
+                        IsEnabled = props.SingleSelection,
+                    },
+                    AppBarButton(Str.T("sftp.command.delete", "Delete"), props.Delete, "\uE74D") with
+                    {
+                        IsEnabled = props.HasSelection,
+                    },
+                    AppBarButton(Str.T("sftp.command.permissions", "Permissions"), props.EditPermissions, "\uE72E") with
                     {
                         IsEnabled = props.SupportsPermissions && props.SingleSelection,
                     },
                 ])
             .Set(bar => bar.DefaultLabelPosition = CommandBarDefaultLabelPosition.Right);
 
-        var hiddenToggle = ToggleButton("Hidden files", props.ShowHiddenFiles, props.ToggleHidden)
-            .ToolTip("Show dot files")
-            .AutomationName("Show hidden files")
+        var hiddenToggle = ToggleButton(
+                Str.T("sftp.command.hiddenFiles", "Hidden files"),
+                props.ShowHiddenFiles,
+                props.ToggleHidden)
+            .ToolTip(Str.T("sftp.command.hiddenFilesToolTip", "Show dot files"))
+            .AutomationName(Str.T("sftp.command.hiddenFilesAutomation", "Show hidden files"))
             .VAlign(VerticalAlignment.Center)
             .Margin(AppTheme.SpacingS, 0, 0, 0);
 

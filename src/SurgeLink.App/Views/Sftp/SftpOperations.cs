@@ -1,3 +1,4 @@
+using SurgeLink.App.Localization;
 using SurgeLink.Core.Files;
 
 namespace SurgeLink.App.Views.Sftp;
@@ -12,11 +13,11 @@ internal static class SftpOperations
     /// <summary>Human readable title of the action a dialog commits.</summary>
     public static string Title(SftpDialogKind kind) => kind switch
     {
-        SftpDialogKind.NewFolder => "Create folder",
-        SftpDialogKind.Rename => "Rename",
-        SftpDialogKind.Delete => "Delete",
-        SftpDialogKind.Permissions => "Permissions",
-        _ => "File operation",
+        SftpDialogKind.NewFolder => Str.T("sftp.operation.createFolder", "Create folder"),
+        SftpDialogKind.Rename => Str.T("sftp.operation.rename", "Rename"),
+        SftpDialogKind.Delete => Str.T("sftp.operation.delete", "Delete"),
+        SftpDialogKind.Permissions => Str.T("sftp.operation.permissions", "Permissions"),
+        _ => Str.T("sftp.operation.generic", "File operation"),
     };
 
     /// <summary>True when the open dialog can be applied with the current input.</summary>
