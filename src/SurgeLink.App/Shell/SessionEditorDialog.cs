@@ -29,7 +29,8 @@ internal enum SessionEditorMode
 }
 
 /// <summary>Result of a successful edit: what to save and whether to dial right away.</summary>
-internal sealed record SessionEditorOutcome(SessionProfile Profile, StoredCredential? Credential, bool ConnectAfterSave);
+internal sealed record SessionEditorOutcome(
+    SessionProfile Profile, StoredCredential? Credential, bool ConnectAfterSave, ConnectOptions Options);
 
 /// <summary>Props for <see cref="SessionEditorDialog"/>; a new instance per open.</summary>
 internal sealed record SessionEditorProps(
@@ -99,7 +100,16 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                 return;
             }
 
-            props.OnSaved(new SessionEditorOutcome(BuildProfile(), BuildCredential(), connectAfterSave));
+            var profile = BuildProfile();
+            props.OnSaved(new SessionEditorOutcome(profile, BuildCredential(), connectAfterSave, new ConnectOptions
+            {
+                // A secret entered for this connection is independent of whether it is saved.
+                Password = isPassword && password.Length > 0 ? password : null,
+                PrivateKeyPath = profile.PrivateKeyPath,
+                PrivateKeyPassphrase = isKey && passphrase.Length > 0
+                    ? passphrase
+                    : BuildCredential()?.PrivateKeyPassphrase,
+            }));
         }
 
         var dialog = ContentDialog(

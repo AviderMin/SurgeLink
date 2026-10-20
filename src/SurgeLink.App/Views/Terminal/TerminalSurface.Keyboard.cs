@@ -26,22 +26,37 @@ internal sealed partial class TerminalSurface
         bool alt = IsKeyDown(VirtualKey.Menu);
         int key = (int)e.Key;
 
+        // AltGr is reported as Ctrl+Right Alt on Windows. Let the keyboard layout
+        // produce its character instead of encoding it as a terminal shortcut.
+        if (control && alt && IsKeyDown(VirtualKey.RightMenu) && IsTextInputKey(e.Key))
+        {
+            return;
+        }
+
+        if ((!control && !alt && e.Key == VirtualKey.Application)
+            || (shift && !control && !alt && e.Key == VirtualKey.F10))
+        {
+            ShowContextMenu(new Windows.Foundation.Point(0, 0));
+            e.Handled = true;
+            return;
+        }
+
         // --- clipboard: these combos must never reach the shell -------------------
-        if (control && shift && key == (int)VirtualKey.C)
+        if (control && shift && !alt && key == (int)VirtualKey.C)
         {
             CopySelection();
             e.Handled = true;
             return;
         }
 
-        if (control && shift && key == (int)VirtualKey.V)
+        if (control && shift && !alt && key == (int)VirtualKey.V)
         {
             PasteFromClipboard();
             e.Handled = true;
             return;
         }
 
-        if (control && shift && key == (int)VirtualKey.A)
+        if (control && shift && !alt && key == (int)VirtualKey.A)
         {
             SelectAll();
             e.Handled = true;

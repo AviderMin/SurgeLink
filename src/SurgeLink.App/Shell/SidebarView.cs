@@ -83,7 +83,11 @@ internal sealed class SidebarView : Component<SidebarProps>
         var filtered = props.Snapshot.FilteredProfiles;
         Element body = filtered.Count > 0
             ? ScrollView(VStack(AppTheme.SpacingXs, BuildGroups(props, filtered).ToArray()))
-            : BuildEmptyState(props, search);
+            : BuildEmptyState(props, search, () =>
+            {
+                setSearch(string.Empty);
+                AppServices.EnsureInitialized().Workspace.SetSearchText(string.Empty);
+            });
 
         return FlexColumn(
                 searchBox,
@@ -164,7 +168,7 @@ internal sealed class SidebarView : Component<SidebarProps>
                 MenuItem(Str.T("shell.sidebar.menu.delete", "Delete"), () => props.Delete(profile))));
     }
 
-    private static Element BuildEmptyState(SidebarProps props, string search)
+    private static Element BuildEmptyState(SidebarProps props, string search, Action clearSearch)
     {
         var isFiltered = !string.IsNullOrWhiteSpace(search) && props.Snapshot.Profiles.Count > 0;
         return VStack(
@@ -183,7 +187,7 @@ internal sealed class SidebarView : Component<SidebarProps>
                     .TextAlignment(TextAlignment.Center),
                 isFiltered
                     ? Button(Str.T("shell.sidebar.clearFilter", "Clear filter"),
-                            () => AppServices.EnsureInitialized().Workspace.SetSearchText(string.Empty))
+                            clearSearch)
                         .AutomationName(Str.T("shell.sidebar.clearFilterAutomation", "Clear session filter"))
                     : Button(Str.T("shell.sidebar.createFirst", "New session"), () => props.CreateSession(null))
                         .AccentButton()

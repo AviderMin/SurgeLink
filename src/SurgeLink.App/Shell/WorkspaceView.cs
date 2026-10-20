@@ -35,7 +35,8 @@ internal static class WorkspaceView
         var tabs = snapshot.Tabs
             .Select(tab => new TabViewItemData(
                 tab.Title,
-                Component<SessionWorkspaceView, SessionViewProps>(SessionWorkspaceView.PropsFor(tab)))
+                Component<SessionWorkspaceView, SessionViewProps>(SessionWorkspaceView.PropsFor(tab))
+                    .WithKey(tab.Id.ToString("n")))
             {
                 IsClosable = true,
             })
@@ -63,7 +64,8 @@ internal static class WorkspaceView
                 tabs)
             .IsAddTabButtonVisible(true)
             .AddTabButtonClick(() => props.NewSession(null))
-            .CanReorderTabs(true)
+            // Keep visual order aligned with the store used by selection and close callbacks.
+            .CanReorderTabs(false)
             .TabCloseRequested(index =>
             {
                 if (index >= 0 && index < snapshot.Tabs.Count)

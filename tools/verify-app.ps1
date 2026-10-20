@@ -38,13 +38,29 @@ function AssertMissing($file, $pattern, $label) {
 }
 function AssertCjk($file, $minimum, $label) {
   $count = ([regex]::Matches((Get-Content $file -Raw), '[\u4e00-\u9fff]')).Count
-  if ($count -ge $minimum) { Pass ($label + " (" + $count + " 汉字)") } else { Fail $label ("only " + $count + " CJK characters") }
+  if ($count -ge $minimum) { Pass ($label + " (" + $count + " CJK characters)") } else { Fail $label ("only " + $count + " CJK characters") }
 }
 function Invoke-Action($name, $type, [switch]$Select) {
   $args = @{ Name = $name; Type = $type; TimeoutSeconds = 12; ProcessId = $script:appPid }
   if ($Select) { $args['Select'] = $true }
   $out = & (Join-Path $PSScriptRoot "uia-action.ps1") @args 2>&1 | Out-String
   Write-Output ("        " + $out.Trim())
+}
+function Get-Control($name, $type) {
+  Add-Type -AssemblyName UIAutomationClient
+  Add-Type -AssemblyName UIAutomationTypes
+  $processCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $script:appPid)
+  $window = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $processCondition)
+  $nameCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $name)
+  $controls = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $nameCondition)
+  foreach ($control in $controls) {
+    if ($control.Current.ControlType.ProgrammaticName -eq ("ControlType." + $type)) { return $control }
+  }
+  throw ("Control not found: " + $name + " (" + $type + ")")
+}
+function AssertEnabled($name, [bool]$expected, $label) {
+  $control = Get-Control $name "Button"
+  if ($control.Current.IsEnabled -eq $expected) { Pass $label } else { Fail $label ("enabled=" + $control.Current.IsEnabled) }
 }
 function Start-App {
   $exe = Join-Path $root "src\SurgeLink.App\bin\x64\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe"
@@ -55,8 +71,11 @@ function Start-App {
   if ($p.HasExited) { throw ("app exited with " + $p.ExitCode) }
 }
 
-Get-Process SurgeLink -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Milliseconds 700
+# Preserve the user's exact settings, including preferences unrelated to this run.
+$settingsPath = Join-Path $appData 'settings.json'
+$hadSettings = Test-Path $settingsPath
+$originalSettings = if ($hadSettings) { [System.IO.File]::ReadAllBytes($settingsPath) } else { $null }
+try {
 
 if (-not $NoBuild) {
   Step "Build (solution, x64)"
@@ -103,6 +122,17 @@ AssertContains $demo "Monitor" "capability switcher shows Monitor"
 AssertContains $demo "Files" "capability switcher shows Files"
 AssertMissing $demo "Render error" "no render errors after connect"
 
+Step "Clear session filter"
+& (Join-Path $PSScriptRoot "uia-action.ps1") -AutomationId "SessionFilter" -SetValue -Value "__surge_no_match__" -ProcessId $script:appPid
+Start-Sleep -Milliseconds 700
+$filtered = Dump "02a-filtered"
+AssertContains $filtered "No matching sessions" "session filter applies"
+Invoke-Action "Clear session filter" "Button"
+Start-Sleep -Milliseconds 900
+$cleared = Dump "02b-cleared"
+AssertMissing $cleared "__surge_no_match__" "clear filter clears text and stays cleared"
+AssertMissing $cleared "No matching sessions" "clear filter restores sessions"
+
 Step "Files view"
 Invoke-Action "Files" "ListItem" -Select
 Start-Sleep -Seconds 3
@@ -110,6 +140,31 @@ $files = Dump "03-files"
 AssertContains $files "demo.txt" "SFTP listing shows demo.txt"
 AssertContains $files "Documents" "SFTP listing shows Documents"
 AssertMissing $files "Render error" "no render errors in files view"
+
+Step "File selection and name validation"
+Invoke-Action "Documents" "ListItem" -Select
+Start-Sleep -Milliseconds 300
+AssertEnabled "Download" $false "directory-only selection cannot download"
+AssertEnabled "Delete" $true "single selection can delete"
+$second = Get-Control "demo.txt" "ListItem"
+$second.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).AddToSelection()
+Start-Sleep -Milliseconds 300
+AssertEnabled "Delete" $false "multiple selection cannot silently delete one entry"
+AssertEnabled "Rename" $false "multiple selection cannot rename one entry"
+Invoke-Action "New folder" "Button"
+Start-Sleep -Milliseconds 500
+AssertEnabled "Create" $false "empty folder name cannot submit"
+& (Join-Path $PSScriptRoot "uia-action.ps1") -Name "Folder name" -Type "Edit" -SetValue -Value "../bad" -ProcessId $script:appPid
+Start-Sleep -Milliseconds 300
+AssertEnabled "Create" $false "folder name cannot contain a path"
+& (Join-Path $PSScriptRoot "uia-action.ps1") -Name "Folder name" -Type "Edit" -SetValue -Value "ux-check" -ProcessId $script:appPid
+Start-Sleep -Milliseconds 300
+AssertEnabled "Create" $true "valid folder name can submit"
+Invoke-Action "Create" "Button"
+Start-Sleep -Milliseconds 700
+$created = Dump "03a-created"
+AssertContains $created "ux-check" "folder created and listing refreshed"
+AssertMissing $created "Render error" "no render error after folder dialog submission"
 
 Step "Monitor view"
 Invoke-Action "Monitor" "ListItem" -Select
@@ -149,12 +204,10 @@ AssertCjk $cn 25 "Chinese text in the shell"
 AssertMissing $cn "Render error" "no render errors in Chinese UI"
 AssertContains $cn "SurgeLink" "window still titled SurgeLink"
 & (Join-Path $PSScriptRoot "capture-window.ps1") -ProcessId $script:appPid -OutFile (Join-Path $artifacts "ui-chinese.png") 2>&1 | Out-Null
-foreach ($word in @("会话", "设置", "新建")) {
+foreach ($word in @(-join ([char]0x4f1a, [char]0x8bdd), -join ([char]0x8bbe, [char]0x7f6e), -join ([char]0x65b0, [char]0x5efa))) {
   if (Select-String -Path $cn -Pattern $word -SimpleMatch -Quiet) { Pass ("Chinese wording present: " + $word) } else { Fail ("Chinese wording present: " + $word) "" }
 }
 
-# restore the machine default so the next manual run follows Windows again
-Set-Language 0
 Stop-Process -Id $script:appPid -Force -ErrorAction SilentlyContinue
 
 Write-Output ""
@@ -165,3 +218,11 @@ foreach ($f in $script:failures) { Write-Output ("  - " + $f) }
 Write-Output ("artifacts: " + $artifacts)
 if ($script:failures.Count -gt 0) { exit 1 }
 exit 0
+} finally {
+  if ($script:appPid -gt 0) { Stop-Process -Id $script:appPid -Force -ErrorAction SilentlyContinue }
+  if ($hadSettings) {
+    [System.IO.File]::WriteAllBytes($settingsPath, $originalSettings)
+  } elseif (Test-Path $settingsPath) {
+    Remove-Item -LiteralPath $settingsPath
+  }
+}

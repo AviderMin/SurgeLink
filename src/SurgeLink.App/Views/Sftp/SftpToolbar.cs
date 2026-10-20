@@ -11,14 +11,16 @@ namespace SurgeLink.App.Views.Sftp;
 /// <summary>Everything the SFTP toolbar displays and invokes.</summary>
 /// <param name="CurrentPath">Path shown in the breadcrumb.</param>
 /// <param name="CanGoUp">Enables the Up button (never at the root).</param>
-/// <param name="HasSelection">Enables selection based commands.</param>
+/// <param name="CanDownload">At least one file is selected.</param>
+/// <param name="CanModify">A current folder listing is available.</param>
 /// <param name="SingleSelection">Exactly one entry is selected.</param>
 /// <param name="SupportsPermissions">The protocol can read and write POSIX modes.</param>
 /// <param name="ShowHiddenFiles">State of the hidden file toggle.</param>
 internal sealed record SftpToolbarProps(
     string CurrentPath,
     bool CanGoUp,
-    bool HasSelection,
+    bool CanDownload,
+    bool CanModify,
     bool SingleSelection,
     bool SupportsPermissions,
     bool ShowHiddenFiles,
@@ -65,11 +67,17 @@ internal static class SftpToolbar
         var commands = CommandBar(
                 primaryCommands:
                 [
-                    AppBarButton(Str.T("sftp.command.newFolder", "New folder"), props.NewFolder, "\uE8F4"),
-                    AppBarButton(Str.T("sftp.command.upload", "Upload"), props.Upload, "\uE898"),
+                    AppBarButton(Str.T("sftp.command.newFolder", "New folder"), props.NewFolder, "\uE8F4") with
+                    {
+                        IsEnabled = props.CanModify,
+                    },
+                    AppBarButton(Str.T("sftp.command.upload", "Upload"), props.Upload, "\uE898") with
+                    {
+                        IsEnabled = props.CanModify,
+                    },
                     AppBarButton(Str.T("sftp.command.download", "Download"), props.Download, "\uE896") with
                     {
-                        IsEnabled = props.HasSelection,
+                        IsEnabled = props.CanDownload,
                     },
                     AppBarSeparator(),
                     AppBarButton(Str.T("sftp.command.rename", "Rename"), props.Rename, "\uE8AC") with
@@ -78,7 +86,7 @@ internal static class SftpToolbar
                     },
                     AppBarButton(Str.T("sftp.command.delete", "Delete"), props.Delete, "\uE74D") with
                     {
-                        IsEnabled = props.HasSelection,
+                        IsEnabled = props.SingleSelection,
                     },
                     AppBarButton(Str.T("sftp.command.permissions", "Permissions"), props.EditPermissions, "\uE72E") with
                     {

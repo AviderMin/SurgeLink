@@ -23,12 +23,17 @@ internal static class SftpOperations
     /// <summary>True when the open dialog can be applied with the current input.</summary>
     public static bool CanApply(SftpDialogState state, string text) => state.Kind switch
     {
-        SftpDialogKind.NewFolder => !string.IsNullOrWhiteSpace(text),
-        SftpDialogKind.Rename => state.Target is not null && !string.IsNullOrWhiteSpace(text),
+        SftpDialogKind.NewFolder => IsValidName(text),
+        SftpDialogKind.Rename => state.Target is not null && IsValidName(text) && text != state.Target.Name,
         SftpDialogKind.Delete => state.Target is not null,
         SftpDialogKind.Permissions => state.Target is not null,
         _ => false,
     };
+
+    /// <summary>A name is one POSIX path segment; spaces are preserved as part of the name.</summary>
+    public static bool IsValidName(string name) =>
+        !string.IsNullOrWhiteSpace(name) && name is not "." and not ".."
+        && !name.Contains('/') && !name.Contains('\0');
 
     /// <summary>Runs the remote call that the open dialog stands for.</summary>
     public static Task ApplyAsync(
@@ -40,9 +45,9 @@ internal static class SftpOperations
         CancellationToken cancellationToken) => state.Kind switch
     {
         SftpDialogKind.NewFolder => fileSystem.CreateDirectoryAsync(
-            SftpPath.Combine(workingDirectory, text.Trim()), cancellationToken),
+            SftpPath.Combine(workingDirectory, text), cancellationToken),
         SftpDialogKind.Rename when state.Target is { } target => fileSystem.RenameAsync(
-            target.FullPath, SftpPath.Combine(workingDirectory, text.Trim()), cancellationToken),
+            target.FullPath, SftpPath.Combine(workingDirectory, text), cancellationToken),
         SftpDialogKind.Delete when state.Target is { } target => fileSystem.DeleteAsync(
             target.FullPath, target.IsDirectory, cancellationToken),
         SftpDialogKind.Permissions when state.Target is { } target => fileSystem.SetPermissionsAsync(

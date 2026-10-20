@@ -88,6 +88,11 @@ internal sealed partial class TerminalSurface
         e.Handled = true;
     }
 
+    private void OnPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        _selecting = false;
+    }
+
     private void OnDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         SelectWordAt(CellFromPoint(e.GetPosition(this)));

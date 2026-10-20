@@ -175,6 +175,8 @@ internal sealed partial class TerminalSurface : ContentControl
         PointerPressed += OnPointerPressed;
         PointerMoved += OnPointerMoved;
         PointerReleased += OnPointerReleased;
+        PointerCaptureLost += OnPointerCaptureLost;
+        PointerCanceled += OnPointerCaptureLost;
         PointerWheelChanged += OnPointerWheelChanged;
         DoubleTapped += OnDoubleTapped;
         GotFocus += OnGotFocus;
@@ -208,6 +210,8 @@ internal sealed partial class TerminalSurface : ContentControl
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _loaded = false;
+        _selecting = false;
+        ReleasePointerCaptures();
         _paintQueued = false;
         _bridge.Invalidated -= OnBridgeInvalidated;
         _settings.Changed -= OnSettingsChanged;

@@ -19,7 +19,7 @@ namespace SurgeLink.App.Views.Monitor;
 /// </summary>
 internal sealed class MonitorView : Component<MonitorViewProps>
 {
-    private static readonly int[] Intervals = [1, 2, 5, 10];
+    private static readonly int[] Intervals = [1, 2, 5, 10, 30];
 
     public override Element Render()
     {
@@ -42,19 +42,22 @@ internal sealed class MonitorView : Component<MonitorViewProps>
         var (updatedAt, setUpdatedAt) = UseState<DateTimeOffset?>(null, threadSafe: true);
         var (paused, setPaused) = UseState(false);
         var (reload, setReload) = UseState(0);
+        var sampleRequested = UseRef(false);
         var wide = UseBreakpoint(1100);
         var historyRef = UseRef<MonitorHistory?>(null);
         historyRef.Current ??= new MonitorHistory();
         var history = historyRef.Current;
 
         var intervalSeconds = Normalize(settings.MonitorIntervalSeconds);
-        var runKey = paused ? "paused" : "run:" + reload;
+        var runKey = (paused ? "paused:" : "run:") + reload;
 
         UseEffect(
             () =>
             {
                 var target = monitor;
-                if (target is null || paused)
+                var requested = sampleRequested.Current;
+                sampleRequested.Current = false;
+                if (target is null || (paused && !requested))
                 {
                     return () => { };
                 }
@@ -86,6 +89,7 @@ internal sealed class MonitorView : Component<MonitorViewProps>
                                 top = Array.Empty<RemoteProcessInfo>();
                             }
 
+                            cancellation.Token.ThrowIfCancellationRequested();
                             clock.Add(sample);
                             setSnapshot(sample);
                             setProcesses(top);
@@ -98,7 +102,18 @@ internal sealed class MonitorView : Component<MonitorViewProps>
                         }
                         catch (Exception ex)
                         {
+                            if (cancellation.IsCancellationRequested)
+                            {
+                                return;
+                            }
+
                             setError(ex.Message);
+                        }
+
+                        // A manual refresh while paused takes exactly one sample.
+                        if (paused)
+                        {
+                            return;
                         }
 
                         try
@@ -128,7 +143,11 @@ internal sealed class MonitorView : Component<MonitorViewProps>
             intervalSeconds,
             updatedAt,
             () => setPaused(!paused),
-            () => setReload(reload + 1),
+            () =>
+            {
+                sampleRequested.Current = true;
+                setReload(reload + 1);
+            },
             index =>
             {
                 if (index >= 0 && index < Intervals.Length)
@@ -146,6 +165,7 @@ internal sealed class MonitorView : Component<MonitorViewProps>
                 OnActionButtonClick = () =>
                 {
                     setError(null);
+                    sampleRequested.Current = true;
                     setReload(reload + 1);
                 },
                 IsClosable = false,

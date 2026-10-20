@@ -50,13 +50,24 @@ internal static class SftpEntryList
         Action<object, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs> keyDown) =>
         ListView<RemoteFileEntry>(entries, entry => entry.FullPath, (entry, _) => Row(entry))
             .SelectionChanged(selectionChanged)
-            .OnDoubleTapped((sender, _) =>
+            .OnDoubleTapped((sender, args) =>
             {
-                // Read the selection from the control: the handler was built in
-                // the previous render, so a captured selection would be stale.
-                if (sender is Microsoft.UI.Xaml.Controls.ListView list && list.SelectedItem is RemoteFileEntry entry)
+                // Resolve the row under the pointer: double-tapping empty space
+                // must not open the previously selected directory.
+                if (sender is Microsoft.UI.Xaml.Controls.ListView list
+                    && args.OriginalSource is DependencyObject source)
                 {
-                    openEntry(entry);
+                    for (DependencyObject? current = source; current is not null && current != list;
+                         current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
+                    {
+                        if (current is Microsoft.UI.Xaml.Controls.ListViewItem container
+                            && list.ItemFromContainer(container) is RemoteFileEntry entry)
+                        {
+                            openEntry(entry);
+                            args.Handled = true;
+                            break;
+                        }
+                    }
                 }
             })
             .OnKeyDown(keyDown)

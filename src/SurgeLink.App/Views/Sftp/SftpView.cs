@@ -44,7 +44,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         var (entries, setEntries) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>(), threadSafe: true);
         var (loading, setLoading) = UseState(true, threadSafe: true);
         var (error, setError) = UseState<string?>(null, threadSafe: true);
-        var (refreshToken, setRefreshToken) = UseState(0);
+        var (refreshToken, setRefreshToken) = UseState(Guid.Empty);
         var (sortColumn, setSortColumn) = UseState(SftpSortColumn.Name);
         var (ascending, setAscending) = UseState(true);
         var (selected, setSelected) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>());
@@ -66,6 +66,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 var cancellation = new CancellationTokenSource();
                 var target = requestedPath;
                 setLoading(true);
+                setSelected(Array.Empty<RemoteFileEntry>());
                 _ = Task.Run(async () =>
                 {
                     try
@@ -134,7 +135,12 @@ internal sealed class SftpView : Component<SftpViewProps>
             entries,
             sortKey);
 
-        void Refresh() => setRefreshToken(refreshToken + 1);
+        void Refresh()
+        {
+            setLoading(true);
+            setSelected(Array.Empty<RemoteFileEntry>());
+            setRefreshToken(Guid.NewGuid());
+        }
 
         void CloseDialog()
         {
@@ -147,8 +153,14 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void Navigate(string path)
         {
-            setRequestedPath(SftpPath.Normalize(path));
-            setSelected(Array.Empty<RemoteFileEntry>());
+            var normalized = SftpPath.Normalize(path);
+            if (normalized == cwd && error is null && !loading)
+            {
+                return;
+            }
+
+            setRequestedPath(normalized);
+            Refresh();
         }
 
         void GoHome()
@@ -156,7 +168,7 @@ internal sealed class SftpView : Component<SftpViewProps>
             // A null request means "ask the protocol for the home directory" and
             // is how the very first load resolves it too.
             setRequestedPath(null);
-            setSelected(Array.Empty<RemoteFileEntry>());
+            Refresh();
         }
 
         void SortBy(SftpSortColumn column)
@@ -222,13 +234,11 @@ internal sealed class SftpView : Component<SftpViewProps>
             try
             {
                 await operation(fileSystem, CancellationToken.None).ConfigureAwait(true);
-                CloseDialog();
                 Refresh();
             }
             catch (Exception ex)
             {
                 ShowBanner(InfoBarSeverity.Error, title, ex.Message);
-                CloseDialog();
             }
         }
 
@@ -241,9 +251,15 @@ internal sealed class SftpView : Component<SftpViewProps>
                 return;
             }
 
+            // The native dialog has closed. Clear its controlled open state now,
+            // before a remote call yields and another render can reopen it.
+            var text = dialogText;
+            var mode = dialogMode;
+            var directory = cwd;
+            CloseDialog();
             _ = ExecuteAsync(
                 SftpOperations.Title(current.Kind),
-                (fs, token) => SftpOperations.ApplyAsync(current, dialogText, dialogMode, cwd, fs, token));
+                (fs, token) => SftpOperations.ApplyAsync(current, text, mode, directory, fs, token));
         }
 
         // The commands are only reachable while the toolbar is rendered, which
@@ -269,7 +285,8 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void HandleListKey(object sender, KeyRoutedEventArgs args)
         {
-            var current = (sender as ListView)?.SelectedItem as RemoteFileEntry;
+            var list = sender as ListView;
+            var current = list?.SelectedItems.Count == 1 ? list.SelectedItem as RemoteFileEntry : null;
             switch (args.Key)
             {
                 case VirtualKey.Enter:
@@ -307,8 +324,9 @@ internal sealed class SftpView : Component<SftpViewProps>
         var toolbar = SftpToolbar.Render(new SftpToolbarProps(
             cwd,
             cwd != "/",
-            selected.Count > 0,
-            selected.Count == 1,
+            !loading && error is null && selected.Any(entry => !entry.IsDirectory),
+            !loading && error is null,
+            !loading && error is null && selected.Count == 1,
             fileSystem.SupportsPermissions,
             settings.ShowHiddenFiles,
             Navigate,

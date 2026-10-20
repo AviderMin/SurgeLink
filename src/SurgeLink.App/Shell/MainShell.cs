@@ -64,6 +64,7 @@ internal sealed class MainShell : Component
         var (paneOpen, setPaneOpen) = UseState(true);
         var (editor, setEditor) = UseState<EditorRequest?>(null);
         var lastEditor = UseRef<Element?>(null);
+        var connectPending = UseRef(false);
 
         void OpenEditor(SessionEditorMode mode, SessionProfile? profile)
         {
@@ -81,17 +82,22 @@ internal sealed class MainShell : Component
 
         void Connect(SessionProfile profile) => _ = ConnectAsync(profile);
 
-        async Task ConnectAsync(SessionProfile profile)
+        async Task ConnectAsync(SessionProfile profile, ConnectOptions? suppliedOptions = null)
         {
-            if (workspace.Snapshot.IsConnecting)
+            if (connectPending.Current || workspace.Snapshot.IsConnecting)
             {
                 return;
             }
 
+            // Include the password prompt in the guard, before the store starts connecting.
+            connectPending.Current = true;
             setSection(ShellSection.Workspace);
             try
             {
-                var options = await BuildConnectOptionsAsync(services, profile);
+                var options = suppliedOptions is { Password: not null } ||
+                              profile.Authentication == AuthenticationMethod.PublicKey && suppliedOptions is not null
+                    ? suppliedOptions
+                    : await BuildConnectOptionsAsync(services, profile);
                 if (options is null)
                 {
                     return;
@@ -111,6 +117,10 @@ internal sealed class MainShell : Component
             {
                 await services.Interaction.ShowErrorAsync(
                     Str.T("shell.error.unexpected", "Unexpected error"), ex.Message);
+            }
+            finally
+            {
+                connectPending.Current = false;
             }
         }
 
@@ -134,7 +144,7 @@ internal sealed class MainShell : Component
             workspace.SaveProfile(outcome.Profile, outcome.Credential);
             if (outcome.ConnectAfterSave)
             {
-                Connect(outcome.Profile);
+                _ = ConnectAsync(outcome.Profile, outcome.Options);
             }
         }
 

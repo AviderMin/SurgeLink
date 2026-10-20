@@ -33,6 +33,7 @@ internal static class SftpDialogs
                 primaryButtonText: Str.T("sftp.dialog.newFolder.primary", "Create")) with
         {
             IsOpen = open,
+            IsPrimaryButtonEnabled = SftpOperations.IsValidName(name),
             CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result => Handle(result, commit, close),
@@ -50,6 +51,7 @@ internal static class SftpDialogs
                 primaryButtonText: Str.T("sftp.dialog.rename.primary", "Rename")) with
         {
             IsOpen = open,
+            IsPrimaryButtonEnabled = SftpOperations.IsValidName(name) && name != target.Name,
             CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result => Handle(result, commit, close),
