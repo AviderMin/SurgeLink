@@ -3,6 +3,7 @@ using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using System.Text;
 using SurgeLink.App.Components;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
@@ -50,6 +51,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         var (dialog, setDialog) = UseState(SftpDialogState.None);
         var (dialogText, setDialogText) = UseState(string.Empty);
         var (dialogMode, setDialogMode) = UseState(0);
+        var (editor, updateEditor) = UseReducer<SftpEditorState?>(null, threadSafe: true);
         var (banner, setBanner) = UseState<SftpBanner?>(null, threadSafe: true);
 
         // The queue belongs to the session tab, not to this component: switching
@@ -241,6 +243,105 @@ internal sealed class SftpView : Component<SftpViewProps>
             }
         }
 
+        void OpenEditor()
+        {
+            if (fileSystem is null || selected.Count != 1 || selected[0].IsDirectory)
+            {
+                return;
+            }
+
+            var target = selected[0];
+            if (target.Size > 4 * 1024 * 1024)
+            {
+                updateEditor(_ => new SftpEditorState(
+                    target,
+                    string.Empty,
+                    false,
+                    false,
+                    Str.T("sftp.dialog.editor.tooLarge", "This file is too large for the built-in text editor.")));
+                return;
+            }
+
+            updateEditor(_ => new SftpEditorState(target, string.Empty, true, false, null));
+            var cancellation = operationLifetime.Current;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await using var stream = await fileSystem
+                        .OpenReadAsync(target.FullPath, cancellation?.Token ?? CancellationToken.None)
+                        .ConfigureAwait(false);
+                    using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                    var text = await reader.ReadToEndAsync(cancellation?.Token ?? CancellationToken.None).ConfigureAwait(false);
+                    updateEditor(current => current is null || current.Target.FullPath != target.FullPath
+                        ? current
+                        : current with { Text = text, IsLoading = false });
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception exception)
+                {
+                    updateEditor(current => current is null || current.Target.FullPath != target.FullPath
+                        ? current
+                        : current with { IsLoading = false, Error = exception.Message });
+                }
+            });
+        }
+
+        void CloseEditor() => updateEditor(_ => null);
+
+        void CommitEditor()
+        {
+            var snapshot = editor;
+            if (snapshot is null)
+            {
+                return;
+            }
+
+            updateEditor(_ => null);
+            _ = SaveEditorAsync(snapshot);
+        }
+
+        async Task SaveEditorAsync(SftpEditorState snapshot)
+        {
+            if (fileSystem is null)
+            {
+                return;
+            }
+
+            var cancellation = operationLifetime.Current;
+            try
+            {
+                var bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(snapshot.Text);
+                await using (var stream = await fileSystem.OpenWriteAsync(
+                                 snapshot.Target.FullPath,
+                                 bytes.Length,
+                                 progress: null,
+                                 cancellation?.Token ?? CancellationToken.None))
+                {
+                    await stream.WriteAsync(bytes, cancellation?.Token ?? CancellationToken.None);
+                    await stream.FlushAsync(cancellation?.Token ?? CancellationToken.None);
+                }
+
+                ShowBanner(
+                    InfoBarSeverity.Success,
+                    Str.T("sftp.banner.saveComplete", "File saved"),
+                    snapshot.Target.Name);
+                Refresh();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception exception)
+            {
+                ShowBanner(
+                    InfoBarSeverity.Error,
+                    Str.T("sftp.banner.saveFailed", "Could not save the file"),
+                    exception.Message);
+            }
+        }
+
         void OpenRename(RemoteFileEntry? entry)
         {
             if (entry is null)
@@ -389,7 +490,7 @@ internal sealed class SftpView : Component<SftpViewProps>
             !loading && error is null,
             !loading && error is null && selected.Count == 1,
             fileSystem.SupportsPermissions,
-            settings.ShowHiddenFiles,
+            !loading && error is null && selected.Count == 1 && !selected[0].IsDirectory,
             Navigate,
             () => Navigate(SftpPath.Parent(cwd)),
             GoHome,
@@ -404,7 +505,7 @@ internal sealed class SftpView : Component<SftpViewProps>
             () => OpenRename(selected.Count == 1 ? selected[0] : null),
             () => OpenDelete(selected.Count == 1 ? selected[0] : null),
             () => OpenPermissions(selected.Count == 1 ? selected[0] : null),
-            value => settingsStore.Update(current => current with { ShowHiddenFiles = value })));
+            OpenEditor));
 
         Element? bannerBar = banner is null
             ? null
@@ -433,6 +534,16 @@ internal sealed class SftpView : Component<SftpViewProps>
             });
         }
 
+        if (editor is not null)
+        {
+            dialogs.Add(SftpDialogs.TextEditor(
+                true,
+                editor,
+                text => updateEditor(current => current is null ? null : current with { Text = text }),
+                CommitEditor,
+                CloseEditor));
+        }
+
         return Grid(
             columns: [GridSize.Star()],
             rows:
@@ -444,24 +555,14 @@ internal sealed class SftpView : Component<SftpViewProps>
             ],
             toolbar.Grid(row: 0),
             bannerBar is null ? null : bannerBar.Grid(row: 1),
-            // One horizontal viewport keeps the header and every file column together.
-            // The ListView still owns vertical scrolling and keyboard selection.
-            ScrollView(
-                    Grid(
-                        columns: [GridSize.Star()],
-                        rows: [GridSize.Auto, GridSize.Star()],
-                        SftpEntryList.Header(sortColumn, ascending, SortBy).Grid(row: 0),
-                        content.Grid(row: 1))
-                    .MinWidth(SftpEntryList.MinimumWidth))
-                .Set(viewer =>
-                {
-                    viewer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-                    viewer.VerticalContentAlignment = VerticalAlignment.Stretch;
-                    viewer.HorizontalScrollMode = ScrollingScrollMode.Enabled;
-                    viewer.HorizontalScrollBarVisibility = ScrollingScrollBarVisibility.Auto;
-                    viewer.VerticalScrollMode = ScrollingScrollMode.Disabled;
-                    viewer.VerticalScrollBarVisibility = ScrollingScrollBarVisibility.Hidden;
-                })
+            // The ListView owns vertical scrolling. Keep the header and rows in
+            // the same star-sized Grid so the list gets the viewport height.
+            Grid(
+                    columns: [GridSize.Star()],
+                    rows: [GridSize.Auto, GridSize.Star()],
+                    SftpEntryList.Header(sortColumn, ascending, SortBy).Grid(row: 0),
+                    content.Grid(row: 1))
+                .MinWidth(SftpEntryList.MinimumWidth)
                 .Grid(row: 2),
             transferPanel is null ? null : transferPanel.Grid(row: 3),
             dialogs.Count == 0 ? null : Grid(columns: [GridSize.Star()], rows: [GridSize.Star()], dialogs.ToArray()).Grid(row: 0, rowSpan: 4));

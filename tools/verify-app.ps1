@@ -153,7 +153,21 @@ Start-Sleep -Seconds 3
 $files = Dump "03-files"
 AssertContains $files "demo.txt" "SFTP listing shows demo.txt"
 AssertContains $files "Documents" "SFTP listing shows Documents"
+AssertContains $files "Edit" "edit command present"
+AssertMissing $files "Show hidden files" "hidden-files toggle removed"
 AssertMissing $files "Render error" "no render errors in files view"
+
+Step "Built-in file editor"
+Invoke-Action "demo.txt" "ListItem" -Select
+Start-Sleep -Milliseconds 400
+Invoke-Action "Edit" "Button"
+Start-Sleep -Seconds 2
+$editor = Dump "03-editor"
+AssertContains $editor "File contents" "editor shows file contents"
+AssertContains $editor "Save" "editor has save action"
+AssertMissing $editor "Render error" "no render errors in editor"
+Invoke-Action "Cancel" "Button"
+Start-Sleep -Milliseconds 500
 
 Step "File selection and name validation"
 Invoke-Action "Documents" "ListItem" -Select

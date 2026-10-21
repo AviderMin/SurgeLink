@@ -103,6 +103,58 @@ internal static class SftpDialogs
             OnClosed = result => Handle(result, commit, close),
         };
 
+    /// <summary>Built-in text editor for a selected remote file.</summary>
+    public static Element TextEditor(
+        bool open,
+        SftpEditorState state,
+        Action<string> setText,
+        Action commit,
+        Action close)
+    {
+        Element body = state.IsLoading
+            ? Grid(
+                    columns: [GridSize.Star()],
+                    rows: [GridSize.Star()],
+                    ProgressRing().HAlign(HorizontalAlignment.Center).VAlign(VerticalAlignment.Center))
+                .MinHeight(320)
+            : VStack(
+                AppTheme.SpacingM,
+                TextBlock(state.Target.FullPath)
+                    .FontFamily(AppTheme.Monospace)
+                    .FontSize(12)
+                    .Foreground(Theme.SecondaryText),
+                state.Error is null
+                    ? TextBox(state.Text, setText)
+                        .Header(Str.T("sftp.dialog.editor.header", "File contents"))
+                        .AcceptsReturn(true)
+                        .TextWrapping(TextWrapping.Wrap)
+                        .FontFamily(AppTheme.Monospace)
+                        .MinHeight(340)
+                        .MaxHeight(520)
+                        .Set(box => box.IsSpellCheckEnabled = false)
+                    : InfoBar(
+                        Str.T("sftp.dialog.editor.error", "Could not read the file"),
+                        state.Error)
+                        .Severity(InfoBarSeverity.Error)
+                        .IsClosable(false),
+                state.Error is null
+                    ? Caption(Str.T("sftp.dialog.editor.hint", "Changes are written back to the remote file when you save."))
+                        .Foreground(Theme.SecondaryText)
+                    : null);
+
+        return ContentDialog(
+                Str.T("sftp.dialog.editor.title", "Edit file"),
+                body.Width(640),
+                primaryButtonText: Str.T("sftp.dialog.editor.primary", "Save")) with
+        {
+            IsOpen = open,
+            IsPrimaryButtonEnabled = !state.IsLoading && !state.IsSaving && state.Error is null,
+            CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+            OnClosed = result => Handle(result, commit, close),
+        };
+    }
+
     private static Element PermissionRow(string label, int readBit, int writeBit, int execBit, int mode, Action<int> setMode) =>
         Grid(
             columns: PermissionRowColumns,

@@ -15,7 +15,7 @@ namespace SurgeLink.App.Views.Sftp;
 /// <param name="CanModify">A current folder listing is available.</param>
 /// <param name="SingleSelection">Exactly one entry is selected.</param>
 /// <param name="SupportsPermissions">The protocol can read and write POSIX modes.</param>
-/// <param name="ShowHiddenFiles">State of the hidden file toggle.</param>
+/// <param name="CanEdit">Exactly one regular file is selected and can be opened in the text editor.</param>
 internal sealed record SftpToolbarProps(
     string CurrentPath,
     bool CanGoUp,
@@ -23,7 +23,7 @@ internal sealed record SftpToolbarProps(
     bool CanModify,
     bool SingleSelection,
     bool SupportsPermissions,
-    bool ShowHiddenFiles,
+    bool CanEdit,
     Action<string> Navigate,
     Action GoUp,
     Action GoHome,
@@ -34,12 +34,12 @@ internal sealed record SftpToolbarProps(
     Action Rename,
     Action Delete,
     Action EditPermissions,
-    Action<bool> ToggleHidden);
+    Action Edit);
 
 /// <summary>
 /// Path breadcrumb plus the action commands of the file manager. Commands live
 /// in a WinUI <see cref="CommandBar"/>, so overflow and keyboard accelerators
-/// follow the platform behaviour; the hidden file toggle sits next to it.
+/// follow the platform behaviour; the Edit command sits at the right edge.
 /// </summary>
 internal static class SftpToolbar
 {
@@ -95,12 +95,16 @@ internal static class SftpToolbar
                 ])
             .Set(bar => bar.DefaultLabelPosition = CommandBarDefaultLabelPosition.Right);
 
-        var hiddenToggle = ToggleButton(
-                Str.T("sftp.command.hiddenFiles", "Hidden files"),
-                props.ShowHiddenFiles,
-                props.ToggleHidden)
-            .ToolTip(Str.T("sftp.command.hiddenFilesToolTip", "Show dot files"))
-            .AutomationName(Str.T("sftp.command.hiddenFilesAutomation", "Show hidden files"))
+        var editButton = Button(
+                HStack(
+                    AppTheme.SpacingXs,
+                    Icon(FontIcon("\uE70F", fontSize: 14)),
+                    TextBlock(Str.T("sftp.command.edit", "Edit"))),
+                props.CanEdit ? props.Edit : null)
+            .SubtleButton()
+            .IsEnabled(props.CanEdit)
+            .ToolTip(Str.T("sftp.command.editToolTip", "Open the selected file in the text editor"))
+            .AutomationName(Str.T("sftp.command.edit", "Edit"))
             .VAlign(VerticalAlignment.Center)
             .Margin(AppTheme.SpacingS, 0, 0, 0);
 
@@ -115,7 +119,7 @@ internal static class SftpToolbar
                 columns: [GridSize.Star(), GridSize.Auto],
                 rows: [GridSize.Auto],
                 commands.Grid(row: 0, column: 0),
-                hiddenToggle.Grid(row: 0, column: 1)));
+                editButton.Grid(row: 0, column: 1)));
     }
 
     private static Element IconButton(string label, string glyph, Action? onClick) =>

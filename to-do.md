@@ -146,7 +146,8 @@
 - **可访问性 / picker**：`SftpContent` 的空状态 New folder 与 `SftpTransferPanel` 的 Clear finished 补充显式本地化 `AutomationName`。核对 preview.15 的 `UseFilePickerAsync` 实现确认其不注册 hook 状态；只对 `PickKeyFileAsync` 的已知误报做最小范围 `REACTOR_HOOKS_001` 抑制，未把 picker 移入 Render。
 - **DialogAutomation**：在 `Set` 更新和 `Opened` 时幂等重贴按钮 AutomationId，覆盖内容变化导致模板重建命令区按钮的情况。
 - **真实 SSH 终端输入**：`SshTerminal.WriteAsync` 原来只调用 `ShellStream.WriteAsync`，SSH.NET 的实现只是写入内部缓冲区，未 `Flush` 时字节不会发给服务器；真实 SSH 会话因此输入无反应（Demo 终端不走该路径）。现在在后台线程执行 `Write + Flush`，并新增 `SshTerminalWriteTests` 回归测试。
-- **文件列表交互**：ListView 改用可靠的 `ItemClick`，双击文件夹打开目录，修复条目和文件夹点击无响应。
+- **文件列表交互与滚动**：ListView 改用可靠的 `ItemClick`，双击文件夹打开目录；移除外层纵向失效的 ScrollView，改由 ListView 自身滚动，修复列表无法滚动。
+- **内置文本编辑器**：右上角隐藏文件开关替换为“编辑”；选中单个文件后可读取、修改并保存回远程文件（SFTP/SCP 均支持）。
 - **SCP 回退**：SFTP 不可用时自动切换为 SSH 命令列目录 + SCP 传输文件；保持同一 SSH 加密传输，并在 SFTP 连接被服务器关闭时自动重试。
 - **设置页布局**：将设置内容放入居中的最大宽度 880 列，禁用水平滚动，修正原先 `MaxWidth` 误作用到最后一个 Section、卡片被拉到整页宽度并偏右的问题。
 - **侧栏精简监控**：移除左侧栏底部提示文字和底部 Settings 导航按钮；`SidebarMonitor` 以汽车仪表的双圆弧表显示当前会话 CPU 总占用率和 RAM 使用率（百分比取整并居中于圆环，CPU/内存标签放在圆环下方），下方左侧显示网络上下行、右侧显示磁盘读写速率。状态栏内容行改为星号行并垂直居中。`SystemSnapshot` 增加磁盘读写速率字段；Linux `/proc/diskstats` 按整盘统计并计算速率，Windows 采样增加 `Win32_PerfFormattedData_PerfDisk_LogicalDisk` 读写速率段。
@@ -155,7 +156,7 @@
 
 - `dotnet build src/SurgeLink.App/SurgeLink.App.csproj -p:Platform=x64 -v minimal -nologo`：0 错误，0 警告（修复前 5 条 Reactor 警告：2 EVENT、2 A11Y、1 HOOKS，均消除）。
 - `dotnet test SurgeLink.slnx -p:Platform=x64 -v minimal -nologo`：721 项通过、0 失败。Core 102（含 7 项 `FileTransferQueue` 生命周期测试）、Terminal 273、SSH 316（含 SSH 写入 Flush 回归测试、SCP 目录行解析及 SFTP 不可用检测测试）、Conformance 30。
-- `tools/verify-app.ps1`（完整执行，无 `-NoBuild` / `-SkipTests`）：solution build 通过；4 个测试项目通过；UI 61 项通过、0 失败。新增覆盖：设置页布局与语言/主题/终端控件、侧栏精简监控、单选文件夹 Delete 状态、多选禁用 Rename/Delete、无效编辑器提交保持打开并显示校验、取消后重新打开编辑器、中文 UI 与窗口标题。日志与 UIA dump 位于 `artifacts/verify`。
+- `tools/verify-app.ps1`（完整执行，无 `-NoBuild` / `-SkipTests`）：solution build 通过；4 个测试项目通过；UI 66 项通过、0 失败。新增覆盖：设置页布局与语言/主题/终端控件、侧栏精简监控、文件列表编辑入口与隐藏文件按钮移除、内置文本编辑器、单选文件夹 Delete 状态、多选禁用 Rename/Delete、无效编辑器提交保持打开并显示校验、取消后重新打开编辑器、中文 UI 与窗口标题。日志与 UIA dump 位于 `artifacts/verify`。
 - 手动补充：有效表单点击 Save 成功保存临时会话并关闭对话框，测试后已恢复 `sessions.json`；单选 `demo.txt` 时 Download / Rename / Delete / Permissions 均启用，单选 `Documents` 时 Delete 启用、Download 禁用。
 
 ### 剩余限制
