@@ -1,6 +1,7 @@
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -15,7 +16,8 @@ internal static class AppDialog
         string automationPrefix,
         Action<ContentDialogResult> onClosed,
         string primaryText,
-        string? closeText = null)
+        string? closeText = null,
+        ElementTheme theme = ElementTheme.Default)
     {
         var dialog = ContentDialog(title,
             ScrollView(content).MaxHeight(420).HorizontalScrollMode(ScrollingScrollMode.Disabled),
@@ -39,6 +41,21 @@ internal static class AppDialog
             },
         };
 
-        return dialog.Set(DialogAutomation.Tag(automationPrefix));
+        ContentDialog? nativeDialog = null;
+        return dialog.Set(control =>
+        {
+            nativeDialog = control;
+            control.RequestedTheme = theme;
+            DialogAutomation.Tag(automationPrefix)(control);
+        }).Opened(() =>
+        {
+            // Reactor owns the Opened subscription; tag again after its native
+            // template is realized, including the first render of an About dialog.
+            if (nativeDialog is { } control)
+            {
+                DialogAutomation.Tag(automationPrefix)(control);
+                control.DispatcherQueue?.TryEnqueue(() => DialogAutomation.Tag(automationPrefix)(control));
+            }
+        });
     }
 }

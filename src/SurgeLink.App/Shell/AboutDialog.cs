@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using SurgeLink.App.Localization;
+using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -12,7 +13,12 @@ internal sealed record AboutDialogProps(Action OnClosed);
 /// <summary>Product information using the same native dialog presentation as Settings.</summary>
 internal sealed class AboutDialog : Component<AboutDialogProps>
 {
-    public override Element Render() => AppDialog.Render(
+    public override Element Render()
+    {
+        var services = UseContext(AppServices.ReactorContext)
+            ?? throw new InvalidOperationException("The component must be inside the shell service context.");
+        var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
+        return AppDialog.Render(
         Str.T("app.aboutTitle", "About SurgeLink"),
         VStack(AppTheme.SpacingXl,
             VStack(AppTheme.SpacingS,
@@ -25,5 +31,7 @@ internal sealed class AboutDialog : Component<AboutDialogProps>
                 .TextWrapping(TextWrapping.Wrap))),
         "About",
         _ => Props.OnClosed(),
-        Str.T("common.close", "Close"));
+        Str.T("common.close", "Close"),
+        theme: ThemeController.ToElementTheme(settings.Theme));
+    }
 }

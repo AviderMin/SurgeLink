@@ -38,6 +38,9 @@ internal static class DialogAutomation
         }
 
         Wired.Add(dialog, prefix);
+        // Pooled dialogs can recreate their command template after Opened and
+        // its queued callback. Reapply identities when that layout is realized.
+        dialog.LayoutUpdated += (_, _) => TagButtons(dialog, dialog.Tag as string ?? prefix);
         dialog.Opened += (sender, _) =>
         {
             // The command-space buttons can still be absent during the first
@@ -67,12 +70,18 @@ internal static class DialogAutomation
             return;
         }
 
-        AutomationProperties.SetAutomationId(button, automationId);
+        if (AutomationProperties.GetAutomationId(button) != automationId)
+        {
+            AutomationProperties.SetAutomationId(button, automationId);
+        }
         if (button.Content is string text && !string.IsNullOrWhiteSpace(text))
         {
             // Keep the visible label as the accessible name so screen readers and
             // UI Automation (the verification harness) see the same words.
-            AutomationProperties.SetName(button, text);
+            if (AutomationProperties.GetName(button) != text)
+            {
+                AutomationProperties.SetName(button, text);
+            }
         }
     }
 

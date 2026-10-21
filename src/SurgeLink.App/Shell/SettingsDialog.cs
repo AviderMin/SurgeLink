@@ -28,6 +28,7 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
         var services = UseContext(AppServices.ReactorContext)
             ?? throw new InvalidOperationException("The component must be inside the shell service context.");
         var store = services.Settings;
+        var settings = UseExternalStore(store.Subscribe, () => store.Current);
         var (draft, setDraft) = UseState(store.Current);
 
         var fontChoices = new List<string> { Str.T("shell.settings.fontFamily.auto", "(auto detect)") };
@@ -170,7 +171,8 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
                 Props.OnClosed();
             },
             Str.T("common.save", "Save"),
-            Str.T("common.cancel", "Cancel"));
+            Str.T("common.cancel", "Cancel"),
+            theme: ThemeController.ToElementTheme(settings.Theme));
     }
 
     private static Element Section(string title, params Element[] rows) =>
