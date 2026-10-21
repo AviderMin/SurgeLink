@@ -116,8 +116,8 @@ internal sealed class SidebarMonitor : Component<SidebarMonitorProps>
         var history = historyRef.Current!;
         var cpu = snapshot is null ? 0d : snapshot.Cpu.TotalPercent / 100d;
         var memory = snapshot is null ? 0d : snapshot.Memory.UsedFraction;
-        var cpuText = snapshot is null ? "—" : DataFormat.PercentValue(snapshot.Cpu.TotalPercent);
-        var memoryText = snapshot is null ? "—" : DataFormat.PercentValue(snapshot.Memory.UsedFraction * 100d);
+        var cpuText = snapshot is null ? "—" : DataFormat.Percent(snapshot.Cpu.TotalPercent / 100d);
+        var memoryText = snapshot is null ? "—" : DataFormat.Percent(snapshot.Memory.UsedFraction);
         var down = snapshot is null ? "—" : DataFormat.Rate(history.ReceiveRate);
         var up = snapshot is null ? "—" : DataFormat.Rate(history.SendRate);
         var read = snapshot is null ? "—" : DataFormat.Rate(snapshot.DiskReadBytesPerSecond);
