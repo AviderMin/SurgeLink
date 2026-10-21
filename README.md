@@ -46,6 +46,14 @@ No SSH server needed to explore the app: click **Open demo session** and use the
 
 ## Verify
 
+For the 147-case black-box catalog, package checks, desktop smoke runner and
+JSON/CSV/HTML/JUnit reports, see [tests/blackbox/README.md](tests/blackbox/README.md).
+The package suite runs without changing certificate trust or user preferences:
+
+```powershell
+pwsh -NoProfile -File tools/blackbox/Run-BlackBox.ps1 -Suite Package
+```
+
 ```powershell
 dotnet test                                        # 703 tests across 4 suites
 & ".\tools\verify-app.ps1"                        # build + tests + headless UI end-to-end check
