@@ -42,7 +42,8 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
         var rows = UseMemo(
             () => Sort(Props.Processes, sortIndex, descending).Take(Math.Max(1, Props.MaxRows)).ToList(),
             Props.Processes,
-            sortKey);
+            sortKey,
+            Props.MaxRows);
 
         if (Props.Processes.Count == 0)
         {

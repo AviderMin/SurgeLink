@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SurgeLink.App.Localization;
+using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Files;
 using static Microsoft.UI.Reactor.Factories;
@@ -12,7 +13,10 @@ using static Microsoft.UI.Reactor.Factories;
 namespace SurgeLink.App.Views.Sftp;
 
 /// <summary>Props for the standalone text editor window.</summary>
-internal sealed record FileEditorWindowProps(IRemoteFileSystem FileSystem, RemoteFileEntry Target);
+internal sealed record FileEditorWindowProps(
+    IRemoteFileSystem FileSystem,
+    RemoteFileEntry Target,
+    IAppSettingsStore Settings);
 
 /// <summary>
 /// A standalone editor window for one remote text file. The window owns its
@@ -27,6 +31,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
     public override Element Render()
     {
         var props = Props;
+        var settings = UseExternalStore(props.Settings.Subscribe, () => props.Settings.Current);
         var target = props.Target;
         var (text, setText) = UseState(string.Empty, threadSafe: true);
         var (loading, setLoading) = UseState(true, threadSafe: true);
@@ -242,15 +247,20 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 .CornerRadius(AppTheme.CardRadius);
         }
 
-        var footer = HStack(
-                AppTheme.SpacingL,
+        var footer = (Grid(
+                columns: [GridSize.Star(), GridSize.Auto, GridSize.Auto],
+                rows: [GridSize.Auto],
                 TextBlock(statusText)
                     .Foreground(error is null ? Theme.SecondaryText : Theme.SystemCritical)
-                    .TextTrimming(TextTrimming.CharacterEllipsis),
+                    .TextTrimming(TextTrimming.CharacterEllipsis)
+                    .ToolTip(statusText)
+                    .Grid(column: 0),
                 TextBlock(Str.F("sftp.editor.lines", "{0} lines", lineCount))
-                    .Foreground(Theme.SecondaryText),
+                    .Foreground(Theme.SecondaryText)
+                    .Grid(column: 1),
                 TextBlock(Str.F("sftp.editor.characters", "{0} characters", characterCount))
-                    .Foreground(Theme.SecondaryText))
+                    .Foreground(Theme.SecondaryText)
+                    .Grid(column: 2)) with { ColumnSpacing = AppTheme.SpacingL })
             .Padding(AppTheme.SpacingL, AppTheme.SpacingS, AppTheme.SpacingL, AppTheme.SpacingM)
             .VAlign(VerticalAlignment.Center);
 
@@ -259,7 +269,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             rows: [GridSize.Auto, GridSize.Star(), GridSize.Auto],
             header.Grid(row: 0),
             body.Grid(row: 1),
-            footer.Grid(row: 2));
+            footer.Grid(row: 2))
+            .RequestedTheme(ThemeController.ToElementTheme(settings.Theme));
     }
 
     private void AttachEditorScroll(TextBox editor)

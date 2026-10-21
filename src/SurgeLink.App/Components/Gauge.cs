@@ -96,7 +96,7 @@ internal sealed class Gauge : Component<GaugeProps>
                 ring,
                 labels)
             .Width(size)
-            .Height(size);
+            .MinHeight(size);
 
         Element content = Props.Caption is not null && Props.CaptionBelowRing
             ? VStack(

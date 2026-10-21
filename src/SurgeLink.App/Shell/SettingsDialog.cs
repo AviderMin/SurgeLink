@@ -14,7 +14,7 @@ namespace SurgeLink.App.Shell;
 internal sealed record SettingsDialogProps(Action OnClosed);
 
 /// <summary>
-/// Settings as a modal box, matching the About/Info dialog style. Changes are
+/// Settings in a native dialog shared with About. Changes are
 /// staged in a local draft and only written when the user chooses Save; Cancel
 /// and the close affordance discard the draft.
 /// </summary>
@@ -153,56 +153,24 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
             // Keep the native overlay scrollbar clear of the setting cards.
             .Padding(0, 0, AppTheme.SpacingL, 0);
 
-        Element ActionButton(string label, Action action, bool primary, string automationId) =>
-            primary
-                ? Button(label, action).AccentButton().AutomationName(label).AutomationId(automationId)
-                : Button(label, action).AutomationName(label).AutomationId(automationId);
+        return AppDialog.Render(
+            Str.T("shell.settings.title", "Settings"),
+            VStack(AppTheme.SpacingL,
+                Caption(Str.T("shell.settings.subtitle", "Changes are applied when you save."))
+                    .Foreground(Theme.SecondaryText).TextWrapping(TextWrapping.Wrap),
+                content),
+            "Settings",
+            result =>
+            {
+                if (result == ContentDialogResult.Primary)
+                {
+                    store.Update(_ => draft);
+                }
 
-        var box = Border(
-                VStack(
-                    AppTheme.SpacingL,
-                    VStack(
-                        AppTheme.SpacingXs,
-                        SubHeading(Str.T("shell.settings.title", "Settings"))
-                            .HeadingLevel(Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level1),
-                        Caption(Str.T("shell.settings.subtitle", "Changes are applied when you save."))
-                            .Foreground(Theme.SecondaryText)),
-                    ScrollView(content)
-                        .MaxHeight(520)
-                        .HorizontalScrollMode(ScrollingScrollMode.Disabled),
-                    HStack(
-                            AppTheme.SpacingS,
-                            ActionButton(
-                                Str.T("common.cancel", "Cancel"),
-                                () => Props.OnClosed(),
-                                primary: false,
-                                automationId: "SettingsClose"),
-                            ActionButton(
-                                Str.T("common.save", "Save"),
-                                () =>
-                                {
-                                    store.Update(_ => draft);
-                                    Props.OnClosed();
-                                },
-                                primary: true,
-                                automationId: "SettingsPrimary"))
-                        .HAlign(HorizontalAlignment.Right))
-                    .Padding(AppTheme.SpacingXl))
-            .Width(720)
-            .MaxHeight(760)
-            .HAlign(HorizontalAlignment.Center)
-            .VAlign(VerticalAlignment.Center)
-            .Background(Theme.SolidBackground)
-            .WithBorder(Theme.CardStroke)
-            .CornerRadius(AppTheme.CardRadius);
-
-        return Grid(
-                columns: [GridSize.Star()],
-                rows: [GridSize.Star()],
-                Border(Empty()).Background(Theme.SmokeFill).Grid(row: 0),
-                box.Grid(row: 0))
-            .AutomationId("SettingsDialog")
-            .AutomationName(Str.T("shell.settings.title", "Settings"));
+                Props.OnClosed();
+            },
+            Str.T("common.save", "Save"),
+            Str.T("common.cancel", "Cancel"));
     }
 
     private static Element Section(string title, params Element[] rows) =>
@@ -212,23 +180,12 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
             VStack(AppTheme.SpacingM, rows));
 
     private static Element SettingRow(string title, string description, Element control) =>
-        Card(Grid(
-                columns: [GridSize.Star(), GridSize.Px(240)],
-                rows: [GridSize.Auto],
-                VStack(
-                        AppTheme.SpacingXs,
-                        BodyStrong(title).TextWrapping(TextWrapping.Wrap),
-                        Caption(description).Foreground(Theme.SecondaryText).TextWrapping(TextWrapping.Wrap))
-                    .VAlign(VerticalAlignment.Center)
-                    .Grid(row: 0, column: 0),
-                control
-                    .HAlign(HorizontalAlignment.Stretch)
-                    .VAlign(VerticalAlignment.Center)
-                    .Grid(row: 0, column: 1)) with
-            {
-                ColumnSpacing = AppTheme.SpacingL,
-                RowSpacing = AppTheme.SpacingM,
-            });
+        Card(VStack(
+            AppTheme.SpacingM,
+            VStack(AppTheme.SpacingXs,
+                BodyStrong(title).TextWrapping(TextWrapping.Wrap),
+                Caption(description).Foreground(Theme.SecondaryText).TextWrapping(TextWrapping.Wrap)),
+            control.HAlign(HorizontalAlignment.Stretch)));
 
     private static readonly AppLanguage[] LanguageOrder =
     {

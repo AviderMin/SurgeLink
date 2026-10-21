@@ -65,7 +65,8 @@ internal sealed class LineChart : Component<LineChartProps>
             for (var i = 1; i <= 3; i++)
             {
                 var y = Math.Round(height * i / 4d) + 0.5;
-                children.Add(Line(0, y, width, y).Stroke(ChartPalette.GridLine).StrokeThickness(1));
+                children.Add(Line(0, y, width, y).Stroke(ChartPalette.GridLine).StrokeThickness(1)
+                    .WithKey("grid:" + i));
             }
         }
 
@@ -85,7 +86,7 @@ internal sealed class LineChart : Component<LineChartProps>
                 path.Stroke = stroke;
                 path.StrokeThickness = 1.6;
                 path.StrokeLineJoin = PenLineJoin.Round;
-            }));
+            }).WithKey("series:" + index));
         }
 
         // The canvas stretches to the card column; the measured width only

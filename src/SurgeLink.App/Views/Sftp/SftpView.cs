@@ -29,24 +29,17 @@ internal sealed class SftpView : Component<SftpViewProps>
         var queue = Props.Transfers;
 
         // Hooks: constant order and count on every render.
-        var (settings, setSettings) = UseState(settingsStore.Current);
-        UseEffect(
-            () =>
-            {
-                setSettings(settingsStore.Current);
-                return settingsStore.Subscribe(() => setSettings(settingsStore.Current));
-            },
-            settingsStore);
+        var settings = UseExternalStore(settingsStore.Subscribe, () => settingsStore.Current);
 
         var (requestedPath, setRequestedPath) = UseState<string?>(Props.InitialPath);
-        var (cwd, setCwd) = UseState(Props.InitialPath ?? "/");
+        var (cwd, setCwd) = UseState(Props.InitialPath ?? "/", threadSafe: true);
         var (entries, setEntries) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>(), threadSafe: true);
         var (loading, setLoading) = UseState(true, threadSafe: true);
         var (error, setError) = UseState<string?>(null, threadSafe: true);
         var (refreshToken, setRefreshToken) = UseState(Guid.Empty);
         var (sortColumn, setSortColumn) = UseState(SftpSortColumn.Name);
         var (ascending, setAscending) = UseState(true);
-        var (selected, setSelected) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>());
+        var (selected, setSelected) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>(), threadSafe: true);
         var (dialog, setDialog) = UseState(SftpDialogState.None);
         var (dialogText, setDialogText) = UseState(string.Empty);
         var (dialogMode, setDialogMode) = UseState(0);
@@ -259,10 +252,10 @@ internal sealed class SftpView : Component<SftpViewProps>
                     MinWidth = 640,
                     MinHeight = 480,
                     StartPosition = WindowStartPosition.CenterOnPrimary,
-                    Backdrop = BackdropChoice.Of(BackdropKind.Mica),
+                    Backdrop = BackdropChoice.Of(BackdropKind.MicaAlt),
                 },
                 _ => Component<FileEditorWindow, FileEditorWindowProps>(
-                    new FileEditorWindowProps(fileSystem, target)));
+                    new FileEditorWindowProps(fileSystem, target, settingsStore)));
         }
 
         void OpenRename(RemoteFileEntry? entry)

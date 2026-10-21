@@ -59,6 +59,8 @@ internal sealed class MainShell : Component
         var lastEditor = UseRef<Element?>(null);
         var (settingsOpen, setSettingsOpen) = UseState(false);
         var (settingsRequest, setSettingsRequest) = UseState(0);
+        var (aboutOpen, setAboutOpen) = UseState(false);
+        var (aboutRequest, setAboutRequest) = UseState(0);
         var connectPending = UseRef(false);
 
         void OpenEditor(SessionEditorMode mode, SessionProfile? profile)
@@ -71,12 +73,11 @@ internal sealed class MainShell : Component
             setSettingsRequest(settingsRequest + 1);
             setSettingsOpen(true);
         }
-        void ShowAbout() => _ = services.Interaction.ShowInfoAsync(
-            Str.T("app.aboutTitle", "About SurgeLink"),
-            Str.T(
-                "app.aboutBody",
-                "A multi-protocol terminal for Windows. Terminal, SFTP and remote monitoring, built with WinUI 3 + Reactor."));
-
+        void ShowAbout()
+        {
+            setAboutRequest(aboutRequest + 1);
+            setAboutOpen(true);
+        }
         void Connect(SessionProfile profile) => _ = ConnectAsync(profile);
 
         async Task ConnectAsync(SessionProfile profile, ConnectOptions? suppliedOptions = null)
@@ -336,6 +337,11 @@ internal sealed class MainShell : Component
                 .WithKey("settings-dialog-" + settingsRequest)
             : Empty();
 
+        var aboutOverlay = aboutOpen
+            ? Component<AboutDialog, AboutDialogProps>(new AboutDialogProps(() => setAboutOpen(false)))
+                .WithKey("about-dialog-" + aboutRequest)
+            : Empty();
+
         var root = Grid(
                 columns: [GridSize.Star()],
                 rows: [GridSize.Auto, GridSize.Star(), GridSize.Auto],
@@ -344,6 +350,7 @@ internal sealed class MainShell : Component
                 statusBar.Grid(row: 2),
                 editorOverlay.Grid(row: 0, rowSpan: 3),
                 settingsOverlay.Grid(row: 0, rowSpan: 3),
+                aboutOverlay.Grid(row: 0, rowSpan: 3),
                 Component<DialogHost>().Grid(row: 0, rowSpan: 3))
             // Provide on the visual root, not on the CommandHost decorator:
             // TabView content and dialog overlays must all see the same graph.

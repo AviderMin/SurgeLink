@@ -34,14 +34,7 @@ internal sealed class SidebarMonitor : Component<SidebarMonitorProps>
         var monitor = Props.Monitor;
         var settingsStore = Props.Settings;
 
-        var (settings, setSettings) = UseState(settingsStore.Current);
-        UseEffect(
-            () =>
-            {
-                setSettings(settingsStore.Current);
-                return settingsStore.Subscribe(() => setSettings(settingsStore.Current));
-            },
-            settingsStore);
+        var settings = UseExternalStore(settingsStore.Subscribe, () => settingsStore.Current);
 
         var (snapshot, setSnapshot) = UseState<SystemSnapshot?>(null, threadSafe: true);
         var (error, setError) = UseState<string?>(null, threadSafe: true);

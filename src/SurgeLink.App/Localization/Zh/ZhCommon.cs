@@ -20,6 +20,7 @@ public static class ZhCommon
         ["app.tagline"] = "多协议终端",
         ["app.about"] = "About SurgeLink",
         ["app.aboutTitle"] = "关于 SurgeLink",
+        ["app.aboutVersion"] = "版本 {0}",
         ["app.aboutBody"] = "面向 Windows 的多协议终端。终端、SFTP 与远程监控，基于 WinUI 3 + Reactor 构建。",
     };
 }

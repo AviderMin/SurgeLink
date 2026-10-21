@@ -27,14 +27,7 @@ internal sealed class MonitorView : Component<MonitorViewProps>
         var settingsStore = Props.Settings;
 
         // Hooks: constant order and count on every render.
-        var (settings, setSettings) = UseState(settingsStore.Current);
-        UseEffect(
-            () =>
-            {
-                setSettings(settingsStore.Current);
-                return settingsStore.Subscribe(() => setSettings(settingsStore.Current));
-            },
-            settingsStore);
+        var settings = UseExternalStore(settingsStore.Subscribe, () => settingsStore.Current);
 
         var (snapshot, setSnapshot) = UseState<SystemSnapshot?>(null, threadSafe: true);
         var (processes, setProcesses) = UseState<IReadOnlyList<RemoteProcessInfo>>(Array.Empty<RemoteProcessInfo>(), threadSafe: true);
