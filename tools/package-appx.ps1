@@ -1,10 +1,12 @@
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')]
+    [ValidatePattern('^\d+\.\d+\.\d+(\.\d+)?$')]
     [string]$Version = '1.0.2',
     [switch]$SkipPublish
 )
 
 $ErrorActionPreference = 'Stop'
+$parsedVersion = [version]$Version
+$packageVersion = if ($parsedVersion.Revision -lt 0) { "$Version.0" } else { $Version }
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $outputRoot = Join-Path $repoRoot 'artifacts/appx'
 $payload = Join-Path $outputRoot 'payload'
@@ -15,7 +17,7 @@ if (!$SkipPublish) {
     & dotnet publish (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') `
         -c Release -r win-x64 --self-contained true -p:Platform=x64 `
         -p:WindowsAppSDKSelfContained=true -p:UseSharedCompilation=false `
-        -p:PublishTrimmed=false -o $payload -m:1 -v:minimal
+        -p:PublishTrimmed=false "-p:Version=$Version" -o $payload -m:1 -v:minimal
     if ($LASTEXITCODE -ne 0) { throw 'Self-contained publish failed.' }
 }
 if (!(Test-Path (Join-Path $payload 'SurgeLink.exe'))) { throw 'Publish output is missing.' }
@@ -28,7 +30,7 @@ if (!$sdk) { throw 'Windows SDK MakeAppx.exe was not found.' }
 $signTool = Join-Path $sdk.Directory.FullName 'signtool.exe'
 
 [xml]$manifest = Get-Content (Join-Path $repoRoot 'packaging/AppxManifest.xml') -Raw
-$manifest.Package.Identity.Version = $Version
+$manifest.Package.Identity.Version = $packageVersion
 $manifest.Save((Join-Path $payload 'AppxManifest.xml'))
 
 # Reuse the application's existing icon for Windows package assets.
@@ -81,7 +83,7 @@ if (!(Select-String -LiteralPath $priDump -Pattern 'ReactorApplication.xbf' -Sim
     throw 'Merged package resource index is missing Reactor startup resources.'
 }
 
-$package = Join-Path $outputRoot "SurgeLink_$($Version)_x64.appx"
+$package = Join-Path $outputRoot "SurgeLink_$($packageVersion)_x64.appx"
 & $sdk.FullName pack /d $payload /p $package /o > (Join-Path $outputRoot 'makeappx.log')
 if ($LASTEXITCODE -ne 0) { throw 'APPX validation or packaging failed.' }
 
@@ -116,3 +118,21 @@ finally {
 $hash = Get-FileHash -LiteralPath $package -Algorithm SHA256
 "$($hash.Hash)  $([IO.Path]::GetFileName($package))" | Set-Content (Join-Path $outputRoot 'SHA256.txt')
 Get-Item -LiteralPath $package | Select-Object FullName, Length
+
+$distribution = Join-Path $outputRoot "SurgeLink_$($Version)_x64"
+$null = New-Item -ItemType Directory -Force -Path $distribution
+$certificatePath = Join-Path $outputRoot 'SurgeLink-Development.cer'
+$publicCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certificatePath)
+try { $thumbprint = $publicCertificate.Thumbprint }
+finally { $publicCertificate.Dispose() }
+$installer = Get-Content (Join-Path $repoRoot 'packaging/Install.ps1.template') -Raw
+$installer = $installer.Replace('__PACKAGE_NAME__', [IO.Path]::GetFileName($package)).Replace('__PACKAGE_HASH__', $hash.Hash).Replace('__CERT_THUMBPRINT__', $thumbprint)
+$installerPath = Join-Path $distribution 'Install.ps1'
+$installer | Set-Content -LiteralPath $installerPath -Encoding utf8BOM
+$distributionPackage = Join-Path $distribution ([IO.Path]::GetFileName($package))
+$distributionCertificate = Join-Path $distribution 'SurgeLink-Development.cer'
+Copy-Item -LiteralPath $package -Destination $distributionPackage -Force
+Copy-Item -LiteralPath $certificatePath -Destination $distributionCertificate -Force
+$zipPath = Join-Path $outputRoot "SurgeLink_$($Version)_x64.zip"
+Compress-Archive -LiteralPath @($distributionPackage, $distributionCertificate, $installerPath) -DestinationPath $zipPath -Force
+Get-Item -LiteralPath $zipPath | Select-Object FullName, Length

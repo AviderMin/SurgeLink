@@ -1,31 +1,21 @@
-# APPX 打包
+# APPX 与 ZIP 发布
 
-运行 `pwsh -NoProfile -File tools/package-appx.ps1`，输出位于 `artifacts/appx/`。
-已完成自包含发布时，可使用 `-SkipPublish` 仅重新生成包；版本参数为 `-Version 0.1.0.1`。
+运行 `pwsh -NoProfile -File tools/package-appx.ps1`。默认版本为 1.0.2，APPX 清单版本为 1.0.2.0。
 
-默认构建为 x64 Release，面向 Windows 11 22H2（10.0.22621）及以上版本，包含 .NET 和 Windows App SDK 运行库。使用 Windows SDK MakePRI 合并 Reactor 和 WinUI 资源到包身份对应的 resources.pri，再由 MakeAppx 校验打包、SignTool 签名。
+发布结果：`artifacts/appx/SurgeLink_1.0.2_x64.zip`，包含且仅包含：
 
-## 本次输出
+- `SurgeLink_1.0.2.0_x64.appx`
+- `SurgeLink-Development.cer`
+- `Install.ps1`
 
-- `SurgeLink_0.1.0.1_x64.appx`：开发签名安装包。
-- `SurgeLink-Development.cer`：对应的公钥证书。
-- `SHA256.txt`：签名完成后的包文件校验值。
+先完整解压 ZIP，再在解压目录执行 `powershell -NoProfile -File .\Install.ps1`。脚本先校验 APPX SHA256、证书指纹和有效期；如证书尚未受信任，将通过标准 UAC 请求管理员权限，仅将配套证书导入本地计算机 TrustedPeople。APPX 安装由原用户进程执行。脚本不导入根证书、不删除用户数据。
 
-## 安装
+可使用 `powershell -NoProfile -File .\Install.ps1 -ValidateOnly` 仅校验文件，不修改证书存储或安装应用。若系统因互联网下载标记阻止运行脚本，请在确认来源后，通过脚本文件属性的“解除锁定”再执行。
 
-本次没有自动安装应用或添加证书信任。开发证书尚未被 Windows 信任，直接双击 APPX 可能报告不受信任的发布者。
+打包参数支持 `-Version 1.0.2` 或四段版本号；已完成发布时 `-SkipPublish` 可仅重打包。版本覆盖参数同时传递给 .NET 发布，避免应用内版本和包版本不一致。
 
-在确认信任本次构建后，手动打开 `.cer`，选择“安装证书”，将其安装到“本地计算机”的“受信任人”证书存储（需要管理员权限），然后双击 `.appx` 安装。不要将它放入“受信任的根证书颁发机构”。
+默认 x64 Release，面向 Windows 11 22H2（10.0.22621）及以上，包含 .NET 和 Windows App SDK 运行库。图标从 `docs/ICON.jpg` 生成。MakePRI 合并资源到 `resources.pri`，并检查 Reactor 启动资源；MakeAppx 执行包校验，SignTool 使用开发证书签名。
 
-证书仅用于开发测试，并非公开发行用的受信任代码签名证书。脚本在内存生成开发私钥，签名完成后删除临时 PFX；每次重新打包会生成新证书，重新分发时应附上对应 CER。需要稳定的企业或公开发行渠道时，应替换为正式签名流程。
+开发私钥仅用于此次签名，临时 PFX 完成后删除。每次重打包生成新证书，安装脚本会绑定本次证书指纹与 APPX 哈希；请分发同一个 ZIP 内的配套文件。此签名适合开发测试，公开发行应使用正式签名渠道。
 
-## 本次验证
-
-- Release 自包含发布成功；还原阶段因网络无法访问 NuGet 漏洞数据服务而产生 NU1900 警告。
-- MakeAppx 未跳过校验，包创建成功。
-- SignTool 签名成功；CMS 签名密码学校验通过，签名证书与输出 CER 匹配。
-- 核对了清单、块映射、签名、应用 EXE、.NET 运行库、WinUI 运行库和包图标。0.1.0.1 新增 resources.pri，并检查其中包含 ReactorApplication.xbf；缺少该合并索引的 0.1.0.0 在安装后启动时出现 0x802B000A XAML 解析错误。
-- SignTool 的 Windows 信任链验证返回“不受信任根证书”，这是开发证书未导入信任存储的预期结果；不等于已经通过系统信任验证。
-- 未进行 APPX 安装和安装后的启动验证。
-
-参考：[Windows App SDK 自包含部署](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/self-contained-deploy/deploy-self-contained-apps)。
+1.0.2 验证：Release 发布成功；APPX 清单 1.0.2.0、程序集文件版本 1.0.2.0、产品版本 1.0.2；合并资源存在；密码学签名有效且签名证书与 CER 一致；Windows PowerShell 5.1 执行 Install.ps1 -ValidateOnly 成功；ZIP 包含指定三个文件。此次没有导入新证书或安装 1.0.2。
