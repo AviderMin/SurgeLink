@@ -44,9 +44,9 @@ internal static class DataFormat
     public static string Percent(double fraction) =>
         (Math.Clamp(fraction, 0d, 1d) * 100).ToString("0", CultureInfo.CurrentCulture) + "%";
 
-    /// <summary>Formats a 0..100 value with one decimal, e.g. <c>12.4%</c>.</summary>
+    /// <summary>Formats a 0..100 value as a whole percentage, e.g. <c>12%</c>.</summary>
     public static string PercentValue(double percent) =>
-        percent.ToString("0.0", CultureInfo.CurrentCulture) + "%";
+        percent.ToString("0", CultureInfo.CurrentCulture) + "%";
 
     /// <summary>Formats an uptime as <c>12d 0h 43m</c>, <c>3h 12m</c> or <c>45s</c>.</summary>
     public static string Duration(TimeSpan value)

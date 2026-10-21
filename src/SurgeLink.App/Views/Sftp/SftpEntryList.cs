@@ -51,7 +51,7 @@ internal static class SftpEntryList
     public static Element Body(
         IReadOnlyList<RemoteFileEntry> entries,
         Action<IReadOnlyList<RemoteFileEntry>> selectionChanged,
-        Action<RemoteFileEntry> openEntry,
+        Action<RemoteFileEntry> itemClick,
         Action<object, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs> keyDown) =>
         (ListView<RemoteFileEntry>(entries, entry => entry.FullPath, (entry, _) => Row(entry)) with
         {
@@ -62,26 +62,7 @@ internal static class SftpEntryList
             SelectionMode = ListViewSelectionMode.Extended,
         })
             .SelectionChanged(selectionChanged)
-            .OnDoubleTapped((sender, args) =>
-            {
-                // Resolve the row under the pointer: double-tapping empty space
-                // must not open the previously selected directory.
-                if (sender is Microsoft.UI.Xaml.Controls.ListView list
-                    && args.OriginalSource is DependencyObject source)
-                {
-                    for (DependencyObject? current = source; current is not null && current != list;
-                         current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
-                    {
-                        if (current is Microsoft.UI.Xaml.Controls.ListViewItem container
-                            && list.ItemFromContainer(container) is RemoteFileEntry entry)
-                        {
-                            openEntry(entry);
-                            args.Handled = true;
-                            break;
-                        }
-                    }
-                }
-            })
+            .ItemClick(itemClick)
             .OnKeyDown(keyDown)
             .Set(list =>
             {

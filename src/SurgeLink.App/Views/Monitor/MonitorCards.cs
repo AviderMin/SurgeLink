@@ -69,8 +69,9 @@ internal static class MonitorCards
                 Component<Gauge, GaugeProps>(new GaugeProps(
                         cpu.TotalPercent / 100d,
                         DataFormat.PercentValue(cpu.TotalPercent),
-                        Str.T("monitor.card.cpu.total", "total"),
-                        112))
+                        Str.T("monitor.card.cpu.title", "CPU"),
+                        112,
+                        CaptionBelowRing: true))
                     .Grid(row: 0, column: 0),
                 detail.Grid(row: 0, column: 1).Margin(AppTheme.SpacingL, 0, 0, 0)),
             Component<LineChart, LineChartProps>(new LineChartProps(
@@ -129,8 +130,9 @@ internal static class MonitorCards
             Component<Gauge, GaugeProps>(new GaugeProps(
                     memory.UsedFraction,
                     DataFormat.Percent(memory.UsedFraction),
-                    DataFormat.Bytes(memory.UsedBytes),
-                    112))
+                    Str.T("monitor.card.memory.title", "Memory"),
+                    112,
+                    CaptionBelowRing: true))
                 .Grid(row: 0, column: 0),
             bars.Grid(row: 0, column: 1).Margin(AppTheme.SpacingL, 0, 0, 0));
 

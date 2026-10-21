@@ -13,7 +13,7 @@ namespace SurgeLink.Protocols.Ssh;
 
 /// <summary>
 /// A live SSH connection. Owns the <see cref="SshClient"/> and creates the terminal,
-/// SFTP and monitor capabilities on demand.
+/// SFTP/SCP file system and monitor capabilities on demand.
 /// </summary>
 public sealed class SshSession : IProtocolSession
 {
@@ -36,7 +36,7 @@ public sealed class SshSession : IProtocolSession
     private RemoteHostInfo _hostInfo = RemoteHostInfo.Empty;
     private Task<RemoteHostInfo>? _hostInfoTask;
     private SshTerminal? _terminal;
-    private SftpFileSystem? _fileSystem;
+    private SshFileSystem? _fileSystem;
     private OsAwareMonitor? _monitor;
     private int _remoteOperatingSystem = (int)RemoteOperatingSystem.Unknown;
     private int _disposed;
@@ -119,7 +119,7 @@ public sealed class SshSession : IProtocolSession
 
             lock (_gate)
             {
-                return _fileSystem ??= new SftpFileSystem(_factory, _logger);
+                return _fileSystem ??= new SshFileSystem(_factory, _options, _logger);
             }
         }
     }
@@ -174,7 +174,7 @@ public sealed class SshSession : IProtocolSession
         SetState(ConnectionState.Disconnecting);
 
         SshTerminal? terminal;
-        SftpFileSystem? fileSystem;
+        SshFileSystem? fileSystem;
         OsAwareMonitor? monitor;
         lock (_gate)
         {

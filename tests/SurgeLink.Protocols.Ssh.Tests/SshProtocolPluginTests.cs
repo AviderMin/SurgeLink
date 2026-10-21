@@ -18,7 +18,7 @@ public sealed class SshProtocolPluginTests
         Assert.Equal("SSH", descriptor.DisplayName);
         Assert.Equal(22, descriptor.DefaultPort);
         Assert.Equal("\uE8CE", descriptor.Glyph);
-        Assert.Equal("Secure Shell, SFTP and remote monitor", descriptor.Description);
+        Assert.Equal("Secure Shell, SFTP/SCP and remote monitor", descriptor.Description);
         Assert.True(descriptor.Capabilities.HasFlag(SessionCapabilities.Terminal));
         Assert.True(descriptor.Capabilities.HasFlag(SessionCapabilities.FileSystem));
         Assert.True(descriptor.Capabilities.HasFlag(SessionCapabilities.Monitor));

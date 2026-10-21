@@ -15,7 +15,7 @@ plain C# (no XAML), reconciled onto real WinUI 3 controls.
 | Area | Status |
 |---|---|
 | **Terminal** | Own VT100/xterm engine: UTF-8, 16/256/true colour, bold/italic/underline/inverse/strike, wide CJK, scrollback, selection, copy/paste, resize, block/bar/underline cursor, 6 615-cell screen rendered with ~47 UI elements |
-| **Files (SFTP)** | Remote browser: breadcrumb navigation, sortable listing with permissions, upload/download with progress and cancel, rename, delete, new folder, permission editor, hidden-file toggle |
+| **Files (SFTP / SCP fallback)** | Remote browser: breadcrumb navigation, sortable listing with permissions, upload/download with progress and cancel, rename, delete, new folder, permission editor, hidden-file toggle. Uses SFTP when available; falls back to SSH commands + SCP on servers without an SFTP subsystem. |
 | **Monitor** | Remote dashboard: CPU gauge + per-core bars + history, memory/swap, load, uptime, disks, network throughput with sparklines, sortable top processes, pause/resume |
 | **Protocols** | SSH (password, key, keyboard-interactive; TOFU host keys; Linux `/proc` **and Windows OpenSSH** monitoring) plus an offline **Demo** protocol for testing and as the reference implementation |
 | **Shell** | Session sidebar with grouping/search/context menu, tabbed workspaces, capability-driven view switcher, settings, host-key/secret dialogs, crash log, light/dark/High Contrast, encrypted credential storage |
@@ -62,7 +62,7 @@ src/
   SurgeLink.Core/              protocol-agnostic contracts: sessions, terminal/files/monitor
                                capabilities, profiles, credential + host key stores, session manager
   SurgeLink.Terminal/          VT/xterm emulation engine (parser, screen buffer, scrollback, input)
-  SurgeLink.Protocols.Ssh/     SSH implementation (shell channel, SFTP, Linux + Windows monitor probes)
+  SurgeLink.Protocols.Ssh/     SSH implementation (shell channel, SFTP with SCP fallback, Linux + Windows monitor probes)
   SurgeLink.Protocols.Demo/    offline reference protocol (fake shell, in-memory files, synthetic metrics)
   SurgeLink.App/               WinUI 3 + Reactor application shell and views
 tests/

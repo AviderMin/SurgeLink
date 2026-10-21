@@ -61,6 +61,10 @@ internal sealed class SftpView : Component<SftpViewProps>
         // Ordinary file operations are view-scoped work: cancel them when this
         // view unmounts so a dialog command cannot outlive its list.
         var operationLifetime = UseRef<CancellationTokenSource?>(null);
+        // ItemClick is the reliable input path for a WinUI ListView; the
+        // platform's DoubleTapped event is swallowed by the item container.
+        // Track two clicks on the same row to preserve Explorer-style opening.
+        var lastClick = UseRef<(string Path, DateTime At)>((string.Empty, DateTime.MinValue));
         UseEffect(
             () =>
             {
@@ -218,6 +222,22 @@ internal sealed class SftpView : Component<SftpViewProps>
             if (entry.IsDirectory)
             {
                 Navigate(entry.FullPath);
+            }
+        }
+
+        void HandleItemClick(RemoteFileEntry entry)
+        {
+            var now = DateTime.UtcNow;
+            var previous = lastClick.Current;
+            if (previous.Path == entry.FullPath &&
+                now - previous.At <= TimeSpan.FromMilliseconds(500))
+            {
+                lastClick.Current = (string.Empty, DateTime.MinValue);
+                OpenEntry(entry);
+            }
+            else
+            {
+                lastClick.Current = (entry.FullPath, now);
             }
         }
 
@@ -393,7 +413,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 .IsClosable(true)
                 .Closed(() => setBanner(null));
 
-        var content = SftpContent.Build(rows, loading, error, setSelected, OpenEntry, HandleListKey, Refresh, setDialogText, setDialog);
+        var content = SftpContent.Build(rows, loading, error, setSelected, HandleItemClick, HandleListKey, Refresh, setDialogText, setDialog);
 
         var transferPanel = SftpTransferPanel.Render(transfers, id => queue.Cancel(id), queue.ClearFinished);
 

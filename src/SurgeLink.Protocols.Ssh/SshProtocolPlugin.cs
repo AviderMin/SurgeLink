@@ -7,7 +7,7 @@ using SurgeLink.Protocols.Ssh.Internal;
 namespace SurgeLink.Protocols.Ssh;
 
 /// <summary>
-/// SSH protocol plugin: interactive shell, SFTP file system and Linux monitoring
+/// SSH protocol plugin: interactive shell, SFTP/SCP file system and Linux monitoring
 /// over a single SSH.NET connection.
 /// </summary>
 public sealed class SshProtocolPlugin : IProtocolPlugin
@@ -23,7 +23,7 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
         SessionCapabilities.Terminal | SessionCapabilities.FileSystem | SessionCapabilities.Monitor)
     {
         Glyph = "\uE8CE",
-        Description = "Secure Shell, SFTP and remote monitor",
+        Description = "Secure Shell, SFTP/SCP and remote monitor",
     };
 
     /// <inheritdoc />
