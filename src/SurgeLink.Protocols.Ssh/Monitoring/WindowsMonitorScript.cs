@@ -33,6 +33,9 @@ public static class WindowsMonitorScript
     /// <summary>Section name of the logical disk usage rows.</summary>
     public const string DiskSection = "disks";
 
+    /// <summary>Section name of the logical disk read/write throughput rows.</summary>
+    public const string DiskIoSection = "diskio";
+
     /// <summary>Section name of the network adapter statistics rows.</summary>
     public const string NetworkSection = "network";
 
@@ -72,6 +75,9 @@ public static class WindowsMonitorScript
 
         Emit 'disks'
         Get-CimInstance -ClassName Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { Write-Output ([string]$_.DeviceID + '|' + [string]$_.Size + '|' + [string]$_.FreeSpace + '|' + [string]$_.FileSystem) }
+
+        Emit 'diskio'
+        Get-CimInstance -ClassName Win32_PerfFormattedData_PerfDisk_LogicalDisk | Where-Object { $_.Name -ne '_Total' } | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.DiskReadBytesPersec + '|' + [string]$_.DiskWriteBytesPersec) }
 
         Emit 'network'
         Get-NetAdapterStatistics | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.ReceivedBytes + '|' + [string]$_.SentBytes + '|' + [string]$_.ReceivedUnicastPackets + '|' + [string]$_.SentUnicastPackets) }

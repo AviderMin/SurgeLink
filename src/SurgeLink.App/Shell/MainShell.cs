@@ -301,12 +301,10 @@ internal sealed class MainShell : Component
 
         var pane = Border(Grid(
                 columns: [GridSize.Star()],
-                rows: [GridSize.Auto, GridSize.Star(), GridSize.Auto],
+                rows: [GridSize.Auto, GridSize.Star()],
                 NavigationButton(Str.T("shell.nav.sessions", "Sessions"), "\uE8A9", ShellSection.Workspace)
                     .Margin(AppTheme.SpacingM, AppTheme.SpacingS, AppTheme.SpacingM, 0).Grid(row: 0),
-                sidebar.Grid(row: 1),
-                NavigationButton(Str.T("shell.nav.settings", "Settings"), "\uE713", ShellSection.Settings)
-                    .Margin(AppTheme.SpacingM, 0, AppTheme.SpacingM, AppTheme.SpacingM).Grid(row: 2)))
+                sidebar.Grid(row: 1)))
             .Background(Theme.LayerFill)
             .BorderBrush(Theme.DividerStroke)
             .BorderThickness(0, 0, 1, 0)

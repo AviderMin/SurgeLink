@@ -146,12 +146,13 @@
 - **可访问性 / picker**：`SftpContent` 的空状态 New folder 与 `SftpTransferPanel` 的 Clear finished 补充显式本地化 `AutomationName`。核对 preview.15 的 `UseFilePickerAsync` 实现确认其不注册 hook 状态；只对 `PickKeyFileAsync` 的已知误报做最小范围 `REACTOR_HOOKS_001` 抑制，未把 picker 移入 Render。
 - **DialogAutomation**：在 `Set` 更新和 `Opened` 时幂等重贴按钮 AutomationId，覆盖内容变化导致模板重建命令区按钮的情况。
 - **真实 SSH 终端输入**：`SshTerminal.WriteAsync` 原来只调用 `ShellStream.WriteAsync`，SSH.NET 的实现只是写入内部缓冲区，未 `Flush` 时字节不会发给服务器；真实 SSH 会话因此输入无反应（Demo 终端不走该路径）。现在在后台线程执行 `Write + Flush`，并新增 `SshTerminalWriteTests` 回归测试。
+- **侧栏精简监控**：移除左侧栏底部提示文字和底部 Settings 导航按钮；`SidebarMonitor` 以汽车仪表的双圆弧表显示当前会话 CPU 总占用率和 RAM 使用率（百分比居中于圆环，CPU/内存标签放在圆环下方），下方左侧显示网络上下行、右侧显示磁盘读写速率。状态栏内容行改为星号行并垂直居中。`SystemSnapshot` 增加磁盘读写速率字段；Linux `/proc/diskstats` 按整盘统计并计算速率，Windows 采样增加 `Win32_PerfFormattedData_PerfDisk_LogicalDisk` 读写速率段。
 
 ### 验证命令与结果
 
 - `dotnet build src/SurgeLink.App/SurgeLink.App.csproj -p:Platform=x64 -v minimal -nologo`：0 错误，0 警告（修复前 5 条 Reactor 警告：2 EVENT、2 A11Y、1 HOOKS，均消除）。
-- `dotnet test SurgeLink.slnx -p:Platform=x64 -v minimal -nologo`：711 项通过、0 失败。Core 102（新增 7 项 `FileTransferQueue` 生命周期测试）、Terminal 273、SSH 306（含新增 SSH 写入 Flush 回归测试）、Conformance 30。
-- `tools/verify-app.ps1`（完整执行，无 `-NoBuild` / `-SkipTests`）：solution build 通过；4 个测试项目通过；UI 52 项通过、0 失败。新增覆盖：单选文件夹 Delete 状态、多选禁用 Rename/Delete、无效编辑器提交保持打开并显示校验、取消后重新打开编辑器、中文 UI 与窗口标题。日志与 UIA dump 位于 `artifacts/verify`。
+- `dotnet test SurgeLink.slnx -p:Platform=x64 -v minimal -nologo`：714 项通过、0 失败。Core 102（新增 7 项 `FileTransferQueue` 生命周期测试）、Terminal 273、SSH 309（含 SSH 写入 Flush 回归测试及磁盘 I/O 解析测试）、Conformance 30。
+- `tools/verify-app.ps1`（完整执行，无 `-NoBuild` / `-SkipTests`）：solution build 通过；4 个测试项目通过；UI 57 项通过、0 失败。新增覆盖：侧栏精简监控、单选文件夹 Delete 状态、多选禁用 Rename/Delete、无效编辑器提交保持打开并显示校验、取消后重新打开编辑器、中文 UI 与窗口标题。日志与 UIA dump 位于 `artifacts/verify`。
 - 手动补充：有效表单点击 Save 成功保存临时会话并关闭对话框，测试后已恢复 `sessions.json`；单选 `demo.txt` 时 Download / Rename / Delete / Permissions 均启用，单选 `Documents` 时 Delete 启用、Download 禁用。
 
 ### 剩余限制

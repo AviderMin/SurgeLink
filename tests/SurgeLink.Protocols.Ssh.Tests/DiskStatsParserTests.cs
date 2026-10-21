@@ -28,6 +28,24 @@ public sealed class DiskStatsParserTests
     }
 
     [Fact]
+    public void SumWholeDeviceSectorsSkipsPartitionsAndPseudoDevices()
+    {
+        const string text = """
+               8       0 sda 12345 678 987654 12345 67890 123 456789 23456 0 34567 45678
+               8       1 sda1 1234 56 78901 1234 5678 12 45678 2345 0 3456 4567
+             259       0 nvme0n1 100 0 2000 30 400 0 5000 60 1 70 80
+             259       1 nvme0n1p1 10 0 200 3 40 0 500 6 0 7 8
+               7       0 loop0 1 0 2 3 4 0 5 6 0 7 8
+            """;
+
+        var stats = DiskStatsParser.Parse(text);
+        var (read, write) = DiskStatsParser.SumWholeDeviceSectors(stats);
+
+        Assert.Equal(987654 + 2000, read);
+        Assert.Equal(456789 + 5000, write);
+    }
+
+    [Fact]
     public void ParseSkipsShortAndMalformedLines()
     {
         const string text = """

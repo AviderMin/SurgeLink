@@ -33,6 +33,8 @@ internal sealed class SidebarView : Component<SidebarProps>
 
     public override Element Render()
     {
+        var services = UseContext(AppServices.ReactorContext)
+            ?? throw new InvalidOperationException("The sidebar must be inside the shell service context.");
         var props = Props;
         var (search, setSearch) = UseState(props.Snapshot.SearchText);
 
@@ -98,9 +100,10 @@ internal sealed class SidebarView : Component<SidebarProps>
                     newSessionButton.Grid(column: 0),
                     demoButton.Grid(column: 1)) with { ColumnSpacing = AppTheme.SpacingS }).Grid(row: 1),
                 body.Grid(row: 2),
-                Caption(Str.T("shell.sidebar.hint", "Right-click a session for edit, duplicate and delete."))
-                    .Foreground(Theme.SecondaryText)
-                    .TextWrapping(TextWrapping.Wrap)
+                Component<SidebarMonitor, SidebarMonitorProps>(new SidebarMonitorProps(
+                        props.Snapshot.ActiveTab?.Session.Monitor,
+                        props.Snapshot.ActiveTab is not null,
+                        services.Settings))
                     .Grid(row: 3)) with
         {
             RowSpacing = AppTheme.SpacingM,

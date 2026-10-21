@@ -37,7 +37,8 @@ internal static class StatusBarView
                 .AutomationName(active is null ? Str.T("shell.status.noSession", "No session") : AppTheme.StatusText(state)),
             Caption(active is null ? Str.T("shell.status.ready", "Ready") : AppTheme.StatusText(state))
                 .VAlign(VerticalAlignment.Center)
-                .AutomationId("StatusConnectionState"));
+                .AutomationId("StatusConnectionState"))
+            .VAlign(VerticalAlignment.Center);
 
         var detail = active is null ? string.Empty :
             $"{Endpoint(active)} · {active.Session.Protocol.DisplayName} · {active.Session.HostInfo.Summary}";
@@ -56,11 +57,12 @@ internal static class StatusBarView
                     ? Str.F("shell.status.sessionsOne", "{0} session", snapshot.Tabs.Count)
                     : Str.F("shell.status.sessionsMany", "{0} sessions", snapshot.Tabs.Count))
                 .Foreground(Theme.SecondaryText).VAlign(VerticalAlignment.Center)
-                .AutomationId("StatusSessionCount"));
+                .AutomationId("StatusSessionCount"))
+            .VAlign(VerticalAlignment.Center);
 
         return Border(Grid(
                 columns: [GridSize.Auto, GridSize.Star(), GridSize.Auto],
-                rows: [GridSize.Auto],
+                rows: [GridSize.Star()],
                 status.Grid(column: 0),
                 Caption(detail).Foreground(Theme.SecondaryText)
                     .TextTrimming(TextTrimming.CharacterEllipsis).ToolTip(detail)

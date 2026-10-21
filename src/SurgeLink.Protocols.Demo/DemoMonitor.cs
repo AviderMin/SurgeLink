@@ -72,6 +72,8 @@ public sealed class DemoMonitor : IRemoteSystemMonitor
                     PacketsSent = (long)(elapsed * 120),
                 },
             },
+            DiskReadBytesPerSecond = Math.Max(0, (6 * 1024 * 1024) + (wave * 2 * 1024 * 1024)),
+            DiskWriteBytesPerSecond = Math.Max(0, (2 * 1024 * 1024) + (wave2 * 1024 * 1024)),
             Uptime = TimeSpan.FromDays(12) + TimeSpan.FromMinutes(43),
         };
 

@@ -15,7 +15,16 @@ namespace SurgeLink.App.Components;
 /// <param name="ValueText">Large centred text, e.g. "42.3%".</param>
 /// <param name="Caption">Small caption underneath the value.</param>
 /// <param name="Size">Outer diameter in device independent pixels.</param>
-internal sealed record GaugeProps(double Fraction, string? ValueText = null, string? Caption = null, double Size = 120);
+/// <param name="CaptionBelowRing">
+/// When <c>true</c>, the caption is drawn underneath the dial instead of inside
+/// it. The value stays vertically centred in the ring.
+/// </param>
+internal sealed record GaugeProps(
+    double Fraction,
+    string? ValueText = null,
+    string? Caption = null,
+    double Size = 120,
+    bool CaptionBelowRing = false);
 
 /// <summary>
 /// A 270 degree radial gauge built from two WinUI shapes: an <see cref="Ellipse"/>
@@ -68,24 +77,41 @@ internal sealed class Gauge : Component<GaugeProps>
                     .Canvas(0, 0));
         }
 
-        var ring = Canvas(shapes.ToArray()).Size(size, size);
+        var ring = Canvas(shapes.ToArray()).Size(size, size)
+            .HAlign(HorizontalAlignment.Center)
+            .VAlign(VerticalAlignment.Center);
 
         var labels = VStack(
                 AppTheme.SpacingXs,
                 Props.ValueText is null ? null : SubHeading(Props.ValueText),
-                Props.Caption is null ? null : Caption(Props.Caption).Foreground(Theme.SecondaryText))
+                Props.Caption is null || Props.CaptionBelowRing
+                    ? null
+                    : Caption(Props.Caption).Foreground(Theme.SecondaryText))
             .HAlign(HorizontalAlignment.Center)
             .VAlign(VerticalAlignment.Center);
 
-        return Grid(
+        var dial = Grid(
                 columns: [GridSize.Star()],
                 rows: [GridSize.Star()],
                 ring,
                 labels)
-            .AutomationName(Str.F(
-                "monitor.gauge.automation",
-                "Gauge {0}",
-                Props.ValueText ?? DataFormat.Percent(fraction)));
+            .Width(size)
+            .Height(size);
+
+        Element content = Props.Caption is not null && Props.CaptionBelowRing
+            ? VStack(
+                    AppTheme.SpacingXs,
+                    dial,
+                    Caption(Props.Caption)
+                        .Foreground(Theme.SecondaryText)
+                        .HAlign(HorizontalAlignment.Center))
+                .HAlign(HorizontalAlignment.Center)
+            : dial;
+
+        return content.AutomationName(Str.F(
+            "monitor.gauge.automation",
+            "Gauge {0}",
+            Props.ValueText ?? DataFormat.Percent(fraction)));
     }
 
     /// <summary>Builds a clockwise arc from the start angle covering <paramref name="fraction"/> of the sweep.</summary>

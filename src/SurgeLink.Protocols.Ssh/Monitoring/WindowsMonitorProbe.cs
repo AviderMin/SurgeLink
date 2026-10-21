@@ -86,6 +86,7 @@ public sealed class WindowsMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
             var memory = WindowsMemoryParser.Parse(ReadSection(sections, WindowsMonitorScript.MemorySection));
             var system = WindowsSystemParser.Parse(ReadSection(sections, WindowsMonitorScript.SystemSection), now);
             var disks = WindowsDiskParser.Parse(ReadSection(sections, WindowsMonitorScript.DiskSection));
+            var diskIo = WindowsDiskIoParser.Parse(ReadSection(sections, WindowsMonitorScript.DiskIoSection)) ?? new DiskIoRates(0, 0);
             var networks = WindowsNetworkParser.Parse(ReadSection(sections, WindowsMonitorScript.NetworkSection));
             if (networks.Count == 0)
             {
@@ -105,6 +106,8 @@ public sealed class WindowsMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
                 Memory = memory,
                 Disks = disks,
                 Networks = networks,
+                DiskReadBytesPerSecond = diskIo.ReadBytesPerSecond,
+                DiskWriteBytesPerSecond = diskIo.WriteBytesPerSecond,
                 Uptime = system.Uptime,
             };
         }

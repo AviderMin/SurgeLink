@@ -33,6 +33,7 @@ public sealed class WindowsMonitorScriptTests
         Assert.Contains("Win32_OperatingSystem", script, StringComparison.Ordinal);
         Assert.Contains("Win32_PerfFormattedData_PerfOS_System", script, StringComparison.Ordinal);
         Assert.Contains("Win32_LogicalDisk", script, StringComparison.Ordinal);
+        Assert.Contains("Win32_PerfFormattedData_PerfDisk_LogicalDisk", script, StringComparison.Ordinal);
         Assert.Contains("Get-NetAdapterStatistics", script, StringComparison.Ordinal);
         Assert.Contains("Win32_PerfRawData_Tcpip_NetworkInterface", script, StringComparison.Ordinal);
     }
@@ -47,6 +48,7 @@ public sealed class WindowsMonitorScriptTests
                      WindowsMonitorScript.MemorySection,
                      WindowsMonitorScript.SystemSection,
                      WindowsMonitorScript.DiskSection,
+                     WindowsMonitorScript.DiskIoSection,
                      WindowsMonitorScript.NetworkSection,
                      WindowsMonitorScript.NetworkFallbackSection,
                      WindowsMonitorScript.EndSection,

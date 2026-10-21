@@ -104,9 +104,14 @@ detects the guest OS during connect (`RemoteOsDetector`) and picks a probe:
 - **Windows (OpenSSH guest)**: one PowerShell command per tick that queries CIM/Get-Counter for
   processor load, memory, per-core usage, volumes, network adapter statistics and processes.
 
-Both probes return the same `SystemSnapshot`, so the dashboard is protocol and OS agnostic; rates
-are derived by the view from consecutive samples. A protocol with a different idea of monitoring
-supplies its own `IRemoteSystemMonitor` and the UI does not change.
+Both probes return the same `SystemSnapshot`, so the dashboard is protocol and OS agnostic; network
+rates are derived by the view from consecutive samples, while the probes report aggregate disk
+read/write throughput directly. A protocol with a different idea of monitoring supplies its own
+`IRemoteSystemMonitor` and the UI does not change.
+
+The shell also pins a compact `SidebarMonitor` to the bottom of the session pane. It samples the
+active tab's monitor for CPU/RAM gauges and network/disk throughput, so live performance stays
+visible while reading the terminal or the file browser.
 
 ## Threading model
 

@@ -24,6 +24,9 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
     private readonly SemaphoreSlim _processLock = new(1, 1);
     private ProcStatSample? _previousStat;
     private IReadOnlyList<DiskIoStat> _lastDiskIoStatistics = Array.Empty<DiskIoStat>();
+    private DateTimeOffset? _lastDiskIoSampleUtc;
+    private long _lastDiskReadBytes;
+    private long _lastDiskWriteBytes;
     private int _disposed;
 
     /// <summary>Creates a probe over an arbitrary command executor.</summary>
@@ -107,9 +110,36 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
                 Volatile.Write(ref _lastDiskIoStatistics, diskIo);
             }
 
+            var sampledAt = DateTimeOffset.UtcNow;
+            var diskReadRate = 0d;
+            var diskWriteRate = 0d;
+            if (diskIo is not null)
+            {
+                var (readSectors, writeSectors) = DiskStatsParser.SumWholeDeviceSectors(diskIo);
+                var readBytes = readSectors * 512L;
+                var writeBytes = writeSectors * 512L;
+                if (_lastDiskIoSampleUtc is { } previous)
+                {
+                    var seconds = (sampledAt - previous).TotalSeconds;
+                    if (seconds > 0.05)
+                    {
+                        diskReadRate = readBytes >= _lastDiskReadBytes
+                            ? (readBytes - _lastDiskReadBytes) / seconds
+                            : 0d;
+                        diskWriteRate = writeBytes >= _lastDiskWriteBytes
+                            ? (writeBytes - _lastDiskWriteBytes) / seconds
+                            : 0d;
+                    }
+                }
+
+                _lastDiskIoSampleUtc = sampledAt;
+                _lastDiskReadBytes = readBytes;
+                _lastDiskWriteBytes = writeBytes;
+            }
+
             return new SystemSnapshot
             {
-                TimestampUtc = DateTimeOffset.UtcNow,
+                TimestampUtc = sampledAt,
                 Cpu = new CpuSample
                 {
                     TotalPercent = usage.TotalPercent,
@@ -123,6 +153,8 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
                 Memory = memory,
                 Disks = disks,
                 Networks = networks,
+                DiskReadBytesPerSecond = diskReadRate,
+                DiskWriteBytesPerSecond = diskWriteRate,
                 Uptime = uptime,
             };
         }

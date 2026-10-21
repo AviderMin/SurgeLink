@@ -32,6 +32,63 @@ public static class DiskStatsParser
 {
     private const int MinimumFieldCount = 10;
 
+    /// <summary>
+    /// Sums the sectors read and written by whole disks, skipping partitions and
+    /// pseudo devices so the total is not double counted.
+    /// </summary>
+    public static (long ReadSectors, long WriteSectors) SumWholeDeviceSectors(IReadOnlyList<DiskIoStat> stats)
+    {
+        ArgumentNullException.ThrowIfNull(stats);
+        long read = 0;
+        long write = 0;
+        foreach (var disk in stats)
+        {
+            if (!IsWholeDevice(disk.DeviceName))
+            {
+                continue;
+            }
+
+            read += disk.SectorsRead;
+            write += disk.SectorsWritten;
+        }
+
+        return (read, write);
+    }
+
+    /// <summary>True for a whole block device, false for its partition or a pseudo device.</summary>
+    public static bool IsWholeDevice(string deviceName)
+    {
+        if (string.IsNullOrWhiteSpace(deviceName))
+        {
+            return false;
+        }
+
+        var name = deviceName.Trim();
+        if (name.StartsWith("loop", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("ram", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("zram", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("sr", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (name.StartsWith("nvme", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("mmcblk", StringComparison.OrdinalIgnoreCase))
+        {
+            return !name.Contains('p');
+        }
+
+        if (name.StartsWith("sd", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("hd", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("vd", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("xvd", StringComparison.OrdinalIgnoreCase))
+        {
+            return name.Length > 2 && !char.IsDigit(name[^1]);
+        }
+
+        return true;
+    }
+
     /// <summary>Parses the device lines of a <c>/proc/diskstats</c> snapshot.</summary>
     /// <param name="text">Raw <c>/proc/diskstats</c> contents; may be <c>null</c> or truncated.</param>
     /// <returns>One entry per device line that could be parsed.</returns>

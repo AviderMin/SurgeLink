@@ -16,6 +16,12 @@ public sealed record SystemSnapshot
     /// <summary>Network interfaces with cumulative byte counters.</summary>
     public IReadOnlyList<NetworkSample> Networks { get; init; } = Array.Empty<NetworkSample>();
 
+    /// <summary>Aggregate disk read throughput in bytes per second; 0 when the host does not report it.</summary>
+    public double DiskReadBytesPerSecond { get; init; }
+
+    /// <summary>Aggregate disk write throughput in bytes per second; 0 when the host does not report it.</summary>
+    public double DiskWriteBytesPerSecond { get; init; }
+
     /// <summary>Host uptime when reported.</summary>
     public TimeSpan? Uptime { get; init; }
 }
