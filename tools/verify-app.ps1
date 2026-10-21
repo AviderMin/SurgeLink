@@ -113,6 +113,15 @@ AssertMissing $shell "Render error" "no render errors in shell"
 AssertContains $shell "Sessions" "sidebar pane present"
 AssertContains $shell "SidebarMonitor" "compact remote monitor present"
 
+Step "Settings page"
+Invoke-Action "Settings" "Button"
+Start-Sleep -Seconds 1
+$settings = Dump "00-settings"
+AssertContains $settings "SettingsLanguage" "settings language control present"
+AssertContains $settings "SettingsTheme" "settings theme control present"
+AssertContains $settings "SettingsFontFamily" "settings terminal controls present"
+AssertMissing $settings "Render error" "no render errors in settings page"
+
 Step "Open demo session"
 Invoke-Action "Open demo session" "Button"
 Start-Sleep -Seconds 5
