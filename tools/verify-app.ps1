@@ -153,21 +153,50 @@ Start-Sleep -Seconds 3
 $files = Dump "03-files"
 AssertContains $files "demo.txt" "SFTP listing shows demo.txt"
 AssertContains $files "Documents" "SFTP listing shows Documents"
+AssertContains $files "New file" "new file command present"
 AssertContains $files "Edit" "edit command present"
 AssertMissing $files "Show hidden files" "hidden-files toggle removed"
 AssertMissing $files "Render error" "no render errors in files view"
 
-Step "Built-in file editor"
+Step "New file"
+Invoke-Action "New file" "Button"
+Start-Sleep -Milliseconds 600
+AssertContains (Dump "03-newfile-dialog") "File name" "new file dialog has name field"
+& (Join-Path $PSScriptRoot "uia-action.ps1") -Name "File name" -Type "Edit" -SetValue -Value "newfile.txt" -ProcessId $script:appPid
+Start-Sleep -Milliseconds 300
+Invoke-Action "Create" "Button"
+Start-Sleep -Seconds 1
+$newFile = Dump "03-newfile"
+AssertContains $newFile "newfile.txt" "new file created and listing refreshed"
+AssertMissing $newFile "Render error" "no render error after new file"
+
+Step "Standalone file editor"
 Invoke-Action "demo.txt" "ListItem" -Select
 Start-Sleep -Milliseconds 400
 Invoke-Action "Edit" "Button"
 Start-Sleep -Seconds 2
-$editor = Dump "03-editor"
-AssertContains $editor "File contents" "editor shows file contents"
-AssertContains $editor "Save" "editor has save action"
-AssertMissing $editor "Render error" "no render errors in editor"
-Invoke-Action "Cancel" "Button"
-Start-Sleep -Milliseconds 500
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$processCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $script:appPid)
+$windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $processCondition)
+$editorWindow = $windows | Where-Object { $_.Current.Name -like "*Text editor*" } | Select-Object -First 1
+if ($null -ne $editorWindow) {
+  Pass "editor opens in a standalone window"
+  $editCondition = New-Object System.Windows.Automation.AndCondition(
+    (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "File contents")),
+    (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)))
+  $editorText = $editorWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
+  if ($null -ne $editorText) { Pass "editor shows file contents" } else { Fail "editor shows file contents" "File contents edit not found" }
+  try {
+    $windowPattern = $editorWindow.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
+    $windowPattern.Close()
+  } catch {
+    Fail "editor closes cleanly" $_.Exception.Message
+  }
+  Start-Sleep -Milliseconds 700
+} else {
+  Fail "editor opens in a standalone window" "Text editor window not found"
+}
 
 Step "File selection and name validation"
 Invoke-Action "Documents" "ListItem" -Select

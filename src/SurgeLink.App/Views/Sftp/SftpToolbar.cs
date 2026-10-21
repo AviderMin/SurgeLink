@@ -28,6 +28,7 @@ internal sealed record SftpToolbarProps(
     Action GoUp,
     Action GoHome,
     Action Refresh,
+    Action NewFile,
     Action NewFolder,
     Action Upload,
     Action Download,
@@ -39,7 +40,7 @@ internal sealed record SftpToolbarProps(
 /// <summary>
 /// Path breadcrumb plus the action commands of the file manager. Commands live
 /// in a WinUI <see cref="CommandBar"/>, so overflow and keyboard accelerators
-/// follow the platform behaviour; the Edit command sits at the right edge.
+/// follow the platform behaviour; all file actions, including Edit, are primary commands.
 /// </summary>
 internal static class SftpToolbar
 {
@@ -67,6 +68,10 @@ internal static class SftpToolbar
         var commands = CommandBar(
                 primaryCommands:
                 [
+                    AppBarButton(Str.T("sftp.command.newFile", "New file"), props.NewFile, "\uE8A5") with
+                    {
+                        IsEnabled = props.CanModify,
+                    },
                     AppBarButton(Str.T("sftp.command.newFolder", "New folder"), props.NewFolder, "\uE8F4") with
                     {
                         IsEnabled = props.CanModify,
@@ -92,21 +97,13 @@ internal static class SftpToolbar
                     {
                         IsEnabled = props.SupportsPermissions && props.SingleSelection,
                     },
+                    AppBarSeparator(),
+                    AppBarButton(Str.T("sftp.command.edit", "Edit"), props.Edit, "\uE70F") with
+                    {
+                        IsEnabled = props.CanEdit,
+                    },
                 ])
             .Set(bar => bar.DefaultLabelPosition = CommandBarDefaultLabelPosition.Right);
-
-        var editButton = Button(
-                HStack(
-                    AppTheme.SpacingXs,
-                    Icon(FontIcon("\uE70F", fontSize: 14)),
-                    TextBlock(Str.T("sftp.command.edit", "Edit"))),
-                props.CanEdit ? props.Edit : null)
-            .SubtleButton()
-            .IsEnabled(props.CanEdit)
-            .ToolTip(Str.T("sftp.command.editToolTip", "Open the selected file in the text editor"))
-            .AutomationName(Str.T("sftp.command.edit", "Edit"))
-            .VAlign(VerticalAlignment.Center)
-            .Margin(AppTheme.SpacingS, 0, 0, 0);
 
         return VStack(
             AppTheme.SpacingS,
@@ -115,11 +112,7 @@ internal static class SftpToolbar
                 rows: [GridSize.Auto],
                 navigation.Grid(row: 0, column: 0),
                 breadcrumb.Grid(row: 0, column: 1).Margin(AppTheme.SpacingS, 0, 0, 0)),
-            Grid(
-                columns: [GridSize.Star(), GridSize.Auto],
-                rows: [GridSize.Auto],
-                commands.Grid(row: 0, column: 0),
-                editButton.Grid(row: 0, column: 1)));
+            commands);
     }
 
     private static Element IconButton(string label, string glyph, Action? onClick) =>

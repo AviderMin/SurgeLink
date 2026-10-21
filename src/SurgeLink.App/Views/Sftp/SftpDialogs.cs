@@ -20,6 +20,25 @@ internal static class SftpDialogs
 {
     private static readonly GridSize[] PermissionRowColumns = [GridSize.Px(64), GridSize.Auto, GridSize.Auto, GridSize.Auto];
 
+    /// <summary>Create file dialog.</summary>
+    public static Element NewFile(bool open, string name, Action<string> setName, Action commit, Action close) =>
+        ContentDialog(
+                Str.T("sftp.dialog.newFile.title", "New file"),
+                VStack(
+                    AppTheme.SpacingM,
+                    TextBox(name, setName, placeholderText: Str.T("sftp.dialog.newFile.placeholder", "e.g. config.conf"))
+                        .Header(Str.T("sftp.dialog.newFile.header", "File name")),
+                    Caption(Str.T("sftp.dialog.newFile.hint", "Created as an empty file in the current directory."))
+                        .Foreground(Theme.SecondaryText)),
+                primaryButtonText: Str.T("sftp.dialog.newFile.primary", "Create")) with
+        {
+            IsOpen = open,
+            IsPrimaryButtonEnabled = SftpOperations.IsValidName(name),
+            CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+            OnClosed = result => Handle(result, commit, close),
+        };
+
     /// <summary>Create folder dialog.</summary>
     public static Element NewFolder(bool open, string name, Action<string> setName, Action commit, Action close) =>
         ContentDialog(
@@ -102,58 +121,6 @@ internal static class SftpDialogs
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result => Handle(result, commit, close),
         };
-
-    /// <summary>Built-in text editor for a selected remote file.</summary>
-    public static Element TextEditor(
-        bool open,
-        SftpEditorState state,
-        Action<string> setText,
-        Action commit,
-        Action close)
-    {
-        Element body = state.IsLoading
-            ? Grid(
-                    columns: [GridSize.Star()],
-                    rows: [GridSize.Star()],
-                    ProgressRing().HAlign(HorizontalAlignment.Center).VAlign(VerticalAlignment.Center))
-                .MinHeight(320)
-            : VStack(
-                AppTheme.SpacingM,
-                TextBlock(state.Target.FullPath)
-                    .FontFamily(AppTheme.Monospace)
-                    .FontSize(12)
-                    .Foreground(Theme.SecondaryText),
-                state.Error is null
-                    ? TextBox(state.Text, setText)
-                        .Header(Str.T("sftp.dialog.editor.header", "File contents"))
-                        .AcceptsReturn(true)
-                        .TextWrapping(TextWrapping.Wrap)
-                        .FontFamily(AppTheme.Monospace)
-                        .MinHeight(340)
-                        .MaxHeight(520)
-                        .Set(box => box.IsSpellCheckEnabled = false)
-                    : InfoBar(
-                        Str.T("sftp.dialog.editor.error", "Could not read the file"),
-                        state.Error)
-                        .Severity(InfoBarSeverity.Error)
-                        .IsClosable(false),
-                state.Error is null
-                    ? Caption(Str.T("sftp.dialog.editor.hint", "Changes are written back to the remote file when you save."))
-                        .Foreground(Theme.SecondaryText)
-                    : null);
-
-        return ContentDialog(
-                Str.T("sftp.dialog.editor.title", "Edit file"),
-                body.Width(640),
-                primaryButtonText: Str.T("sftp.dialog.editor.primary", "Save")) with
-        {
-            IsOpen = open,
-            IsPrimaryButtonEnabled = !state.IsLoading && !state.IsSaving && state.Error is null,
-            CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
-            DefaultButton = ContentDialogButton.Primary,
-            OnClosed = result => Handle(result, commit, close),
-        };
-    }
 
     private static Element PermissionRow(string label, int readBit, int writeBit, int execBit, int mode, Action<int> setMode) =>
         Grid(

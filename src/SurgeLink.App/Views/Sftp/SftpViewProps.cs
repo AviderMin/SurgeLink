@@ -30,6 +30,7 @@ internal enum SftpSortColumn
 internal enum SftpDialogKind
 {
     None,
+    NewFile,
     NewFolder,
     Rename,
     Delete,
@@ -45,18 +46,6 @@ internal sealed record SftpDialogState(SftpDialogKind Kind, RemoteFileEntry? Tar
     public static SftpDialogState None { get; } = new(SftpDialogKind.None);
 }
 
-/// <summary>State of the built-in text editor.</summary>
-/// <param name="Target">File being edited.</param>
-/// <param name="Text">Current editor contents.</param>
-/// <param name="IsLoading">True while the remote file is being read.</param>
-/// <param name="IsSaving">True while a save request is in flight.</param>
-/// <param name="Error">Load or save error shown in the dialog.</param>
-internal sealed record SftpEditorState(
-    RemoteFileEntry Target,
-    string Text,
-    bool IsLoading,
-    bool IsSaving,
-    string? Error);
 
 /// <summary>A dismissible status message rendered as an InfoBar above the list.</summary>
 internal sealed record SftpBanner(InfoBarSeverity Severity, string Title, string Message);

@@ -13,6 +13,7 @@ internal static class SftpOperations
     /// <summary>Human readable title of the action a dialog commits.</summary>
     public static string Title(SftpDialogKind kind) => kind switch
     {
+        SftpDialogKind.NewFile => Str.T("sftp.operation.createFile", "Create file"),
         SftpDialogKind.NewFolder => Str.T("sftp.operation.createFolder", "Create folder"),
         SftpDialogKind.Rename => Str.T("sftp.operation.rename", "Rename"),
         SftpDialogKind.Delete => Str.T("sftp.operation.delete", "Delete"),
@@ -23,6 +24,7 @@ internal static class SftpOperations
     /// <summary>True when the open dialog can be applied with the current input.</summary>
     public static bool CanApply(SftpDialogState state, string text) => state.Kind switch
     {
+        SftpDialogKind.NewFile => IsValidName(text),
         SftpDialogKind.NewFolder => IsValidName(text),
         SftpDialogKind.Rename => state.Target is not null && IsValidName(text) && text != state.Target.Name,
         SftpDialogKind.Delete => state.Target is not null,
@@ -44,6 +46,8 @@ internal static class SftpOperations
         IRemoteFileSystem fileSystem,
         CancellationToken cancellationToken) => state.Kind switch
     {
+        SftpDialogKind.NewFile => CreateFileAsync(
+            fileSystem, SftpPath.Combine(workingDirectory, text), cancellationToken),
         SftpDialogKind.NewFolder => fileSystem.CreateDirectoryAsync(
             SftpPath.Combine(workingDirectory, text), cancellationToken),
         SftpDialogKind.Rename when state.Target is { } target => fileSystem.RenameAsync(
@@ -54,6 +58,17 @@ internal static class SftpOperations
             target.FullPath, mode, cancellationToken),
         _ => Task.CompletedTask,
     };
+
+    private static async Task CreateFileAsync(
+        IRemoteFileSystem fileSystem,
+        string path,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = await fileSystem
+            .OpenWriteAsync(path, expectedSize: 0, progress: null, cancellationToken)
+            .ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>Builds the upload job for a picked local file.</summary>
     public static TransferItem CreateUpload(string workingDirectory, string localPath, string name)

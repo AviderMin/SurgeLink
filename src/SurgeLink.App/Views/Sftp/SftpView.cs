@@ -3,7 +3,6 @@ using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using System.Text;
 using SurgeLink.App.Components;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
@@ -51,7 +50,6 @@ internal sealed class SftpView : Component<SftpViewProps>
         var (dialog, setDialog) = UseState(SftpDialogState.None);
         var (dialogText, setDialogText) = UseState(string.Empty);
         var (dialogMode, setDialogMode) = UseState(0);
-        var (editor, updateEditor) = UseReducer<SftpEditorState?>(null, threadSafe: true);
         var (banner, setBanner) = UseState<SftpBanner?>(null, threadSafe: true);
 
         // The queue belongs to the session tab, not to this component: switching
@@ -251,95 +249,19 @@ internal sealed class SftpView : Component<SftpViewProps>
             }
 
             var target = selected[0];
-            if (target.Size > 4 * 1024 * 1024)
-            {
-                updateEditor(_ => new SftpEditorState(
-                    target,
-                    string.Empty,
-                    false,
-                    false,
-                    Str.T("sftp.dialog.editor.tooLarge", "This file is too large for the built-in text editor.")));
-                return;
-            }
-
-            updateEditor(_ => new SftpEditorState(target, string.Empty, true, false, null));
-            var cancellation = operationLifetime.Current;
-            _ = Task.Run(async () =>
-            {
-                try
+            ReactorApp.OpenWindow(
+                new WindowSpec
                 {
-                    await using var stream = await fileSystem
-                        .OpenReadAsync(target.FullPath, cancellation?.Token ?? CancellationToken.None)
-                        .ConfigureAwait(false);
-                    using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-                    var text = await reader.ReadToEndAsync(cancellation?.Token ?? CancellationToken.None).ConfigureAwait(false);
-                    updateEditor(current => current is null || current.Target.FullPath != target.FullPath
-                        ? current
-                        : current with { Text = text, IsLoading = false });
-                }
-                catch (OperationCanceledException)
-                {
-                }
-                catch (Exception exception)
-                {
-                    updateEditor(current => current is null || current.Target.FullPath != target.FullPath
-                        ? current
-                        : current with { IsLoading = false, Error = exception.Message });
-                }
-            });
-        }
-
-        void CloseEditor() => updateEditor(_ => null);
-
-        void CommitEditor()
-        {
-            var snapshot = editor;
-            if (snapshot is null)
-            {
-                return;
-            }
-
-            updateEditor(_ => null);
-            _ = SaveEditorAsync(snapshot);
-        }
-
-        async Task SaveEditorAsync(SftpEditorState snapshot)
-        {
-            if (fileSystem is null)
-            {
-                return;
-            }
-
-            var cancellation = operationLifetime.Current;
-            try
-            {
-                var bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(snapshot.Text);
-                await using (var stream = await fileSystem.OpenWriteAsync(
-                                 snapshot.Target.FullPath,
-                                 bytes.Length,
-                                 progress: null,
-                                 cancellation?.Token ?? CancellationToken.None))
-                {
-                    await stream.WriteAsync(bytes, cancellation?.Token ?? CancellationToken.None);
-                    await stream.FlushAsync(cancellation?.Token ?? CancellationToken.None);
-                }
-
-                ShowBanner(
-                    InfoBarSeverity.Success,
-                    Str.T("sftp.banner.saveComplete", "File saved"),
-                    snapshot.Target.Name);
-                Refresh();
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception exception)
-            {
-                ShowBanner(
-                    InfoBarSeverity.Error,
-                    Str.T("sftp.banner.saveFailed", "Could not save the file"),
-                    exception.Message);
-            }
+                    Title = Str.F("sftp.editor.windowTitle", "{0} — Text editor", target.Name),
+                    Width = 1000,
+                    Height = 720,
+                    MinWidth = 640,
+                    MinHeight = 480,
+                    StartPosition = WindowStartPosition.CenterOnPrimary,
+                    Backdrop = BackdropChoice.Of(BackdropKind.Mica),
+                },
+                _ => Component<FileEditorWindow, FileEditorWindowProps>(
+                    new FileEditorWindowProps(fileSystem, target)));
         }
 
         void OpenRename(RemoteFileEntry? entry)
@@ -498,6 +420,11 @@ internal sealed class SftpView : Component<SftpViewProps>
             () =>
             {
                 setDialogText(string.Empty);
+                setDialog(new SftpDialogState(SftpDialogKind.NewFile));
+            },
+            () =>
+            {
+                setDialogText(string.Empty);
                 setDialog(new SftpDialogState(SftpDialogKind.NewFolder));
             },
             Upload,
@@ -519,7 +446,11 @@ internal sealed class SftpView : Component<SftpViewProps>
         var transferPanel = SftpTransferPanel.Render(transfers, id => queue.Cancel(id), queue.ClearFinished);
 
         var dialogs = new List<Element>();
-        if (dialog.Kind == SftpDialogKind.NewFolder)
+        if (dialog.Kind == SftpDialogKind.NewFile)
+        {
+            dialogs.Add(SftpDialogs.NewFile(true, dialogText, setDialogText, CommitDialog, CloseDialog));
+        }
+        else if (dialog.Kind == SftpDialogKind.NewFolder)
         {
             dialogs.Add(SftpDialogs.NewFolder(true, dialogText, setDialogText, CommitDialog, CloseDialog));
         }
@@ -534,15 +465,6 @@ internal sealed class SftpView : Component<SftpViewProps>
             });
         }
 
-        if (editor is not null)
-        {
-            dialogs.Add(SftpDialogs.TextEditor(
-                true,
-                editor,
-                text => updateEditor(current => current is null ? null : current with { Text = text }),
-                CommitEditor,
-                CloseEditor));
-        }
 
         return Grid(
             columns: [GridSize.Star()],
