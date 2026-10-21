@@ -40,7 +40,8 @@ internal sealed class MainShell : Component
 
     public override Element Render()
     {
-        var services = AppServices.EnsureInitialized();
+        var services = AppServices.Current
+            ?? throw new InvalidOperationException("AppServices must be initialized before the shell mounts.");
         var workspace = services.Workspace;
         var snapshot = UseExternalStore(workspace.Subscribe, () => workspace.Snapshot);
         var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
@@ -342,13 +343,16 @@ internal sealed class MainShell : Component
         }
 
         var root = Grid(
-            columns: [GridSize.Star()],
-            rows: [GridSize.Auto, GridSize.Star(), GridSize.Auto],
-            titleBar.Grid(row: 0),
-            navigation.Grid(row: 1),
-            statusBar.Grid(row: 2),
-            editorOverlay.Grid(row: 0, rowSpan: 3),
-            Component<DialogHost>().Grid(row: 0, rowSpan: 3));
+                columns: [GridSize.Star()],
+                rows: [GridSize.Auto, GridSize.Star(), GridSize.Auto],
+                titleBar.Grid(row: 0),
+                navigation.Grid(row: 1),
+                statusBar.Grid(row: 2),
+                editorOverlay.Grid(row: 0, rowSpan: 3),
+                Component<DialogHost>().Grid(row: 0, rowSpan: 3))
+            // Provide on the visual root, not on the CommandHost decorator:
+            // TabView content and dialog overlays must all see the same graph.
+            .Provide(AppServices.ReactorContext, services);
 
         var commands = ShellCommands.Build(
             () => OpenEditor(SessionEditorMode.Create, null),

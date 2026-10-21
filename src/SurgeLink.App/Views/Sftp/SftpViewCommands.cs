@@ -18,7 +18,7 @@ internal static class SftpViewCommands
     public static async Task UploadAsync(
         IRemoteFileSystem fileSystem,
         string workingDirectory,
-        SftpTransferQueue queue,
+        FileTransferQueue queue,
         Func<Task<StorageFile?>> pickFile,
         Action<SftpBanner?> setBanner)
     {
@@ -45,7 +45,7 @@ internal static class SftpViewCommands
     public static async Task DownloadAsync(
         IRemoteFileSystem fileSystem,
         IReadOnlyList<RemoteFileEntry> selected,
-        SftpTransferQueue queue,
+        FileTransferQueue queue,
         Func<Task<StorageFolder?>> pickFolder,
         Action<SftpBanner?> setBanner)
     {

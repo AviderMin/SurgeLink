@@ -46,7 +46,9 @@ internal static class MonitorCards
                             cores[index] / 100d,
                             "CPU " + index,
                             DataFormat.Percent(cores[index] / 100d)))
-                        .Grid(row: index / 2, column: index % 2));
+                        .Grid(row: index / 2, column: index % 2)
+                        // Logical core index is the stable identity of a core.
+                        .WithKey("cpu-core:" + index));
             }
 
             detail = Grid(
@@ -232,12 +234,15 @@ internal static class MonitorCards
         var bars = new List<Element>(snapshot.Disks.Count);
         foreach (var disk in snapshot.Disks)
         {
+            // Device + mount point is unique per row; a mount point alone can be
+            // reused by a different device after a remount.
+            var key = (disk.FileSystem ?? string.Empty) + "|" + disk.MountPoint;
             bars.Add(Component<UsageBar, UsageBarProps>(new UsageBarProps(
                 disk.UsedFraction,
                 disk.MountPoint,
                 Str.F("monitor.card.disks.usage", "{0} of {1} used",
                     DataFormat.Percent(disk.UsedFraction),
-                    DataFormat.Bytes(disk.TotalBytes)))));
+                    DataFormat.Bytes(disk.TotalBytes)))).WithKey(key));
         }
 
         return Card(

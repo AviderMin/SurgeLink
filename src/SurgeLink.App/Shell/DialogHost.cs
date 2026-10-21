@@ -26,7 +26,9 @@ internal sealed class DialogHost : Component
 {
     public override Element Render()
     {
-        var interaction = AppServices.EnsureInitialized().Interaction;
+        var services = UseContext(AppServices.ReactorContext)
+            ?? throw new InvalidOperationException("The component must be inside the shell service context.");
+        var interaction = services.Interaction;
         var pending = UseExternalStore(interaction.Subscribe, () => interaction.Current);
 
         // Hooks run unconditionally; this single buffer backs the text and secret

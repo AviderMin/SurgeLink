@@ -68,7 +68,9 @@ internal static class SftpContent
                         {
                             setDialogText(string.Empty);
                             setDialog(new SftpDialogState(SftpDialogKind.NewFolder));
-                        }).Margin(0, AppTheme.SpacingS, 0, 0))
+                        })
+                            .AutomationName(Str.T("sftp.command.newFolder", "New folder"))
+                            .Margin(0, AppTheme.SpacingS, 0, 0))
                     .HAlign(HorizontalAlignment.Center)
                     .VAlign(VerticalAlignment.Center)
                     .Grid(row: 0, column: 0));

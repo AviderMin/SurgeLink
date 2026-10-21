@@ -165,7 +165,7 @@ public sealed class SshTerminal : IRemoteTerminal
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
+            await Task.Run(() => WriteToStream(stream, data), cancellationToken).ConfigureAwait(false);
         }
         catch (ObjectDisposedException exception)
         {
@@ -319,6 +319,18 @@ public sealed class SshTerminal : IRemoteTerminal
             _open = false;
             RaiseClosed();
         }
+    }
+
+    /// <summary>
+    /// Writes one interactive chunk and flushes it. <see cref="ShellStream.WriteAsync"/>
+    /// only fills the stream's internal buffer; <see cref="Stream.Flush"/> is what
+    /// hands the bytes to the channel. Kept separate so the flush contract is
+    /// directly testable without a live SSH server.
+    /// </summary>
+    internal static void WriteToStream(Stream stream, ReadOnlyMemory<byte> data)
+    {
+        stream.Write(data.Span);
+        stream.Flush();
     }
 
     private void RaiseOutput(ReadOnlyMemory<byte> data)

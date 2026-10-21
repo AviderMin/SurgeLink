@@ -30,6 +30,8 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
 
     public override Element Render()
     {
+        var services = UseContext(AppServices.ReactorContext)
+            ?? throw new InvalidOperationException("The session workspace must be inside the shell service context.");
         var props = Props;
         var tab = props.Tab;
         var capabilities = tab.Session.Protocol.Capabilities;
@@ -63,7 +65,7 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
             {
                 if (index >= 0 && index < views.Count)
                 {
-                    AppServices.EnsureInitialized().Workspace.SetView(tab.Id, views[index]);
+                    services.Workspace.SetView(tab.Id, views[index]);
                 }
             });
 
@@ -84,9 +86,9 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
         Element content = props.View switch
         {
             SessionViewKind.Files => Component<SftpView, SftpViewProps>(
-                new SftpViewProps(tab.Session.FileSystem, tab.Profile, AppServices.EnsureInitialized().Settings)),
+                new SftpViewProps(tab.Session.FileSystem, tab.Profile, services.Settings, tab.Transfers)),
             SessionViewKind.Monitor => Component<MonitorView, MonitorViewProps>(
-                new MonitorViewProps(tab.Session.Monitor, AppServices.EnsureInitialized().Settings)),
+                new MonitorViewProps(tab.Session.Monitor, services.Settings)),
             _ => Component<TerminalView, TerminalViewProps>(new TerminalViewProps(tab.Terminal)),
         };
 

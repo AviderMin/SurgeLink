@@ -27,13 +27,15 @@ internal sealed class TerminalView : Component<TerminalViewProps>
 {
     public override Element Render()
     {
+        // Hooks must run unconditionally, before the capability guard below.
+        AppServices services = UseContext(AppServices.ReactorContext)
+            ?? throw new InvalidOperationException("The component must be inside the shell service context.");
         TerminalBridge? bridge = Props.Bridge;
         if (bridge is null)
         {
             return Placeholder("This session does not expose a terminal.");
         }
 
-        AppServices services = AppServices.EnsureInitialized();
         IAppSettingsStore settings = services.Settings;
         var logger = services.Logs.CreateLogger("TerminalSurface");
 

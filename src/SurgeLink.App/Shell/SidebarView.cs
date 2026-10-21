@@ -50,7 +50,7 @@ internal sealed class SidebarView : Component<SidebarProps>
                 timer.Tick += (_, _) =>
                 {
                     timer.Stop();
-                    AppServices.EnsureInitialized().Workspace.SetSearchText(search);
+                    AppServices.RequireInitialized.Workspace.SetSearchText(search);
                 };
                 timer.Start();
                 return () => timer.Stop();
@@ -85,7 +85,7 @@ internal sealed class SidebarView : Component<SidebarProps>
             : BuildEmptyState(props, search, () =>
             {
                 setSearch(string.Empty);
-                AppServices.EnsureInitialized().Workspace.SetSearchText(string.Empty);
+                AppServices.RequireInitialized.Workspace.SetSearchText(string.Empty);
             });
 
         return Grid(

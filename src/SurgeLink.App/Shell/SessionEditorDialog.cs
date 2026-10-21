@@ -51,7 +51,8 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
     public override Element Render()
     {
-        var services = AppServices.EnsureInitialized();
+        var services = UseContext(AppServices.ReactorContext)
+            ?? throw new InvalidOperationException("The component must be inside the shell service context.");
         var props = Props;
         var template = props.Existing;
         var plugins = services.Protocols.Plugins;
@@ -76,6 +77,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         // command space (the declarative DSL has no click handler for those).
         var validationRef = UseRef<string?>(null);
         var clickHandler = UseRef<TypedEventHandler<ContentDialog, ContentDialogButtonClickEventArgs>?>(null);
+        var dialogControl = UseRef<ContentDialog?>(null);
 
         var protocol = plugins.Count > 0 ? plugins[Math.Clamp(protocolIndex, 0, plugins.Count - 1)].Descriptor : null;
         var isPassword = authIndex == (int)AuthenticationMethod.Password;
@@ -121,28 +123,54 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             SecondaryButtonText = Str.T("shell.editor.save", "Save"),
             CloseButtonText = Str.T("common.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
-            OnClosed = result => SubmitOrCancel(result),
+            OnClosed = result =>
+            {
+                DetachDialogEvents();
+                SubmitOrCancel(result);
+            },
         };
 
         // Keep the buttons enabled: an invalid form cancels the click and shows the
         // InfoBar instead of leaving the user with a dead button and no reason.
-        return dialog.Set(dialogControl =>
+        return dialog
+            .Set(control =>
+            {
+                // Set runs against the live ContentDialog created by the overlay
+                // lifecycle (OnMountAdd receives only the hidden anchor).
+                dialogControl.Current = control;
+                DialogAutomation.Tag("SessionEditor")(control);
+            })
+            .Opened(AttachDialogEvents);
+
+        void AttachDialogEvents()
         {
-            DialogAutomation.Tag("SessionEditor")(dialogControl);
-            if (clickHandler.Current is not null)
+            if (dialogControl.Current is not { } control || clickHandler.Current is not null)
             {
                 return;
             }
 
-            // The DSL has no click hook for the dialog's own command-space buttons,
-            // so they are wired once here and the handler is kept for removal.
-#pragma warning disable REACTOR_EVENT_001
-            TypedEventHandler<ContentDialog, ContentDialogButtonClickEventArgs> handler = (_, args) => CancelIfInvalid(args);
+            // The DSL has no click hook for the dialog's own command-space
+            // buttons. Attach when the dialog opens; DetachDialogEvents runs in
+            // OnClosed so the pair is balanced for every result path. The
+            // handler reads validationRef.Current, so it validates the latest
+            // form state rather than the state captured at mount.
+            TypedEventHandler<ContentDialog, ContentDialogButtonClickEventArgs> handler =
+                (_, args) => CancelIfInvalid(args);
             clickHandler.Current = handler;
-            dialogControl.PrimaryButtonClick += handler;
-            dialogControl.SecondaryButtonClick += handler;
-#pragma warning restore REACTOR_EVENT_001
-        });
+            control.PrimaryButtonClick += handler;
+            control.SecondaryButtonClick += handler;
+        }
+
+        void DetachDialogEvents()
+        {
+            if (dialogControl.Current is { } control && clickHandler.Current is { } handler)
+            {
+                control.PrimaryButtonClick -= handler;
+                control.SecondaryButtonClick -= handler;
+            }
+
+            clickHandler.Current = null;
+        }
 
         void CancelIfInvalid(ContentDialogButtonClickEventArgs args)
         {
@@ -299,9 +327,16 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             return problems;
         }
 
+        // Preview.15's picker helper registers no hook state: it resolves the
+        // owning window and shows the native dialog on the UI thread. The hooks
+        // analyzer cannot see through this local function, so suppress only the
+        // documented picker pattern (docs/guide/hooks.md "Pick files from a
+        // click handler") instead of moving the picker into Render.
+#pragma warning disable REACTOR_HOOKS_001
         Task<StorageFile?> PickKeyFileAsync() => this.UseFilePickerAsync(new FilePickerOptions(
             FileTypeFilter: new[] { ".pem", ".key", ".ppk", "*" },
             CommitButtonText: Str.T("shell.editor.useKey", "Use key")));
+#pragma warning restore REACTOR_HOOKS_001
 
         async void BrowseKey()
         {

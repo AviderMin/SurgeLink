@@ -22,18 +22,34 @@ public static class Program
             args.SetObserved();
         };
 
-        ReactorApp.Run<MainShell>(new WindowSpec
-        {
-            Title = "SurgeLink",
-            Width = 1440,
-            Height = 900,
-            MinWidth = 960,
-            MinHeight = 600,
-            StartPosition = WindowStartPosition.CenterOnCurrent,
-            Backdrop = BackdropChoice.Of(BackdropKind.Mica),
-            ExtendsContentIntoTitleBar = true,
-            PersistPlacement = true,
-            PersistenceId = "surge-link-main",
-        });
+        ReactorApp.Run<MainShell>(
+            new WindowSpec
+            {
+                Title = "SurgeLink",
+                Width = 1440,
+                Height = 900,
+                MinWidth = 960,
+                MinHeight = 600,
+                StartPosition = WindowStartPosition.CenterOnCurrent,
+                Backdrop = BackdropChoice.Of(BackdropKind.Mica),
+                ExtendsContentIntoTitleBar = true,
+                PersistPlacement = true,
+                PersistenceId = "surge-link-main",
+            },
+            configure: _ =>
+            {
+                // Runs on the UI thread after WinUI starts and before the root
+                // mounts. Service composition and the settings file read happen
+                // here once, never inside Render().
+                try
+                {
+                    AppServices.Initialize();
+                }
+                catch (Exception ex)
+                {
+                    CrashLog.Write("Startup", ex);
+                    throw;
+                }
+            });
     }
 }

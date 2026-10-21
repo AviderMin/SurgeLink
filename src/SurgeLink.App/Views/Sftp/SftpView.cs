@@ -20,14 +20,13 @@ namespace SurgeLink.App.Views.Sftp;
 /// </summary>
 internal sealed class SftpView : Component<SftpViewProps>
 {
-    private SftpTransferQueue? _queue;
-    private Action<IReadOnlyList<TransferItem>>? _publishTransfers;
-    private Action<TransferItem>? _finishTransfer;
+    private static readonly object[] NoDependencies = Array.Empty<object>();
 
     public override Element Render()
     {
         var fileSystem = Props.FileSystem;
         var settingsStore = Props.Settings;
+        var queue = Props.Transfers;
 
         // Hooks: constant order and count on every render.
         var (settings, setSettings) = UseState(settingsStore.Current);
@@ -52,7 +51,32 @@ internal sealed class SftpView : Component<SftpViewProps>
         var (dialogText, setDialogText) = UseState(string.Empty);
         var (dialogMode, setDialogMode) = UseState(0);
         var (banner, setBanner) = UseState<SftpBanner?>(null, threadSafe: true);
-        var (transfers, setTransfers) = UseState<IReadOnlyList<TransferItem>>(Array.Empty<TransferItem>(), threadSafe: true);
+
+        // The queue belongs to the session tab, not to this component: switching
+        // to Monitor/Terminal (or rebuilding the tree for a language change)
+        // unmounts the view while transfers keep running. The snapshot is the
+        // only thing the view owns; cancel and clear go straight to the queue.
+        var transfers = UseExternalStore(queue.Subscribe, () => queue.Snapshot);
+
+        // Ordinary file operations are view-scoped work: cancel them when this
+        // view unmounts so a dialog command cannot outlive its list.
+        var operationLifetime = UseRef<CancellationTokenSource?>(null);
+        UseEffect(
+            () =>
+            {
+                var cancellation = new CancellationTokenSource();
+                operationLifetime.Current = cancellation;
+                return () =>
+                {
+                    cancellation.Cancel();
+                    cancellation.Dispose();
+                    if (ReferenceEquals(operationLifetime.Current, cancellation))
+                    {
+                        operationLifetime.Current = null;
+                    }
+                };
+            },
+            NoDependencies);
 
         UseEffect(
             () =>
@@ -107,27 +131,32 @@ internal sealed class SftpView : Component<SftpViewProps>
             requestedPath,
             refreshToken);
 
-        // The queue publishes through fields that every render refreshes, so a
-        // long running transfer always talks to the current state setters.
-        _publishTransfers = setTransfers;
-        _finishTransfer = item => setBanner(item.Status switch
-        {
-            TransferStatus.Completed => new SftpBanner(
-                InfoBarSeverity.Success,
-                item.Direction == TransferDirection.Upload
-                    ? Str.T("sftp.banner.uploadComplete", "Upload complete")
-                    : Str.T("sftp.banner.downloadComplete", "Download complete"),
-                item.Name + " · " + DataFormat.Bytes(item.DoneBytes)),
-            TransferStatus.Failed => new SftpBanner(
-                InfoBarSeverity.Error,
-                Str.T("sftp.banner.transferFailed", "Transfer failed"),
-                item.Name + " · " + (item.Error ?? Str.T("sftp.transfers.unknownError", "unknown error"))),
-            _ => null,
-        });
-        _queue ??= new SftpTransferQueue(
-            items => _publishTransfers?.Invoke(items),
-            item => _finishTransfer?.Invoke(item));
-        var queue = _queue;
+        // A completion banner is view-local chrome; it is subscribed only while
+        // this view is mounted, so a transfer that ends while the user is on
+        // another tab still lands in the queue snapshot without touching an
+        // unmounted component's state.
+        UseEffect(
+            () =>
+            {
+                void OnFinished(TransferItem item) => setBanner(item.Status switch
+                {
+                    TransferStatus.Completed => new SftpBanner(
+                        InfoBarSeverity.Success,
+                        item.Direction == TransferDirection.Upload
+                            ? Str.T("sftp.banner.uploadComplete", "Upload complete")
+                            : Str.T("sftp.banner.downloadComplete", "Download complete"),
+                        item.Name + " · " + DataFormat.Bytes(item.DoneBytes)),
+                    TransferStatus.Failed => new SftpBanner(
+                        InfoBarSeverity.Error,
+                        Str.T("sftp.banner.transferFailed", "Transfer failed"),
+                        item.Name + " · " + (item.Error ?? Str.T("sftp.transfers.unknownError", "unknown error"))),
+                    _ => null,
+                });
+
+                queue.TransferFinished += OnFinished;
+                return () => queue.TransferFinished -= OnFinished;
+            },
+            queue);
 
         var sortKey = ((int)sortColumn) + "|" + (ascending ? "up" : "down") + "|" + (settings.ShowHiddenFiles ? "hidden" : "visible");
         var rows = UseMemo(
@@ -231,14 +260,26 @@ internal sealed class SftpView : Component<SftpViewProps>
                 return;
             }
 
+            var token = operationLifetime.Current?.Token ?? CancellationToken.None;
             try
             {
-                await operation(fileSystem, CancellationToken.None).ConfigureAwait(true);
-                Refresh();
+                await operation(fileSystem, token).ConfigureAwait(true);
+                if (!token.IsCancellationRequested)
+                {
+                    Refresh();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Leaving the view (or closing the session) cancels ordinary
+                // file operations; that is not an error the user should see.
             }
             catch (Exception ex)
             {
-                ShowBanner(InfoBarSeverity.Error, title, ex.Message);
+                if (!token.IsCancellationRequested)
+                {
+                    ShowBanner(InfoBarSeverity.Error, title, ex.Message);
+                }
             }
         }
 

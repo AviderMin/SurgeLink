@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
@@ -86,7 +87,11 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
         for (var index = 0; index < rows.Count; index++)
         {
             var process = rows[index];
-            body.Add(Row(process).Grid(row: index));
+            // PID is the process's business identity in this sample. The row
+            // position still follows the active sort, but identity does not.
+            body.Add(Row(process)
+                .Grid(row: index)
+                .WithKey("pid:" + process.ProcessId.ToString(CultureInfo.InvariantCulture)));
         }
 
         return VStack(

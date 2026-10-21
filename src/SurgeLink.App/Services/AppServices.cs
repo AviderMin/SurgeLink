@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.UI.Reactor.Core;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Sessions;
 using SurgeLink.Core.Protocols;
@@ -42,8 +43,15 @@ public sealed class AppServices
         Workspace = workspace;
     }
 
-    /// <summary>The live services instance; available after the shell mounts.</summary>
+    /// <summary>The live services instance; created by the startup bootstrap before the shell mounts.</summary>
     public static AppServices? Current { get; private set; }
+
+    /// <summary>Carries the prepared composition root to the shell's component tree.</summary>
+    public static Context<AppServices?> ReactorContext { get; } = new(null);
+
+    /// <summary>Returns the prepared graph or explains that startup failed.</summary>
+    public static AppServices RequireInitialized =>
+        Current ?? throw new InvalidOperationException("AppServices is not initialized; the startup bootstrap must run before the UI renders.");
 
     public ILoggerFactory Logs { get; }
 
@@ -69,16 +77,19 @@ public sealed class AppServices
 
     public WorkspaceStore Workspace { get; }
 
-    /// <summary>Creates the graph once; subsequent calls return the existing instance.</summary>
-    public static AppServices EnsureInitialized()
-    {
-        if (Current is not null)
-        {
-            return Current;
-        }
+    private static readonly object InitializationGate = new();
 
-        Current = Create(DispatcherUiDispatcher.CreateForCurrentThread());
-        return Current;
+    /// <summary>
+    /// Creates the graph on the UI thread during application startup. Components
+    /// only read <see cref="Current"/> (or the Reactor context); Render never
+    /// triggers composition, settings I/O, or global state changes.
+    /// </summary>
+    public static AppServices Initialize()
+    {
+        lock (InitializationGate)
+        {
+            return Current ??= Create(DispatcherUiDispatcher.CreateForCurrentThread());
+        }
     }
 
     /// <summary>Builds the service graph; exposed for tests and tooling.</summary>

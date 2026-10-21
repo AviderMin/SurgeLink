@@ -29,7 +29,8 @@ internal sealed class SettingsPage : Component
 
     public override Element Render()
     {
-        var services = AppServices.EnsureInitialized();
+        var services = UseContext(AppServices.ReactorContext)
+            ?? throw new InvalidOperationException("The component must be inside the shell service context.");
         var store = services.Settings;
         var settings = UseExternalStore(store.Subscribe, () => store.Current);
         var (wide, setWide) = UseState(false);
@@ -348,7 +349,7 @@ internal sealed class SettingsPage : Component
 
     private static async Task PreviewHostKeyAsync(bool isChanged)
     {
-        var interaction = AppServices.EnsureInitialized().Interaction;
+        var interaction = AppServices.RequireInitialized.Interaction;
         var decision = await interaction.RequestHostKeyTrustAsync(
             new HostKeyChallenge(
                 "demo-host.example.com",
@@ -369,7 +370,7 @@ internal sealed class SettingsPage : Component
 
     private static async Task PreviewSecretAsync()
     {
-        var interaction = AppServices.EnsureInitialized().Interaction;
+        var interaction = AppServices.RequireInitialized.Interaction;
         var secret = await interaction.RequestSecretAsync(
             new SecretRequest(
                 Str.T("shell.preview.secret.title", "Password for admin@demo-host.example.com"),
@@ -386,7 +387,7 @@ internal sealed class SettingsPage : Component
 
     private static async Task PreviewConfirmationAsync()
     {
-        var interaction = AppServices.EnsureInitialized().Interaction;
+        var interaction = AppServices.RequireInitialized.Interaction;
         var confirmed = await interaction.RequestConfirmationAsync(
             new ConfirmationRequest(
                 Str.T("shell.preview.confirmation.requestTitle", "Close session"),
@@ -403,7 +404,7 @@ internal sealed class SettingsPage : Component
     }
 
     private static Task PreviewErrorAsync() =>
-        AppServices.EnsureInitialized().Interaction.ShowErrorAsync(
+        AppServices.RequireInitialized.Interaction.ShowErrorAsync(
             Str.T("shell.preview.error.title", "Connection failed"),
             Str.T("shell.preview.error.body",
                 "This is a preview of the error dialog. Protocol failures arrive here with a plain message."));

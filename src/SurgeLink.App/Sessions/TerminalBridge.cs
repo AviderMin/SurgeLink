@@ -113,8 +113,10 @@ public sealed class TerminalBridge : IAsyncDisposable
         {
             await _remote.WriteAsync(bytes).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        catch (Exception ex)
         {
+            // The write path wraps protocol failures in ProtocolException; an
+            // async void handler must never let any of them escape unobserved.
             _logger.LogDebug(ex, "Terminal write failed; the channel is probably closed.");
         }
     }

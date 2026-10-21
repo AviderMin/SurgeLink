@@ -1,6 +1,7 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using SurgeLink.App.Components;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
@@ -52,7 +53,14 @@ internal static class SftpEntryList
         Action<IReadOnlyList<RemoteFileEntry>> selectionChanged,
         Action<RemoteFileEntry> openEntry,
         Action<object, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs> keyDown) =>
-        ListView<RemoteFileEntry>(entries, entry => entry.FullPath, (entry, _) => Row(entry))
+        (ListView<RemoteFileEntry>(entries, entry => entry.FullPath, (entry, _) => Row(entry)) with
+        {
+            // Declare multi-select on the element itself. Setting SelectionMode
+            // only through .Set() leaves the element property at Single, and the
+            // reconciler writes that default back on every re-render (clearing
+            // the selection before the setter restores Extended).
+            SelectionMode = ListViewSelectionMode.Extended,
+        })
             .SelectionChanged(selectionChanged)
             .OnDoubleTapped((sender, args) =>
             {
@@ -77,7 +85,6 @@ internal static class SftpEntryList
             .OnKeyDown(keyDown)
             .Set(list =>
             {
-                list.SelectionMode = Microsoft.UI.Xaml.Controls.ListViewSelectionMode.Extended;
                 list.HorizontalAlignment = HorizontalAlignment.Stretch;
                 if (RowStyle.Value is { } style)
                 {

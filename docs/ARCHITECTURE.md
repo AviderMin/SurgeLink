@@ -44,7 +44,8 @@ UI (session editor, sidebar)
        └─ SessionManager.OpenAsync            <- resolves secrets from ICredentialStore
             └─ IProtocolPlugin.ConnectAsync   <- protocol builds transport, verifies host key
                  └─ IProtocolSession          <- capability handles: Terminal / FileSystem / Monitor
-       └─ WorkspaceStore creates a WorkspaceTab + TerminalBridge, starts the shell channel
+       └─ WorkspaceStore creates a WorkspaceTab + TerminalBridge + FileTransferQueue,
+          starts the shell channel
 ```
 
 `WorkspaceStore` is the single source of truth the UI renders from. It publishes an immutable
@@ -138,7 +139,8 @@ the user (unknown or changed key) through the UI queue, or aborts with
 
 ## Composition root
 
-`AppServices.Create` builds the graph exactly once (lazily on the UI thread):
+`AppServices.Initialize` runs from the `ReactorApp.Run(..., configure)` pre-mount callback on the UI
+thread, then `AppServices.Create` builds the graph exactly once:
 
 ```
 LoggerFactory ─┬─ ProtocolHostContext ─ SessionManager ─ WorkspaceStore

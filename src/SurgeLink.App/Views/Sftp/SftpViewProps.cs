@@ -9,7 +9,12 @@ namespace SurgeLink.App.Views.Sftp;
 /// <param name="FileSystem">Remote file system of the session; <c>null</c> when the protocol has no SFTP.</param>
 /// <param name="Profile">Session profile, used for headings and the local download folder hint.</param>
 /// <param name="Settings">User preferences: the hidden file toggle lives here.</param>
-internal sealed record SftpViewProps(IRemoteFileSystem? FileSystem, SessionProfile Profile, IAppSettingsStore Settings);
+/// <param name="Transfers">Session-owned transfer queue; it outlives this view.</param>
+internal sealed record SftpViewProps(
+    IRemoteFileSystem? FileSystem,
+    SessionProfile Profile,
+    IAppSettingsStore Settings,
+    FileTransferQueue Transfers);
 
 /// <summary>Columns the file list can be sorted by.</summary>
 internal enum SftpSortColumn

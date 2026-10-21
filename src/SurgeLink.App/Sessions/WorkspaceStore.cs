@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using SurgeLink.App.Services;
+using SurgeLink.Core.Files;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
 using SurgeLink.Core.Sessions;
@@ -18,12 +19,18 @@ public enum SessionViewKind
 /// <summary>One open session tab.</summary>
 public sealed class WorkspaceTab
 {
-    internal WorkspaceTab(Guid id, SessionProfile profile, IProtocolSession session, TerminalBridge? terminal)
+    internal WorkspaceTab(
+        Guid id,
+        SessionProfile profile,
+        IProtocolSession session,
+        TerminalBridge? terminal,
+        FileTransferQueue transfers)
     {
         Id = id;
         Profile = profile;
         Session = session;
         Terminal = terminal;
+        Transfers = transfers;
         State = session.State;
     }
 
@@ -34,6 +41,12 @@ public sealed class WorkspaceTab
     public IProtocolSession Session { get; }
 
     public TerminalBridge? Terminal { get; }
+
+    /// <summary>
+    /// Session-owned transfer queue. It survives Files/Monitor/Terminal switches
+    /// and locale rebuilds, and is disposed when the tab closes.
+    /// </summary>
+    public FileTransferQueue Transfers { get; }
 
     public ConnectionState State { get; internal set; }
 
@@ -146,7 +159,7 @@ public sealed class WorkspaceStore
                 await terminal.StartAsync(cancellationToken);
             }
 
-            var tab = new WorkspaceTab(Guid.NewGuid(), profile, session, terminal);
+            var tab = new WorkspaceTab(Guid.NewGuid(), profile, session, terminal, new FileTransferQueue(_logger));
             session.StateChanged += OnSessionStateChanged;
             await ProbeHostInfoAsync(tab, session);
 
@@ -188,6 +201,12 @@ public sealed class WorkspaceStore
         }
 
         tab.Session.StateChanged -= OnSessionStateChanged;
+
+        // Stop the queue before the protocol session and its file system are
+        // disposed; the queue waits for its worker so no transfer keeps using a
+        // dead connection.
+        await tab.Transfers.DisposeAsync().ConfigureAwait(false);
+
         if (tab.Terminal is not null)
         {
             await tab.Terminal.DisposeAsync();
@@ -308,6 +327,13 @@ public sealed class WorkspaceStore
 
             tab.State = e.NewState;
             tab.Message = e.Message;
+            if (e.NewState is ConnectionState.Disconnected or ConnectionState.Faulted)
+            {
+                // No file system is reachable any more; cancel work rather than
+                // letting the queue keep retrying against a dead session.
+                _ = tab.Transfers.DisposeAsync().AsTask();
+            }
+
             Update(s => s, force: true);
         });
     }

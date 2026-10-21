@@ -188,6 +188,28 @@ $dialog = Dump "06-new-session"
 AssertContains $dialog "Session name" "session editor opened"
 AssertContains $dialog "Host" "session editor has host field"
 AssertMissing $dialog "Render error" "no render errors in dialog"
+
+Step "Session editor validation and event lifetime"
+Invoke-Action "Save & connect" "Button"
+Start-Sleep -Seconds 1
+$invalid = Dump "06a-session-invalid"
+AssertContains $invalid "Check the connection details" "invalid submit keeps the dialog open"
+AssertContains $invalid "Host is required." "invalid submit shows the validation message"
+AssertContains $invalid "SessionEditorPrimary" "primary button keeps its automation identity"
+AssertMissing $invalid "Render error" "no render errors after invalid submit"
+
+Invoke-Action "Cancel" "Button"
+Start-Sleep -Seconds 1
+$closed = Dump "06b-session-cancelled"
+AssertMissing $closed "SessionEditorDialog" "cancel closes the session editor"
+
+Invoke-Action "New session" "Button"
+Start-Sleep -Seconds 2
+$reopened = Dump "06c-session-reopened"
+AssertContains $reopened "SessionEditorDialog" "session editor can be reopened"
+AssertContains $reopened "Host" "reopened editor has the host field"
+AssertMissing $reopened "Render error" "no render errors after reopening the editor"
+
 & (Join-Path $PSScriptRoot "capture-window.ps1") -ProcessId $script:appPid -OutFile (Join-Path $artifacts "ui-final.png") 2>&1 | Out-Null
 
 # ---------------------------------------------------------------------------

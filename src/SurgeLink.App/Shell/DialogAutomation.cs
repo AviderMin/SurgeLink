@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -26,13 +27,25 @@ internal static class DialogAutomation
         dialog.Tag = prefix;
         AutomationProperties.SetAutomationId(dialog, prefix + "Dialog");
 
+        // Set() also runs on every re-render. The dialog template can rebuild
+        // its command-space buttons when the content changes (for example an
+        // inline validation InfoBar appears), so re-apply the ids here too.
+        TagButtons(dialog, prefix);
+
         if (Wired.TryGetValue(dialog, out _))
         {
             return;
         }
 
         Wired.Add(dialog, prefix);
-        dialog.Opened += (sender, _) => TagButtons(sender, sender.Tag as string ?? prefix);
+        dialog.Opened += (sender, _) =>
+        {
+            // The command-space buttons can still be absent during the first
+            // Opened callback (the template is finishing realization). Tag once
+            // immediately and once on the next dispatcher turn, idempotently.
+            TagButtons(sender, sender.Tag as string ?? prefix);
+            sender.DispatcherQueue?.TryEnqueue(() => TagButtons(sender, sender.Tag as string ?? prefix));
+        };
     };
 
     private static void TagButtons(ContentDialog dialog, string prefix)

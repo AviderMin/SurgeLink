@@ -12,4 +12,8 @@
   <ItemGroup>
     <ProjectReference Include="..\SurgeLink.Core\SurgeLink.Core.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SurgeLink.Protocols.Ssh.Tests" />
+  </ItemGroup>
 </Project>

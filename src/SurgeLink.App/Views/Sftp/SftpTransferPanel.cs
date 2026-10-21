@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using SurgeLink.App.Components;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
+using SurgeLink.Core.Files;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace SurgeLink.App.Views.Sftp;
@@ -36,6 +37,7 @@ internal static class SftpTransferPanel
             items.Any(item => !item.IsActive)
                 ? Button(Str.T("sftp.transfers.clearFinished", "Clear finished"), clearFinished)
                     .SubtleButton()
+                    .AutomationName(Str.T("sftp.transfers.clearFinished", "Clear finished"))
                     .Grid(row: 0, column: 3)
                 : null);
 
