@@ -13,13 +13,6 @@ using static Microsoft.UI.Reactor.Factories;
 
 namespace SurgeLink.App.Shell;
 
-/// <summary>Which surface fills the shell content area.</summary>
-internal enum ShellSection
-{
-    Workspace,
-    Settings,
-}
-
 /// <summary>One open request for the session editor; the id makes every open a new dialog.</summary>
 internal sealed record EditorRequest(Guid RequestId, SessionEditorMode Mode, SessionProfile? Existing)
 {
@@ -61,20 +54,23 @@ internal sealed class MainShell : Component
             },
             NoDependencies);
 
-        var (section, setSection) = UseState(ShellSection.Workspace);
         var (paneOpen, setPaneOpen) = UseState(true);
         var (editor, setEditor) = UseState<EditorRequest?>(null);
         var lastEditor = UseRef<Element?>(null);
+        var (settingsOpen, setSettingsOpen) = UseState(false);
+        var (settingsRequest, setSettingsRequest) = UseState(0);
         var connectPending = UseRef(false);
 
         void OpenEditor(SessionEditorMode mode, SessionProfile? profile)
         {
-            setSection(ShellSection.Workspace);
             setEditor(EditorRequest.Create(mode, profile));
         }
 
-        void OpenSettings() => setSection(ShellSection.Settings);
-
+        void OpenSettings()
+        {
+            setSettingsRequest(settingsRequest + 1);
+            setSettingsOpen(true);
+        }
         void ShowAbout() => _ = services.Interaction.ShowInfoAsync(
             Str.T("app.aboutTitle", "About SurgeLink"),
             Str.T(
@@ -92,7 +88,6 @@ internal sealed class MainShell : Component
 
             // Include the password prompt in the guard, before the store starts connecting.
             connectPending.Current = true;
-            setSection(ShellSection.Workspace);
             try
             {
                 var options = suppliedOptions is { Password: not null } ||
@@ -127,7 +122,6 @@ internal sealed class MainShell : Component
 
         void OpenDemo()
         {
-            setSection(ShellSection.Workspace);
             var profile = workspace.Snapshot.Profiles.FirstOrDefault(p => p.ProtocolId == "demo")
                           ?? SessionProfile.New(
                               "demo",
@@ -248,13 +242,11 @@ internal sealed class MainShell : Component
 
         // Title bar -----------------------------------------------------------
         var activeTab = snapshot.ActiveTab;
-        var subtitle = section == ShellSection.Settings
-            ? Str.T("shell.subtitle.settings", "Settings")
-            : snapshot.IsConnecting
-                ? Str.T("shell.subtitle.connecting", "Connecting\u2026")
-                : activeTab is null
-                    ? Str.T("shell.subtitle.noSession", "No session open")
-                    : $"{activeTab.Title}  \u00b7  {AppTheme.StatusText(activeTab.State)}  \u00b7  {activeTab.Session.HostInfo.Summary}";
+        var subtitle = snapshot.IsConnecting
+            ? Str.T("shell.subtitle.connecting", "Connecting\u2026")
+            : activeTab is null
+                ? Str.T("shell.subtitle.noSession", "No session open")
+                : $"{activeTab.Title}  \u00b7  {AppTheme.StatusText(activeTab.State)}  \u00b7  {activeTab.Session.HostInfo.Summary}";
 
         var titleBar = TitleBarView.Render(new TitleBarProps(
             subtitle,
@@ -286,14 +278,12 @@ internal sealed class MainShell : Component
         Element BuildContent() => Grid(
             columns: [GridSize.Star()],
             rows: [GridSize.Star()],
-            workspaceSurface.IsVisible(section == ShellSection.Workspace).Grid(row: 0),
-            Component<SettingsPage>().IsVisible(section == ShellSection.Settings).Grid(row: 0));
+            workspaceSurface.Grid(row: 0));
 
         // A bounded star row gives the session list the remaining pane height.
         // NavigationView.PaneCustomContent is measured in an Auto row instead.
-        Element NavigationButton(string label, string glyph, ShellSection target) =>
-            Button(HStack(AppTheme.SpacingS, Icon(FontIcon(glyph, fontSize: 16)), Body(label)),
-                    () => setSection(target))
+        Element NavigationButton(string label, string glyph, Action onClick) =>
+            Button(HStack(AppTheme.SpacingS, Icon(FontIcon(glyph, fontSize: 16)), Body(label)), onClick)
                 .SubtleButton()
                 .HAlign(HorizontalAlignment.Stretch)
                 .Set(button => button.HorizontalContentAlignment = HorizontalAlignment.Left)
@@ -302,7 +292,7 @@ internal sealed class MainShell : Component
         var pane = Border(Grid(
                 columns: [GridSize.Star()],
                 rows: [GridSize.Auto, GridSize.Star()],
-                NavigationButton(Str.T("shell.nav.sessions", "Sessions"), "\uE8A9", ShellSection.Workspace)
+                NavigationButton(Str.T("shell.nav.sessions", "Sessions"), "\uE8A9", () => setPaneOpen(true))
                     .Margin(AppTheme.SpacingM, AppTheme.SpacingS, AppTheme.SpacingM, 0).Grid(row: 0),
                 sidebar.Grid(row: 1)))
             .Background(Theme.LayerFill)
@@ -340,6 +330,12 @@ internal sealed class MainShell : Component
             editorOverlay = lastEditor.Current;
         }
 
+        var settingsOverlay = settingsOpen
+            ? Component<SettingsDialog, SettingsDialogProps>(
+                new SettingsDialogProps(() => setSettingsOpen(false)))
+                .WithKey("settings-dialog-" + settingsRequest)
+            : Empty();
+
         var root = Grid(
                 columns: [GridSize.Star()],
                 rows: [GridSize.Auto, GridSize.Star(), GridSize.Auto],
@@ -347,6 +343,7 @@ internal sealed class MainShell : Component
                 navigation.Grid(row: 1),
                 statusBar.Grid(row: 2),
                 editorOverlay.Grid(row: 0, rowSpan: 3),
+                settingsOverlay.Grid(row: 0, rowSpan: 3),
                 Component<DialogHost>().Grid(row: 0, rowSpan: 3))
             // Provide on the visual root, not on the CommandHost decorator:
             // TabView content and dialog overlays must all see the same graph.

@@ -1,5 +1,6 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using SurgeLink.App.Localization;
@@ -45,7 +46,7 @@ internal sealed class LineChart : Component<LineChartProps>
     {
         _ = UseColorScheme(); // repaint on light/dark/high contrast change
 
-        var (measuredWidth, setMeasuredWidth) = UseState(320d);
+        var (measuredWidth, setMeasuredWidth) = UseState(160d);
         var height = Math.Max(24, Props.Height);
         var width = Math.Max(32, measuredWidth);
         var slots = Math.Max(2, Props.WindowSize);
@@ -87,7 +88,9 @@ internal sealed class LineChart : Component<LineChartProps>
             }));
         }
 
-        var canvas = Canvas(children.ToArray()).Size(width, height);
+        // The canvas stretches to the card column; the measured width only
+        // drives the path geometry and must not become a desired-size floor.
+        var canvas = Canvas(children.ToArray()).Height(height).HAlign(HorizontalAlignment.Stretch);
 
         return Border(canvas)
             .OnSizeChanged((_, args) =>

@@ -154,7 +154,8 @@ internal sealed class MonitorView : Component<MonitorViewProps>
                 {
                     settingsStore.Update(current => current with { MonitorIntervalSeconds = Intervals[index] });
                 }
-            });
+            },
+            wide);
 
         var banner = error is null
             ? null
@@ -176,28 +177,40 @@ internal sealed class MonitorView : Component<MonitorViewProps>
         {
             body = error is null
                 ? Grid(
-                    columns: [GridSize.Star()],
-                    rows: [GridSize.Star()],
-                    ProgressRing().HAlign(HorizontalAlignment.Center).VAlign(VerticalAlignment.Center))
+                        columns: [GridSize.Star()],
+                        rows: [GridSize.Star()],
+                        ProgressRing().HAlign(HorizontalAlignment.Center).VAlign(VerticalAlignment.Center))
+                    .MinHeight(320)
                 : Caption(Str.T("monitor.waitingSuccessfulSample", "Waiting for the first successful sample."))
                     .Foreground(Theme.SecondaryText);
         }
         else
         {
-            body = BuildCards(snapshot, processes, history, wide);
+            body = BuildCards(snapshot, processes, history);
         }
 
-        return ScrollView(
-                VStack(
-                    AppTheme.SpacingL,
-                    header,
-                    banner,
-                    body))
-            .Padding(AppTheme.SpacingL)
+        var page = VStack(
+                AppTheme.SpacingXl,
+                header,
+                banner,
+                body)
+            .MaxWidth(880)
+            .HAlign(HorizontalAlignment.Center)
+            .Padding(AppTheme.SpacingXl);
+
+        return Border(
+                ScrollView(
+                        Grid(
+                            columns: [GridSize.Star()],
+                            rows: [GridSize.Auto],
+                            page.Grid(row: 0)))
+                    .HorizontalScrollMode(ScrollingScrollMode.Disabled)
+                    .VerticalScrollMode(ScrollingScrollMode.Enabled))
             .OnSizeChanged((_, args) =>
             {
-                // Measure this view: window breakpoints include the sidebar.
-                var nextWide = args.NewSize.Width - 2 * AppTheme.SpacingL >= 1000;
+                // Measure the page viewport, not the desktop width: the sidebar
+                // and the window chrome are not part of the dashboard.
+                var nextWide = args.NewSize.Width - (2 * AppTheme.SpacingXl) >= 760;
                 if (nextWide != wide)
                 {
                     setWide(nextWide);
@@ -211,7 +224,8 @@ internal sealed class MonitorView : Component<MonitorViewProps>
         DateTimeOffset? updatedAt,
         Action togglePause,
         Action sampleNow,
-        Action<int> selectInterval)
+        Action<int> selectInterval,
+        bool wide)
     {
         var currentIndex = Array.IndexOf(Intervals, intervalSeconds);
         if (currentIndex < 0)
@@ -227,45 +241,58 @@ internal sealed class MonitorView : Component<MonitorViewProps>
             .MinWidth(96)
             .IsEnabled(!paused);
 
+        var controls = HStack(
+                AppTheme.SpacingS,
+                intervalSelector,
+                Button(
+                        paused
+                            ? Str.T("monitor.resume", "Resume")
+                            : Str.T("monitor.pause", "Pause"),
+                        togglePause)
+                    .ToolTip(paused
+                        ? Str.T("monitor.resumeToolTip", "Resume live sampling")
+                        : Str.T("monitor.pauseToolTip", "Pause live sampling"))
+                    .AutomationName(paused
+                        ? Str.T("monitor.resumeAutomation", "Resume sampling")
+                        : Str.T("monitor.pauseAutomation", "Pause sampling")),
+                Button(Icon(FontIcon("\uE72C", fontSize: 14)), sampleNow)
+                    .SubtleButton()
+                    .ToolTip(Str.T("monitor.sampleNowToolTip", "Sample now"))
+                    .AutomationName(Str.T("monitor.sampleNow", "Sample now")));
+
+        var title = VStack(
+                AppTheme.SpacingXs,
+                Heading(Str.T("monitor.title", "Remote performance"))
+                    .HeadingLevel(Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level1),
+                Caption(updatedAt is null
+                        ? Str.T("monitor.waitingFirstSample", "Waiting for the first sample")
+                        : Str.F("monitor.lastUpdate", "Last update {0}", DataFormat.Clock(updatedAt.Value)))
+                    .Foreground(Theme.SecondaryText)
+                    .TextTrimming(TextTrimming.CharacterEllipsis));
+
+        if (!wide)
+        {
+            return VStack(
+                AppTheme.SpacingM,
+                title,
+                controls.HAlign(HorizontalAlignment.Left));
+        }
+
         return Grid(
-            columns: [GridSize.Star(), GridSize.Auto],
-            rows: [GridSize.Auto, GridSize.Auto],
-            SubHeading(Str.T("monitor.title", "Remote performance"))
-                .HeadingLevel(Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level1)
-                .Grid(row: 0, column: 0, columnSpan: 2),
-            Caption(updatedAt is null
-                    ? Str.T("monitor.waitingFirstSample", "Waiting for the first sample")
-                    : Str.F("monitor.lastUpdate", "Last update {0}", DataFormat.Clock(updatedAt.Value)))
-                .Foreground(Theme.SecondaryText)
-                .VAlign(VerticalAlignment.Center)
-                .TextTrimming(TextTrimming.CharacterEllipsis)
-                .Grid(row: 1, column: 0),
-            HStack(
-                    AppTheme.SpacingS,
-                    intervalSelector,
-                    Button(
-                            paused
-                                ? Str.T("monitor.resume", "Resume")
-                                : Str.T("monitor.pause", "Pause"),
-                            togglePause)
-                        .ToolTip(paused
-                            ? Str.T("monitor.resumeToolTip", "Resume live sampling")
-                            : Str.T("monitor.pauseToolTip", "Pause live sampling"))
-                        .AutomationName(paused
-                            ? Str.T("monitor.resumeAutomation", "Resume sampling")
-                            : Str.T("monitor.pauseAutomation", "Pause sampling")),
-                    Button(Icon(FontIcon("\uE72C", fontSize: 14)), sampleNow)
-                        .SubtleButton()
-                        .ToolTip(Str.T("monitor.sampleNowToolTip", "Sample now"))
-                        .AutomationName(Str.T("monitor.sampleNow", "Sample now")))
-                .Grid(row: 1, column: 1)) with { RowSpacing = AppTheme.SpacingS, ColumnSpacing = AppTheme.SpacingM };
+                columns: [GridSize.Star(), GridSize.Auto],
+                rows: [GridSize.Auto],
+                title.Grid(row: 0, column: 0),
+                controls.Grid(row: 0, column: 1).VAlign(VerticalAlignment.Center))
+            with
+            {
+                ColumnSpacing = AppTheme.SpacingL,
+            };
     }
 
     private static Element BuildCards(
         SystemSnapshot snapshot,
         IReadOnlyList<RemoteProcessInfo> processes,
-        MonitorHistory history,
-        bool twoColumns)
+        MonitorHistory history)
     {
         var cpu = MonitorCards.Cpu(snapshot, history);
         var memory = MonitorCards.Memory(snapshot);
@@ -278,40 +305,16 @@ internal sealed class MonitorView : Component<MonitorViewProps>
             Component<MonitorProcessTable, MonitorProcessTableProps>(
                 new MonitorProcessTableProps(processes))));
 
-        if (!twoColumns)
-        {
-            return Grid(
-                columns: [GridSize.Star()],
-                rows:
-                [
-                    GridSize.Auto,
-                    GridSize.Auto,
-                    GridSize.Auto,
-                    GridSize.Auto,
-                    GridSize.Auto,
-                    GridSize.Auto,
-                ],
-                cpu.Grid(row: 0),
-                memory.Grid(row: 1),
-                network.Grid(row: 2),
-                host.Grid(row: 3),
-                disks.Grid(row: 4),
-                processCard.Grid(row: 5)) with { RowSpacing = AppTheme.SpacingL };
-        }
-
-        return Grid(
-            columns: [GridSize.Star(), GridSize.Star()],
-            rows: [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Auto],
-            cpu.Grid(row: 0, column: 0),
-            memory.Grid(row: 0, column: 1),
-            network.Grid(row: 1, column: 0),
-            host.Grid(row: 1, column: 1),
-            disks.Grid(row: 2, column: 0, columnSpan: 2),
-            processCard.Grid(row: 3, column: 0, columnSpan: 2)) with
-        {
-            ColumnSpacing = AppTheme.SpacingL,
-            RowSpacing = AppTheme.SpacingL,
-        };
+        // One stable, full-width card column keeps live values from reflowing
+        // the dashboard as their text grows or shrinks.
+        return VStack(
+            AppTheme.SpacingL,
+            cpu,
+            memory,
+            network,
+            host,
+            disks,
+            processCard);
     }
 
     private static int Normalize(int seconds) => Intervals.Contains(seconds) ? seconds : 2;

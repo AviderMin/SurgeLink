@@ -38,6 +38,7 @@ internal static class MonitorCards
         }
         else
         {
+            const int columns = 2;
             var perCore = new List<Element>(cores.Count);
             for (var index = 0; index < cores.Count; index++)
             {
@@ -46,14 +47,14 @@ internal static class MonitorCards
                             cores[index] / 100d,
                             "CPU " + index,
                             DataFormat.Percent(cores[index] / 100d)))
-                        .Grid(row: index / 2, column: index % 2)
+                        .Grid(row: index / columns, column: index % columns)
                         // Logical core index is the stable identity of a core.
                         .WithKey("cpu-core:" + index));
             }
 
             detail = Grid(
-                columns: [GridSize.Star(), GridSize.Star()],
-                rows: Enumerable.Repeat(GridSize.Auto, (cores.Count + 1) / 2).ToArray(),
+                columns: Enumerable.Repeat(GridSize.Star(), columns).ToArray(),
+                rows: Enumerable.Repeat(GridSize.Auto, (cores.Count + columns - 1) / columns).ToArray(),
                 perCore.ToArray()) with
             {
                 ColumnSpacing = AppTheme.SpacingM,
@@ -73,7 +74,10 @@ internal static class MonitorCards
                         112,
                         CaptionBelowRing: true))
                     .Grid(row: 0, column: 0),
-                detail.Grid(row: 0, column: 1).Margin(AppTheme.SpacingL, 0, 0, 0)),
+                detail.Grid(row: 0, column: 1)) with
+            {
+                ColumnSpacing = AppTheme.SpacingL,
+            },
             Component<LineChart, LineChartProps>(new LineChartProps(
                     [new ChartSeries(Str.T("monitor.chart.seriesCpu", "CPU"), history.CpuHistory)],
                     Height: 64,
@@ -134,7 +138,10 @@ internal static class MonitorCards
                     112,
                     CaptionBelowRing: true))
                 .Grid(row: 0, column: 0),
-            bars.Grid(row: 0, column: 1).Margin(AppTheme.SpacingL, 0, 0, 0));
+            bars.Grid(row: 0, column: 1)) with
+        {
+            ColumnSpacing = AppTheme.SpacingL,
+        };
 
         return Card(
             Str.T("monitor.card.memory.title", "Memory"),
@@ -165,7 +172,10 @@ internal static class MonitorCards
                 Stat(Str.T("monitor.card.network.download", "Download"), DataFormat.Rate(history.ReceiveRate))
                     .Grid(row: 0, column: 0),
                 Stat(Str.T("monitor.card.network.upload", "Upload"), DataFormat.Rate(history.SendRate))
-                    .Grid(row: 0, column: 1)).Set(grid => grid.ColumnSpacing = AppTheme.SpacingL),
+                    .Grid(row: 0, column: 1)) with
+            {
+                ColumnSpacing = AppTheme.SpacingL,
+            },
             Component<LineChart, LineChartProps>(new LineChartProps(
                     [
                         new ChartSeries(Str.T("monitor.chart.seriesDownload", "Download"), history.ReceiveHistory),

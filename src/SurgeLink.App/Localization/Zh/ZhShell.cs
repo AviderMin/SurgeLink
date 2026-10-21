@@ -95,7 +95,7 @@ public static class ZhShell
         ["shell.prompt.password.title"] = "{0}@{1} 的密码",
         ["shell.prompt.password.body"] = "该登录未保存。请输入此会话的密码。",
         ["shell.settings.title"] = "设置",
-        ["shell.settings.subtitle"] = "更改会立即生效并保存到磁盘。",
+        ["shell.settings.subtitle"] = "更改会在保存后生效。",
         ["shell.settings.general"] = "常规",
         ["shell.settings.language"] = "界面语言",
         ["shell.settings.language.description"] = "菜单、对话框和本页使用的语言。",

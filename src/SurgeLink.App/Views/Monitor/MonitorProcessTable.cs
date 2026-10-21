@@ -96,11 +96,13 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
 
         return VStack(
             AppTheme.SpacingXs,
-            Grid(
-                columns: Columns,
-                rows: [GridSize.Auto],
-                headerCells.ToArray())
-                .Set(grid => grid.ColumnSpacing = AppTheme.SpacingM)
+            (Grid(
+                    columns: Columns,
+                    rows: [GridSize.Auto],
+                    headerCells.ToArray()) with
+                {
+                    ColumnSpacing = AppTheme.SpacingM,
+                })
                 .Padding(AppTheme.SpacingS, 0),
             Border(Empty()).Height(1).Background(Theme.DividerStroke),
             Grid(
@@ -120,7 +122,7 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
     ];
 
     private static Element Row(RemoteProcessInfo process) =>
-        Grid(
+        (Grid(
                 columns: Columns,
                 rows: [GridSize.Auto],
                 TextBlock(process.ProcessId.ToString()).FontFamily(AppTheme.Monospace).FontSize(12).Grid(row: 0, column: 0),
@@ -146,7 +148,10 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
                     .FontSize(12)
                     .Foreground(Theme.SecondaryText)
                     .Grid(row: 0, column: 5))
-            .Set(grid => grid.ColumnSpacing = AppTheme.SpacingM)
+            with
+            {
+                ColumnSpacing = AppTheme.SpacingM,
+            })
             .Padding(AppTheme.SpacingS, AppTheme.SpacingXs)
             .AutomationName(process.Name + " " + process.ProcessId);
 

@@ -19,10 +19,10 @@ plain C# (no XAML), reconciled onto real WinUI 3 controls.
 | **Monitor** | Remote dashboard: CPU gauge + per-core bars + history, memory/swap, load, uptime, disks, network throughput with sparklines, sortable top processes, pause/resume |
 | **Protocols** | SSH (password, key, keyboard-interactive; TOFU host keys; Linux `/proc` **and Windows OpenSSH** monitoring) plus an offline **Demo** protocol for testing and as the reference implementation |
 | **Shell** | Session sidebar with grouping/search/context menu, tabbed workspaces, capability-driven view switcher, settings, host-key/secret dialogs, crash log, light/dark/High Contrast, encrypted credential storage |
-| **界面语言** | 简体中文 / English / 跟随系统（默认跟随 Windows；设置页可随时切换，无需重启） |
+| **界面语言** | 简体中文 / English / 跟随系统（默认跟随 Windows；设置对话框可随时切换，无需重启） |
 
 The UI is localized: every user-visible string goes through `Str.T("key", "English")` with the
-Chinese copy in `Localization/Zh`. Switching the language in Settings rebuilds the shell immediately.
+Chinese copy in `Localization/Zh`. Switching the language in the Settings dialog rebuilds the shell immediately.
 
 The app is deliberately **protocol agnostic**: the shell only talks to `IProtocolSession`
 capabilities, so adding Telnet/RDP/Serial/VNC later means adding one project and one

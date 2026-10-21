@@ -113,14 +113,17 @@ AssertMissing $shell "Render error" "no render errors in shell"
 AssertContains $shell "Sessions" "sidebar pane present"
 AssertContains $shell "SidebarMonitor" "compact remote monitor present"
 
-Step "Settings page"
+Step "Settings dialog"
 Invoke-Action "Settings" "Button"
-Start-Sleep -Seconds 1
+Start-Sleep -Seconds 2
 $settings = Dump "00-settings"
+if (Select-String -Path $settings -Pattern "SettingsDialog" -SimpleMatch -Quiet) { Pass "settings opens as a dialog" } else { Fail "settings opens as a dialog" "Settings dialog not found" }
 AssertContains $settings "SettingsLanguage" "settings language control present"
 AssertContains $settings "SettingsTheme" "settings theme control present"
 AssertContains $settings "SettingsFontFamily" "settings terminal controls present"
-AssertMissing $settings "Render error" "no render errors in settings page"
+AssertMissing $settings "Render error" "no render errors in settings dialog"
+Invoke-Action "Cancel" "Button"
+Start-Sleep -Milliseconds 700
 
 Step "Open demo session"
 Invoke-Action "Open demo session" "Button"
