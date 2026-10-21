@@ -1,6 +1,6 @@
 param(
     [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')]
-    [string]$Version = '0.1.0.1',
+    [string]$Version = '1.0.2',
     [switch]$SkipPublish
 )
 
@@ -11,6 +11,7 @@ $payload = Join-Path $outputRoot 'payload'
 $null = New-Item -ItemType Directory -Force -Path $outputRoot
 
 if (!$SkipPublish) {
+    & (Join-Path $PSScriptRoot 'make-icon.ps1')
     & dotnet publish (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') `
         -c Release -r win-x64 --self-contained true -p:Platform=x64 `
         -p:WindowsAppSDKSelfContained=true -p:UseSharedCompilation=false `
@@ -32,8 +33,7 @@ $manifest.Save((Join-Path $payload 'AppxManifest.xml'))
 
 # Reuse the application's existing icon for Windows package assets.
 Add-Type -AssemblyName System.Drawing
-$icon = [System.Drawing.Icon]::new((Join-Path $repoRoot 'src/SurgeLink.App/Assets/AppIcon.ico'), 256, 256)
-$source = $icon.ToBitmap()
+$source = [System.Drawing.Image]::FromFile((Join-Path $repoRoot 'docs/ICON.jpg'))
 try {
     foreach ($asset in @(
         @{ Name = 'StoreLogo.png'; Size = 50 },
@@ -51,7 +51,7 @@ try {
         finally { $graphics.Dispose(); $bitmap.Dispose() }
     }
 }
-finally { $source.Dispose(); $icon.Dispose() }
+finally { $source.Dispose() }
 
 $makePri = Join-Path $sdk.Directory.FullName 'makepri.exe'
 $priInputs = Join-Path $outputRoot 'pri-inputs.resfiles'
