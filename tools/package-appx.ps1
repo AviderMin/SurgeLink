@@ -1,6 +1,6 @@
 param(
     [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')]
-    [string]$Version = '0.1.0.0',
+    [string]$Version = '0.1.0.1',
     [switch]$SkipPublish
 )
 
@@ -53,8 +53,36 @@ try {
 }
 finally { $source.Dispose(); $icon.Dispose() }
 
+$makePri = Join-Path $sdk.Directory.FullName 'makepri.exe'
+$priInputs = Join-Path $outputRoot 'pri-inputs.resfiles'
+Get-ChildItem $payload -Filter '*.pri' | Where-Object Name -ne 'resources.pri' |
+    ForEach-Object FullName | Set-Content $priInputs
+$priConfig = Join-Path $outputRoot 'priconfig.xml'
+$escapedRoot = [Security.SecurityElement]::Escape($outputRoot)
+@"
+<?xml version="1.0" encoding="utf-8"?>
+<resources targetOsVersion="10.0.0" majorVersion="1">
+  <index root="$escapedRoot" startIndexAt="pri-inputs.resfiles">
+    <default><qualifier name="Language" value="en-US" /></default>
+    <indexer-config type="PRI" />
+    <indexer-config type="RESFILES" qualifierDelimiter="." />
+  </index>
+</resources>
+"@ | Set-Content $priConfig
+# Packaged MRT lookup requires resources.pri with the package identity. Merely
+# copying Reactor.pri and WinUI's standalone PRIs works only when unpackaged.
+& $makePri new /pr $payload /cf $priConfig /mn (Join-Path $payload 'AppxManifest.xml') `
+    /in $manifest.Package.Identity.Name /of (Join-Path $payload 'resources.pri') /o > (Join-Path $outputRoot 'makepri.log')
+if ($LASTEXITCODE -ne 0) { throw 'Package resource index generation failed.' }
+$priDump = Join-Path $outputRoot 'resources.pri.xml'
+& $makePri dump /if (Join-Path $payload 'resources.pri') /of $priDump /o > (Join-Path $outputRoot 'makepri-dump.log')
+if ($LASTEXITCODE -ne 0) { throw 'Package resource index validation failed.' }
+if (!(Select-String -LiteralPath $priDump -Pattern 'ReactorApplication.xbf' -SimpleMatch -Quiet)) {
+    throw 'Merged package resource index is missing Reactor startup resources.'
+}
+
 $package = Join-Path $outputRoot "SurgeLink_$($Version)_x64.appx"
-& $sdk.FullName pack /d $payload /p $package /o
+& $sdk.FullName pack /d $payload /p $package /o > (Join-Path $outputRoot 'makeappx.log')
 if ($LASTEXITCODE -ne 0) { throw 'APPX validation or packaging failed.' }
 
 # Generate an ephemeral development signing key in memory. Do not add trust or
