@@ -38,8 +38,8 @@ internal sealed class SftpView : Component<SftpViewProps>
             },
             settingsStore);
 
-        var (requestedPath, setRequestedPath) = UseState<string?>(null);
-        var (cwd, setCwd) = UseState("/");
+        var (requestedPath, setRequestedPath) = UseState<string?>(Props.InitialPath);
+        var (cwd, setCwd) = UseState(Props.InitialPath ?? "/");
         var (entries, setEntries) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>(), threadSafe: true);
         var (loading, setLoading) = UseState(true, threadSafe: true);
         var (error, setError) = UseState<string?>(null, threadSafe: true);
@@ -109,6 +109,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                         }
 
                         setCwd(path);
+                        Props.PathChanged?.Invoke(path);
                         setEntries(listing);
                         setError(null);
                         setLoading(false);

@@ -3,6 +3,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Files;
@@ -21,6 +22,7 @@ internal sealed record FileEditorWindowProps(IRemoteFileSystem FileSystem, Remot
 internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 {
     private const int MaximumEditorBytes = 4 * 1024 * 1024;
+    private ScrollViewer? _gutterScroll;
 
     public override Element Render()
     {
@@ -33,6 +35,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var (error, setError) = UseState<string?>(null, threadSafe: true);
         var (status, setStatus) = UseState<string?>(null, threadSafe: true);
         var (wrap, setWrap) = UseState(true);
+        var lineNumberTransform = UseMemo(() => new TranslateTransform());
 
         UseEffect(
             () =>
@@ -123,6 +126,9 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 
         var lineCount = text.Count(character => character == '\n') + 1;
         var characterCount = text.Length;
+        var lineNumbers = string.Join(
+            "\n",
+            Enumerable.Range(1, lineCount).Select(number => number.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         var statusText = error ?? (loading
             ? Str.T("sftp.editor.loading", "Loading file…")
             : saving
@@ -178,22 +184,59 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         }
         else
         {
-            body = Border(
-                    TextBox(text, value =>
-                        {
-                            setText(value);
-                            setDirty(true);
-                            setStatus(null);
-                        })
-                        .AcceptsReturn(true)
-                        .TextWrapping(wrap ? TextWrapping.Wrap : TextWrapping.NoWrap)
+            var gutter = ScrollViewer(
+                    TextBlock(lineNumbers)
                         .FontFamily(AppTheme.Monospace)
                         .FontSize(14)
-                        .AutomationName(Str.T("sftp.editor.contents", "File contents"))
-                        .HAlign(HorizontalAlignment.Stretch)
-                        .VAlign(VerticalAlignment.Stretch)
-                        .Set(box => box.IsSpellCheckEnabled = false))
-                .Padding(AppTheme.SpacingM)
+                        .LineHeight(20)
+                        .Foreground(Theme.SecondaryText)
+                        .TextAlignment(TextAlignment.Right)
+                        .Padding(0, 8, 8, 8)
+                        .Set(block => block.IsHitTestVisible = false))
+                .Set(viewer =>
+                {
+                    _gutterScroll = viewer;
+                    viewer.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+                    viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+                    viewer.VerticalScrollMode = ScrollMode.Enabled;
+                    viewer.HorizontalScrollMode = ScrollMode.Disabled;
+                    viewer.IsHitTestVisible = false;
+                })
+                .Width(48);
+
+            body = Border(
+                    Grid(
+                        columns: [GridSize.Px(48), GridSize.Star()],
+                        rows: [GridSize.Star()],
+                        gutter.Grid(row: 0, column: 0),
+                        TextBox(text, value =>
+                            {
+                                setText(value);
+                                setDirty(true);
+                                setStatus(null);
+                            })
+                            .AcceptsReturn(true)
+                            .TextWrapping(wrap ? TextWrapping.Wrap : TextWrapping.NoWrap)
+                            .FontFamily(AppTheme.Monospace)
+                            .FontSize(14)
+                            .AutomationName(Str.T("sftp.editor.contents", "File contents"))
+                            .HAlign(HorizontalAlignment.Stretch)
+                            .VAlign(VerticalAlignment.Stretch)
+                            .Set(box =>
+                            {
+                                box.IsSpellCheckEnabled = false;
+                                Microsoft.UI.Xaml.Controls.ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
+                                Microsoft.UI.Xaml.Controls.ScrollViewer.SetHorizontalScrollBarVisibility(box, ScrollBarVisibility.Auto);
+                            })
+                            .OnMountAdd(fe =>
+                            {
+                                if (fe is TextBox editor)
+                                {
+                                    AttachEditorScroll(editor);
+                                }
+                            })
+                            .Grid(row: 0, column: 1)))
+                .Padding(AppTheme.SpacingS)
                 .Background(Theme.CardBackground)
                 .WithBorder(Theme.CardStroke)
                 .CornerRadius(AppTheme.CardRadius);
@@ -217,5 +260,52 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             header.Grid(row: 0),
             body.Grid(row: 1),
             footer.Grid(row: 2));
+    }
+
+    private void AttachEditorScroll(TextBox editor)
+    {
+        void Attach()
+        {
+            var editorScroll = FindScrollViewer(editor);
+            if (editorScroll is null)
+            {
+                return;
+            }
+
+            editorScroll.ViewChanged += (_, _) =>
+            {
+                _gutterScroll?.ChangeView(null, editorScroll.VerticalOffset, null, disableAnimation: true);
+            };
+        }
+
+        if (editor.IsLoaded)
+        {
+            Attach();
+        }
+        else
+        {
+            editor.Loaded += (_, _) => Attach();
+        }
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        var children = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < children; index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is ScrollViewer viewer)
+            {
+                return viewer;
+            }
+
+            var nested = FindScrollViewer(child);
+            if (nested is not null)
+            {
+                return nested;
+            }
+        }
+
+        return null;
     }
 }

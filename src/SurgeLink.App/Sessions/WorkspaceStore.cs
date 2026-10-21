@@ -54,6 +54,9 @@ public sealed class WorkspaceTab
 
     public SessionViewKind View { get; internal set; } = SessionViewKind.Terminal;
 
+    /// <summary>Last directory browsed in the Files view; retained across view switches.</summary>
+    public string? FileBrowserPath { get; internal set; }
+
     public string Title => Profile.Name;
 }
 
@@ -249,6 +252,19 @@ public sealed class WorkspaceStore
     /// <summary>Makes a tab active.</summary>
     public void Activate(Guid tabId) =>
         Update(s => s.Tabs.Any(t => t.Id == tabId) ? s with { ActiveTabId = tabId } : s);
+
+    /// <summary>Remembers the last directory browsed by the Files view for one tab.</summary>
+    public void SetFileBrowserPath(Guid tabId, string path)
+    {
+        var tab = Snapshot.Tabs.FirstOrDefault(t => t.Id == tabId);
+        if (tab is null || string.Equals(tab.FileBrowserPath, path, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        tab.FileBrowserPath = path;
+        Update(s => s, force: true);
+    }
 
     /// <summary>Switches which capability view a tab shows.</summary>
     public void SetView(Guid tabId, SessionViewKind view)

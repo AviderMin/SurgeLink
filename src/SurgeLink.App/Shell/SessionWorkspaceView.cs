@@ -86,7 +86,13 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
         Element content = props.View switch
         {
             SessionViewKind.Files => Component<SftpView, SftpViewProps>(
-                new SftpViewProps(tab.Session.FileSystem, tab.Profile, services.Settings, tab.Transfers)),
+                new SftpViewProps(
+                    tab.Session.FileSystem,
+                    tab.Profile,
+                    services.Settings,
+                    tab.Transfers,
+                    tab.FileBrowserPath,
+                    path => services.Workspace.SetFileBrowserPath(tab.Id, path))),
             SessionViewKind.Monitor => Component<MonitorView, MonitorViewProps>(
                 new MonitorViewProps(tab.Session.Monitor, services.Settings)),
             _ => Component<TerminalView, TerminalViewProps>(new TerminalViewProps(tab.Terminal)),

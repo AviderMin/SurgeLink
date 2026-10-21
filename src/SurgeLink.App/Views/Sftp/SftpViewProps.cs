@@ -10,11 +10,15 @@ namespace SurgeLink.App.Views.Sftp;
 /// <param name="Profile">Session profile, used for headings and the local download folder hint.</param>
 /// <param name="Settings">User preferences: the hidden-file filter is read from here.</param>
 /// <param name="Transfers">Session-owned transfer queue; it outlives this view.</param>
+/// <param name="InitialPath">Last browsed directory, retained by the session tab.</param>
+/// <param name="PathChanged">Records the current directory for the next mount of this view.</param>
 internal sealed record SftpViewProps(
     IRemoteFileSystem? FileSystem,
     SessionProfile Profile,
     IAppSettingsStore Settings,
-    FileTransferQueue Transfers);
+    FileTransferQueue Transfers,
+    string? InitialPath = null,
+    Action<string>? PathChanged = null);
 
 /// <summary>Columns the file list can be sorted by.</summary>
 internal enum SftpSortColumn
