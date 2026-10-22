@@ -15,6 +15,12 @@
     <ApplicationIcon>Assets\\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <Target Name="GenerateApplicationIcon" BeforeTargets="PrepareForBuild"
+          Inputs="$(MSBuildProjectDirectory)\..\..\docs\LOGO.png;$(MSBuildProjectDirectory)\..\..\tools\make-icon.ps1"
+          Outputs="$(MSBuildProjectDirectory)\Assets\AppIcon.ico">
+    <Exec Command="powershell -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)\..\..\tools\make-icon.ps1&quot;" />
+  </Target>
+
   <ItemGroup>
     <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\docs\LOGO.png" Link="Assets\AppLogo.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
