@@ -27,8 +27,8 @@ internal sealed record GaugeProps(
     bool CaptionBelowRing = false);
 
 /// <summary>
-/// A 270 degree radial gauge built from two WinUI shapes: an <see cref="Ellipse"/>
-/// for the full track and a <see cref="Path"/> arc for the current value. No
+/// A 270 degree radial gauge built from two WinUI <see cref="Path"/> arcs:
+/// an open track and the current value, with a 90 degree gap at the bottom. No
 /// XAML, no images, and the colours come from <see cref="ChartPalette"/> so the
 /// gauge follows light, dark and High Contrast.
 /// </summary>
@@ -51,13 +51,14 @@ internal sealed class Gauge : Component<GaugeProps>
 
         var shapes = new List<Element>
         {
-            Ellipse()
-                .Set(ellipse =>
+            Path2D()
+                .Set(path =>
                 {
-                    ellipse.Width = size;
-                    ellipse.Height = size;
-                    ellipse.Stroke = ChartPalette.Track;
-                    ellipse.StrokeThickness = thickness;
+                    path.Data = BuildArc(center, radius, 1);
+                    path.Stroke = ChartPalette.Track;
+                    path.StrokeThickness = thickness;
+                    path.StrokeStartLineCap = PenLineCap.Round;
+                    path.StrokeEndLineCap = PenLineCap.Round;
                 })
                 .Canvas(0, 0),
         };
