@@ -182,23 +182,30 @@ internal sealed class MonitorView : Component<MonitorViewProps>
             body = BuildCards(snapshot, processes, history);
         }
 
-        var page = VStack(
-                AppTheme.SpacingXl,
-                header,
-                banner,
-                body)
-            .MaxWidth(880)
-            .HAlign(HorizontalAlignment.Center)
-            .Padding(AppTheme.SpacingXl);
+        // The viewport supplies width; host text and CPU count only affect height.
+        var page = Grid(
+                columns: [GridSize.Star()],
+                rows: [GridSize.Auto, GridSize.Auto, GridSize.Auto],
+                header.Grid(row: 0),
+                banner?.Grid(row: 1),
+                body.Grid(row: 2)) with
+        {
+            RowSpacing = AppTheme.SpacingXl,
+            Padding = new Thickness(AppTheme.SpacingXl),
+        };
 
         return Border(
-                ScrollView(
-                        Grid(
-                            columns: [GridSize.Star()],
-                            rows: [GridSize.Auto],
-                            page.Grid(row: 0)))
-                    .HorizontalScrollMode(ScrollingScrollMode.Disabled)
-                    .VerticalScrollMode(ScrollingScrollMode.Enabled))
+                ScrollView(page.HAlign(HorizontalAlignment.Stretch).VAlign(VerticalAlignment.Top)) with
+                {
+                    ContentOrientation = ScrollingContentOrientation.Vertical,
+                    HorizontalScrollMode = ScrollingScrollMode.Disabled,
+                    HorizontalScrollBarVisibility = ScrollingScrollBarVisibility.Hidden,
+                    VerticalScrollMode = ScrollingScrollMode.Enabled,
+                    // Reserve the same viewport width on every host and sample.
+                    VerticalScrollBarVisibility = ScrollingScrollBarVisibility.Visible,
+                })
+            .HAlign(HorizontalAlignment.Stretch)
+            .VAlign(VerticalAlignment.Stretch)
             .OnSizeChanged((_, args) =>
             {
                 // Measure the page viewport, not the desktop width: the sidebar
@@ -298,16 +305,21 @@ internal sealed class MonitorView : Component<MonitorViewProps>
             Component<MonitorProcessTable, MonitorProcessTableProps>(
                 new MonitorProcessTableProps(processes))));
 
-        // One stable, full-width card column keeps live values from reflowing
-        // the dashboard as their text grows or shrinks.
-        return VStack(
-            AppTheme.SpacingL,
-            cpu,
-            memory,
-            network,
-            host,
-            disks,
-            processCard);
+        (string Key, Element Content)[] cards =
+        [
+            ("cpu", cpu), ("memory", memory), ("network", network),
+            ("host", host), ("disks", disks), ("processes", processCard),
+        ];
+        return Grid(
+            columns: [GridSize.Star()],
+            rows: Enumerable.Repeat(GridSize.Auto, cards.Length).ToArray(),
+            cards.Select((card, index) => Border(card.Content)
+                .HAlign(HorizontalAlignment.Stretch)
+                .Grid(row: index)
+                .WithKey(card.Key)).ToArray()) with
+        {
+            RowSpacing = AppTheme.SpacingL,
+        };
     }
 
     private static int Normalize(int seconds) => Intervals.Contains(seconds) ? seconds : 2;
