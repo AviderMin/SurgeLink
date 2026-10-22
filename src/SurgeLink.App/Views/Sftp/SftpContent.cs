@@ -1,5 +1,6 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Microsoft.UI.Reactor.Hosting;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -27,8 +28,6 @@ internal static class SftpContent
         Action<RemoteFileEntry> openEntry,
         Action<object, KeyRoutedEventArgs> keyDown,
         Action refresh,
-        Action<string> setDialogText,
-        Action<SftpDialogState> setDialog,
         Action<FrameworkElement, ContextRequestedEventArgs> contextRequested)
     {
         if (loading)
@@ -56,29 +55,27 @@ internal static class SftpContent
 
         if (rows.Count == 0)
         {
-            return Grid(
-                columns: [GridSize.Star()],
-                rows: [GridSize.Star(), GridSize.Auto],
-                VStack(
-                        AppTheme.SpacingS,
-                        Icon(FontIcon("\uE8B7", fontSize: 32)),
-                        BodyStrong(Str.T("sftp.empty.title", "This folder is empty")),
-                        Caption(Str.T("sftp.empty.hint", "Upload a file or create a folder to get started."))
-                            .Foreground(Theme.SecondaryText),
-                        Button(Str.T("sftp.command.newFolder", "New folder"), () =>
-                        {
-                            setDialogText(string.Empty);
-                            setDialog(new SftpDialogState(SftpDialogKind.NewFolder));
-                        })
-                            .AutomationName(Str.T("sftp.command.newFolder", "New folder"))
-                            .Margin(0, AppTheme.SpacingS, 0, 0))
-                    .HAlign(HorizontalAlignment.Center)
-                    .VAlign(VerticalAlignment.Center)
-                    .Grid(row: 0, column: 0),
-                SftpEntryList.Body(rows, setSelected, openEntry, keyDown, contextRequested).Grid(row: 1))
-                .Background(Theme.LayerFill)
-                .OnKeyDown(keyDown)
-                .Set(grid => SftpContextMenu.Attach(grid, contextRequested));
+            // A list footer only occupies its desired height. The empty directory
+            // instead owns the entire viewport, including the blank area below text.
+            return new XamlHostElement(() => new ContentControl
+            {
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                VerticalContentAlignment = VerticalAlignment.Stretch,
+                Content = new Microsoft.UI.Xaml.Controls.TextBlock
+                {
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(16),
+                },
+            }, element =>
+            {
+                var surface = (ContentControl)element;
+                ((Microsoft.UI.Xaml.Controls.TextBlock)surface.Content).Text = Str.T("sftp.empty.title", "This folder is empty");
+                SftpContextMenu.Attach(surface, contextRequested);
+            }) { TypeKey = "EmptyDirectorySurface" };
         }
 
         return SftpEntryList.Body(rows, setSelected, openEntry, keyDown, contextRequested);

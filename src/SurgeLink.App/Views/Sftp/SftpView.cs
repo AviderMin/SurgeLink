@@ -555,7 +555,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 .IsClosable(true)
                 .Closed(() => setBanner(null));
 
-        var content = SftpContent.Build(rows, loading, error, setSelected, HandleItemClick, HandleListKey, Refresh, setDialogText, setDialog, ShowContextMenu);
+        var content = SftpContent.Build(rows, loading, error, setSelected, HandleItemClick, HandleListKey, Refresh, ShowContextMenu);
 
         var transferPanel = SftpTransferPanel.Render(transfers, id => queue.Cancel(id), queue.ClearFinished);
 

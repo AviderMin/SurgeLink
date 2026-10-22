@@ -75,8 +75,7 @@ public static class ZhData
         // ---- SFTP: states --------------------------------------------------
         ["sftp.error.loadTitle"] = "无法加载文件夹",
         ["sftp.error.retry"] = "重试",
-        ["sftp.empty.title"] = "此文件夹为空",
-        ["sftp.empty.hint"] = "上传文件或新建文件夹以开始使用。",
+        ["sftp.empty.title"] = "文件夹为空",
         ["sftp.unavailable.title"] = "文件传输不可用",
         ["sftp.unavailable.hint"] = "此协议不提供 SFTP 文件系统，因此没有可浏览的内容。",
 

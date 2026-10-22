@@ -62,6 +62,16 @@ internal static class WorkspaceView
                     }
                 },
                 tabs)
+            .Set(view =>
+            {
+                view.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                view.VerticalContentAlignment = VerticalAlignment.Stretch;
+                foreach (var item in view.TabItems.OfType<Microsoft.UI.Xaml.Controls.TabViewItem>())
+                {
+                    item.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                    item.VerticalContentAlignment = VerticalAlignment.Stretch;
+                }
+            })
             .IsAddTabButtonVisible(true)
             .AddTabButtonClick(() => props.NewSession(null))
             // Keep visual order aligned with the store used by selection and close callbacks.
