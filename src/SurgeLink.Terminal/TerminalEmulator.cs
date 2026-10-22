@@ -89,6 +89,11 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             return TerminalCell.Blank;
         }
 
+        return GetBufferCell(row, column);
+    }
+
+    private TerminalCell GetBufferCell(int row, int column)
+    {
         int index = _scrollback.Count - _viewportOffset + row;
         if (index < 0)
         {
@@ -251,8 +256,8 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     public string GetSelectionText(TerminalSelection selection)
     {
         (TerminalPosition first, TerminalPosition last) = selection.Normalized();
-        int startRow = Math.Clamp(first.Row, 0, Rows - 1);
-        int endRow = Math.Clamp(last.Row, 0, Rows - 1);
+        int startRow = Math.Clamp(first.Row, -_scrollback.Count + _viewportOffset, Rows - 1 + _viewportOffset);
+        int endRow = Math.Clamp(last.Row, -_scrollback.Count + _viewportOffset, Rows - 1 + _viewportOffset);
         if (endRow < startRow)
         {
             return string.Empty;
@@ -654,14 +659,14 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
 
         int end = toColumnInclusive + 1;
-        while (end > fromColumn && IsBlankCell(GetCell(row, end - 1)))
+        while (end > fromColumn && IsBlankCell(GetBufferCell(row, end - 1)))
         {
             end--;
         }
 
         for (int column = fromColumn; column < end; column++)
         {
-            TerminalCell cell = GetCell(row, column);
+            TerminalCell cell = GetBufferCell(row, column);
             if (cell.Width == CellWidth.Continuation)
             {
                 continue;

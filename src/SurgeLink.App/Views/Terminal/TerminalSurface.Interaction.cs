@@ -26,6 +26,11 @@ internal sealed partial class TerminalSurface
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
+        for (var source = e.OriginalSource as DependencyObject; source is not null && source != this;
+             source = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(source))
+        {
+            if (source is ScrollBar) { return; }
+        }
         Focus(FocusState.Pointer);
         var point = e.GetCurrentPoint(this);
 
@@ -118,14 +123,8 @@ internal sealed partial class TerminalSurface
         int lines = (delta / 120) * LinesPerWheelNotch;
         if (lines != 0)
         {
-            var emulator = _bridge.Emulator;
-            lock (emulator.SyncRoot)
-            {
-                emulator.ScrollViewport(lines);
-            }
-
-            // Selection lives in viewport coordinates, so scrolling invalidates it.
-            ClearSelection();
+            ScrollHistory(lines);
+            if (_selecting) { _selectionCaret = CellFromPoint(point.Position); }
             InvalidatePaint(force: true);
         }
 
@@ -145,8 +144,8 @@ internal sealed partial class TerminalSurface
 
         double cellWidth = _metrics?.CellWidth ?? 8;
         double cellHeight = _metrics?.CellHeight ?? 16;
-        int column = (int)Math.Floor(point.X / cellWidth);
-        int row = (int)Math.Floor(point.Y / cellHeight);
+        int column = (int)Math.Floor((point.X - ContentInset) / cellWidth);
+        int row = (int)Math.Floor((point.Y - ContentInset) / cellHeight);
         return new TerminalPosition(
             Math.Clamp(row, 0, Math.Max(0, rows - 1)),
             Math.Clamp(column, 0, Math.Max(0, columns - 1)));
@@ -232,10 +231,23 @@ internal sealed partial class TerminalSurface
         lock (emulator.SyncRoot)
         {
             rows = Math.Max(1, emulator.Rows - 1);
-            emulator.ScrollViewport(back ? rows : -rows);
+            ScrollHistory(back ? rows : -rows);
         }
 
-        ClearSelection();
+        InvalidatePaint(force: true);
+    }
+
+    private void ScrollHistory(int lines)
+    {
+        var emulator = _bridge.Emulator;
+        lock (emulator.SyncRoot)
+        {
+            var before = emulator.ViewportOffset;
+            emulator.ScrollViewport(lines);
+            var shift = emulator.ViewportOffset - before;
+            if (_selectionAnchor is { } anchor) { _selectionAnchor = anchor with { Row = anchor.Row + shift }; }
+            if (_selectionCaret is { } caret) { _selectionCaret = caret with { Row = caret.Row + shift }; }
+        }
         InvalidatePaint(force: true);
     }
 

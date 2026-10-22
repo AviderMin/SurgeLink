@@ -37,8 +37,8 @@ internal sealed partial class TerminalSurface
             return;
         }
 
-        int columns = Math.Max(1, (int)Math.Floor(ActualWidth / _metrics.CellWidth));
-        int rows = Math.Max(1, (int)Math.Floor(ActualHeight / _metrics.CellHeight));
+        int columns = Math.Max(1, (int)Math.Floor(Math.Max(0, ActualWidth - 2 * ContentInset - ScrollBarWidth) / _metrics.CellWidth));
+        int rows = Math.Max(1, (int)Math.Floor(Math.Max(0, ActualHeight - 2 * ContentInset) / _metrics.CellHeight));
         if (columns == _requestedColumns && rows == _requestedRows && _rowVisuals.Length == rows)
         {
             return;

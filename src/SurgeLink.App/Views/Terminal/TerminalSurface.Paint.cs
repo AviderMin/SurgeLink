@@ -37,6 +37,16 @@ internal sealed partial class TerminalSurface
             visibleColumns = Math.Max(1, Math.Min(emulator.Columns, _requestedColumns > 0 ? _requestedColumns : emulator.Columns));
             visibleRows = Math.Min(emulator.Rows, _scratchRows.Length);
             version = emulator.Version;
+            _updatingScrollBar = true;
+            try
+            {
+                _scrollBar.Maximum = emulator.ScrollbackLength;
+                _scrollBar.ViewportSize = emulator.Rows;
+                _scrollBar.LargeChange = Math.Max(1, emulator.Rows - 1);
+                _scrollBar.Value = emulator.ScrollbackLength - emulator.ViewportOffset;
+                _scrollBar.IsEnabled = emulator.ScrollbackLength > 0;
+            }
+            finally { _updatingScrollBar = false; }
 
             if (!_forcePaint && !repaintAll && version == _paintedVersion && visibleColumns == _paintedColumns && visibleRows == _paintedRowCount)
             {

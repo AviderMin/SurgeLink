@@ -9,6 +9,19 @@ public sealed class ScrollbackTests
         return terminal;
     }
 
+    [Theory]
+    [InlineData(0, -2, 2)]
+    [InlineData(1, -1, 3)]
+    [InlineData(2, 0, 4)]
+    public void SelectionCanCopyHistoryAndLiveRowsAcrossViewport(int offset, int first, int last)
+    {
+        var terminal = WithHistory();
+        terminal.Emulator.ScrollViewport(offset);
+        var selection = new TerminalSelection(new TerminalPosition(first, 0), new TerminalPosition(last, 9));
+        Assert.Equal("1\n2\n3\n4\n5", terminal.Emulator.GetSelectionText(selection));
+        Assert.Equal("1\n2\n3\n4\n5", terminal.Emulator.GetSelectionText(new TerminalSelection(selection.End, selection.Start)));
+    }
+
     [Fact]
     public void ScrolledOffLinesAreRetained()
     {

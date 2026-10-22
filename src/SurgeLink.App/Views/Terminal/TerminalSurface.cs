@@ -45,6 +45,10 @@ internal sealed partial class TerminalSurface : ContentControl
     private readonly TerminalBridge _bridge;
     private readonly IAppSettingsStore _settings;
     private readonly ILogger? _logger;
+    private const double ContentInset = 12;
+    private const double ScrollBarWidth = 16;
+    private readonly Microsoft.UI.Xaml.Controls.Primitives.ScrollBar _scrollBar;
+    private bool _updatingScrollBar;
     private readonly Grid _root;
     private readonly Canvas _backgroundLayer;
     private readonly Canvas _textLayer;
@@ -118,6 +122,34 @@ internal sealed partial class TerminalSurface : ContentControl
         _cursorLayer.Children.Add(_cursorGlyph);
 
         _root = new Grid();
+        _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(ScrollBarWidth) });
+        foreach (var layer in new[] { _backgroundLayer, _textLayer, _cursorLayer })
+        {
+            layer.Margin = new Thickness(ContentInset);
+        }
+        _scrollBar = new Microsoft.UI.Xaml.Controls.Primitives.ScrollBar
+        {
+            Orientation = Orientation.Vertical,
+            SmallChange = 1,
+            IsTabStop = false,
+            Width = ScrollBarWidth,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            // Standalone ScrollBar has no ScrollViewer to activate its indicator.
+            IndicatorMode = Microsoft.UI.Xaml.Controls.Primitives.ScrollingIndicatorMode.MouseIndicator,
+        };
+        Grid.SetColumn(_scrollBar, 1);
+        _scrollBar.ValueChanged += (_, args) =>
+        {
+            if (_updatingScrollBar) { return; }
+            var emulator = _bridge.Emulator;
+            lock (emulator.SyncRoot)
+            {
+                ScrollHistory(emulator.ScrollbackLength - (int)Math.Round(args.NewValue) - emulator.ViewportOffset);
+            }
+        };
+        _root.Children.Add(_scrollBar);
         _root.Children.Add(_backgroundLayer);
         _root.Children.Add(_textLayer);
         _root.Children.Add(_cursorLayer);
