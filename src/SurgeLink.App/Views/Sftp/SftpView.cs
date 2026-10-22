@@ -662,7 +662,13 @@ internal sealed class SftpView : Component<SftpViewProps>
                     table.Grid(row: 1))
                 .MinWidth(SftpEntryList.MinimumWidth)
                 .Grid(row: 2),
-            transferPanel.Grid(row: 3),
+            // Put the native host in the bottom row: the transfer component
+            // updates its own root independently as the queue changes.
+            Border(transferPanel)
+                .HAlign(HorizontalAlignment.Stretch)
+                .VAlign(VerticalAlignment.Bottom)
+                .WithKey("transfer-footer")
+                .Grid(row: 3),
             dialogs.Count == 0 ? null : Grid(columns: [GridSize.Star()], rows: [GridSize.Star()], dialogs.ToArray()).Grid(row: 0, rowSpan: 4));
     }
 }
