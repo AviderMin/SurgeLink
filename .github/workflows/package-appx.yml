@@ -23,8 +23,6 @@ jobs:
     name: Check
     runs-on: windows-2025
     timeout-minutes: 20
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -37,7 +35,7 @@ jobs:
 
   package:
     name: Package ${{ matrix.architecture }}
-    needs: test
+    needs: check
     runs-on: windows-2025
     timeout-minutes: 40
     strategy:
