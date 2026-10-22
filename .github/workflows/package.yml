@@ -82,12 +82,10 @@ jobs:
       - name: Upload packages
         uses: actions/upload-artifact@v7
         with:
-          name: SurgeLink-${{ env.RELEASE_VERSION }}-win-${{ matrix.architecture }}
-          path: |
-            ${{ env.PACKAGE_OUTPUT }}/*.appx
-            ${{ env.PACKAGE_OUTPUT }}/*.zip
-            ${{ env.PACKAGE_OUTPUT }}/*.cer
-            ${{ env.PACKAGE_OUTPUT }}/SHA256.txt
+          # The distribution ZIP already contains APPX, certificate and installer.
+          # Upload exactly that file; do not wrap it in another artifact ZIP.
+          # With archive:false, the file name becomes the artifact name.
+          path: ${{ env.PACKAGE_OUTPUT }}/SurgeLink_${{ env.RELEASE_VERSION }}_${{ matrix.architecture }}.zip
+          archive: false
           if-no-files-found: error
-          compression-level: 0
           retention-days: 14

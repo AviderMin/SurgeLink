@@ -11,6 +11,9 @@
 - 先运行 .NET 测试，成功后分别生成两个架构的 APPX 和侧载 ZIP。
 - 在运行详情的 Artifacts 下载对应架构产物，保留 14 天。工作流不创建 GitHub Release，
   也不自动提交 Microsoft Store。无需配置签名 Secrets：使用每次临时生成的开发证书。
+- 每个架构只上传 `SurgeLink_<版本>_<架构>.zip` 一个文件，使用 `archive: false`
+  直接下载已有 ZIP。解压一次即可得到 APPX、公开证书和 `Install.ps1`，没有内层 ZIP，
+  也不会再附带一份重复的 APPX。商店提交所需 APPX 从该 ZIP 提取。
 - ARM64 启动和实际功能仍需在 ARM64 Windows 设备验证。
   上传仅允许安装包、公钥证书和哈希，
   不上传整个构建目录或私钥。
