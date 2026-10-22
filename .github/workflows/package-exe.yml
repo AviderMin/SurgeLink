@@ -20,7 +20,7 @@ defaults:
 
 jobs:
   check:
-    name: Validate and test
+    name: Check
     runs-on: windows-2025
     timeout-minutes: 20
     outputs:
