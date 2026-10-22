@@ -1,0 +1,135 @@
+name: Package EXE Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Numeric version (e.g. 1.0.2.5); empty uses Directory.Build.props'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  check:
+    name: Validate and test
+    runs-on: windows-2025
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Resolve version
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          $version = $env:REQUESTED_VERSION
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            [xml]$props = Get-Content Directory.Build.props -Raw
+            $version = [string]($props.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+            throw 'Use a numeric version such as 1.0.2.5 or tag v1.0.2.5.'
+          }
+          $parsed = [version]$version
+          if (@($parsed.Major, $parsed.Minor, $parsed.Build, [Math]::Max(0, $parsed.Revision) | Where-Object { $_ -gt 65535 }).Count) {
+            throw 'Version components must be <= 65535.'
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Run unit and conformance tests
+        run: dotnet test SurgeLink.slnx -c Release -p:Platform=x64 --nologo
+
+  package:
+    name: EXE ${{ matrix.architecture }}
+    needs: check
+    runs-on: windows-2025
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [x64, arm64]
+    env:
+      ARCHITECTURE: ${{ matrix.architecture }}
+      RELEASE_VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Locate or install Inno Setup
+        run: |
+          function Find-InnoCompiler {
+            foreach ($root in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
+              foreach ($major in @(7, 6)) {
+                $path = Join-Path $root "Inno Setup $major/ISCC.exe"
+                if (Test-Path -LiteralPath $path) { return $path }
+              }
+            }
+          }
+          $compiler = Find-InnoCompiler
+          if (!$compiler) {
+            choco install innosetup --yes --no-progress --limit-output
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed.' }
+            $compiler = Find-InnoCompiler
+          }
+          if (!$compiler) { throw 'ISCC.exe was not found.' }
+          "ISCC_PATH=$compiler" >> $env:GITHUB_ENV
+      - name: Build self-contained installer
+        run: ./tools/package-exe.ps1 -Version $env:RELEASE_VERSION -Architecture $env:ARCHITECTURE -IsccPath $env:ISCC_PATH
+      - name: Verify installer hash
+        run: |
+          $installer = "artifacts/installer/$env:ARCHITECTURE/SurgeLink-Setup-$env:RELEASE_VERSION-$env:ARCHITECTURE.exe"
+          $expected = (Get-Content -LiteralPath "$installer.sha256" -Raw).Trim()
+          if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ne $expected) {
+            throw 'Installer hash mismatch.'
+          }
+      - name: Smoke test x64 installation and startup
+        if: matrix.architecture == 'x64'
+        run: |
+          $installer = (Resolve-Path "artifacts/installer/x64/SurgeLink-Setup-$env:RELEASE_VERSION-x64.exe").Path
+          $installDir = Join-Path $env:RUNNER_TEMP 'SurgeLink-install-test'
+          $installLog = Join-Path $env:RUNNER_TEMP 'SurgeLink-install.log'
+          $setup = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/NOICONS', "/DIR=`"$installDir`"", "/LOG=`"$installLog`"") -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Installer failed: $($setup.ExitCode). See $installLog" }
+          foreach ($file in @('SurgeLink.pri', 'Microsoft.UI.Xaml.dll', 'coreclr.dll')) {
+            if (!(Test-Path -LiteralPath (Join-Path $installDir $file))) { throw "Installed file missing: $file" }
+          }
+          $probe = Start-Process -FilePath (Join-Path $installDir 'SurgeLink.exe') -WorkingDirectory $installDir -WindowStyle Hidden -PassThru
+          try {
+            if ($probe.WaitForExit(10000)) { throw "Installed application exited: $($probe.ExitCode)" }
+          } finally {
+            if (!$probe.HasExited) { Stop-Process -Id $probe.Id }
+          }
+      - name: Upload EXE
+        uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/installer/${{ matrix.architecture }}/SurgeLink-Setup-${{ env.RELEASE_VERSION }}-${{ matrix.architecture }}.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload SHA256
+        uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/installer/${{ matrix.architecture }}/SurgeLink-Setup-${{ env.RELEASE_VERSION }}-${{ matrix.architecture }}.exe.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 14

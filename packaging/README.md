@@ -92,3 +92,13 @@ EXE 安装器和 APPX 是独立的安装渠道，不会自动迁移 APPX 数据�
 此脚本不执行安装，也不自动签名；ARM64 包仍需在对应设备验证。
 
 EXE 发布检查包含应用自身的 `SurgeLink.pri`，缺失时直接停止打包；仅包含依赖库的 PRI 无法保证 WinUI 正常启动。
+
+### GitHub Actions EXE 打包
+
+工作流 `.github/workflows/package-exe.yml` 在 Actions 中显示为 **Package EXE Installer**。
+支持手动 Run workflow（版本留空读取 `Directory.Build.props`）及推送 `v1.0.2.5` 形式标签触发。
+先执行测试，再在 Windows runner 上分别生成 x64、ARM64 安装包；沿用 `tools/package-exe.ps1`，
+优先使用 runner 自带 Inno Setup，缺失时通过 Chocolatey 安装。
+x64 会实际静默安装并检查程序启动后持续运行十秒，ARM64 为交叉编译，仍需真机验证。
+每个架构的 EXE 和 SHA256 分别作为原始文件上传，保存 14 天；不上传发布目录或创建 GitHub Release。
+此工作流与现有 APPX 工作流独立，推送版本标签时两个工作流都会运行。安装包暂未签名。
