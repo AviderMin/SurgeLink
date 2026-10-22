@@ -72,6 +72,9 @@ internal static class WorkspaceView
                     item.VerticalContentAlignment = VerticalAlignment.Stretch;
                 }
             })
+            // TabViewItem content is left/top aligned by default, which sizes every
+            // session view to its own content and leaves the rest of the pane empty.
+            .FillContentArea()
             .IsAddTabButtonVisible(true)
             .AddTabButtonClick(() => props.NewSession(null))
             // Keep visual order aligned with the store used by selection and close callbacks.

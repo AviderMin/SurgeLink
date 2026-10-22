@@ -47,13 +47,15 @@ internal static class SftpEntryList
         .Set(grid => grid.ColumnSpacing = AppTheme.SpacingM)
         .Padding(AppTheme.SpacingS, 0);
 
-    /// <summary>The file list. Selection and key handling are owned by the caller.</summary>
+    /// <summary>
+    /// The file list. Selection, key handling and the context menu are owned by
+    /// the caller, which subscribes once on the surrounding table area.
+    /// </summary>
     public static Element Body(
         IReadOnlyList<RemoteFileEntry> entries,
         Action<IReadOnlyList<RemoteFileEntry>> selectionChanged,
         Action<RemoteFileEntry> itemClick,
-        Action<object, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs> keyDown,
-        Action<FrameworkElement, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs> contextRequested) =>
+        Action<object, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs> keyDown) =>
         (ListView<RemoteFileEntry>(entries, entry => entry.FullPath, (entry, _) => Row(entry)) with
         {
             // Declare multi-select on the element itself. Setting SelectionMode
@@ -67,11 +69,11 @@ internal static class SftpEntryList
             .OnKeyDown(keyDown)
             .Set(list =>
             {
-                SftpContextMenu.Attach(list, contextRequested);
                 list.HorizontalAlignment = HorizontalAlignment.Stretch;
                 list.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-                // A real footer stays reachable even when the last file fills the viewport.
-                // Use a Control so WinUI raises ContextRequested on the blank surface.
+                // Trailing scroll padding: the last file never sits flush against the
+                // bottom edge. Right clicks here bubble up to the table area that owns
+                // the context menu.
                 var footer = list.Footer as ContentControl ?? new ContentControl
                 {
                     MinHeight = 80,
@@ -80,7 +82,6 @@ internal static class SftpEntryList
                     Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
                     IsTabStop = false,
                 };
-                SftpContextMenu.Attach(footer, contextRequested);
                 list.Footer = footer;
                 if (RowStyle.Value is { } style)
                 {

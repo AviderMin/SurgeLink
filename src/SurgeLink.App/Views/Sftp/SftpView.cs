@@ -24,6 +24,10 @@ internal sealed class SftpView : Component<SftpViewProps>
 {
     private static readonly object[] NoDependencies = Array.Empty<object>();
 
+    // Lets the whole table area receive right clicks, including the blank space
+    // below the last row and the empty-folder surface.
+    private static readonly SolidColorBrush TransparentSurface = new(Microsoft.UI.Colors.Transparent);
+
     public override Element Render()
     {
         var fileSystem = Props.FileSystem;
@@ -472,46 +476,88 @@ internal sealed class SftpView : Component<SftpViewProps>
             }
         }
 
+        /// <summary>
+        /// The single context-menu handler of the table area. Rows, the blank tail
+        /// below the last row and the empty-folder message all raise the bubbling
+        /// <see cref="UIElement.ContextRequested"/> event on the area, so the menu
+        /// no longer depends on which child happens to be under the pointer.
+        /// </summary>
         void ShowContextMenu(FrameworkElement sender, ContextRequestedEventArgs args)
         {
-            if (loading || error is not null) { return; }
-            var list = sender as ListView;
+            if (error is not null) { return; }
+
             var items = Array.Empty<RemoteFileEntry>();
-            if (list is not null)
+            if (HitRow(args.OriginalSource) is { } row)
             {
-                var node = args.OriginalSource as DependencyObject;
-                while (node is not null && node is not ListViewItem && !ReferenceEquals(node, list))
+                var index = row.List.IndexFromContainer(row.Container);
+                if (index >= 0 && index < rows.Count)
                 {
-                    node = VisualTreeHelper.GetParent(node);
-                }
-                if (node is ListViewItem container && list.IndexFromContainer(container) is var index && index >= 0 && index < rows.Count)
-                {
-                    var nativeItem = list.ItemFromContainer(container);
-                    if (!list.SelectedItems.Contains(nativeItem))
+                    var nativeItem = row.List.ItemFromContainer(row.Container);
+                    if (nativeItem is not null && !row.List.SelectedItems.Contains(nativeItem))
                     {
-                        list.SelectedItems.Clear();
-                        list.SelectedItems.Add(nativeItem);
+                        row.List.SelectedItems.Clear();
+                        row.List.SelectedItems.Add(nativeItem);
                     }
-                    items = SelectedEntries(list);
-                }
-                else if (!args.TryGetPosition(sender, out _))
-                {
-                    items = SelectedEntries(list);
+
+                    items = SelectedEntries(row.List);
                 }
             }
+            else if (!args.TryGetPosition(sender, out _) && FindList(sender) is { } list)
+            {
+                // Keyboard request (Shift+F10 or the menu key): act on the selection.
+                items = SelectedEntries(list);
+            }
+
             var menu = new MenuFlyout();
             var available = !pasteRunning.Current;
             SftpContextMenu.Add(menu, Str.T("sftp.menu.cut", "Cut"), "\uE8C6", () => Capture(items, true), available && items.Length > 0);
             SftpContextMenu.Add(menu, Str.T("sftp.menu.copy", "Copy"), "\uE8C8", () => Capture(items, false), available && items.Length > 0);
             SftpContextMenu.Add(menu, items.Length == 0
                 ? Str.T("sftp.menu.pasteHere", "Paste into this folder")
-                : Str.T("sftp.menu.paste", "Paste"), "\uE77F", () => _ = PasteAsync(), available && clipboard.Current.Entries.Count > 0);
+                : Str.T("sftp.menu.paste", "Paste"), "\uE77F", () => _ = PasteAsync(), available && !loading && clipboard.Current.Entries.Count > 0);
             menu.Items.Add(new MenuFlyoutSeparator());
             SftpContextMenu.Add(menu, Str.T("sftp.menu.properties", "Properties"), "\uE946",
                 () => setDialog(new SftpDialogState(SftpDialogKind.Properties, items[0])), items.Length == 1);
             if (args.TryGetPosition(sender, out var position)) { menu.ShowAt(sender, position); }
             else { menu.ShowAt(sender); }
             args.Handled = true;
+        }
+
+        /// <summary>Resolves the file row under the pointer; <c>null</c> for blank space.</summary>
+        static (ListView List, ListViewItem Container)? HitRow(object? source)
+        {
+            var node = source as DependencyObject;
+            while (node is not null)
+            {
+                if (node is ListViewItem item)
+                {
+                    return ItemsControl.ItemsControlFromItemContainer(item) is ListView list ? (list, item) : null;
+                }
+
+                node = VisualTreeHelper.GetParent(node);
+            }
+
+            return null;
+        }
+
+        /// <summary>The file list inside the table area, for requests without a pointer target.</summary>
+        static ListView? FindList(DependencyObject root)
+        {
+            if (root is ListView list)
+            {
+                return list;
+            }
+
+            var children = VisualTreeHelper.GetChildrenCount(root);
+            for (var index = 0; index < children; index++)
+            {
+                if (VisualTreeHelper.GetChild(root, index) is { } child && FindList(child) is { } found)
+                {
+                    return found;
+                }
+            }
+
+            return null;
         }
 
         if (fileSystem is null)
@@ -555,7 +601,21 @@ internal sealed class SftpView : Component<SftpViewProps>
                 .IsClosable(true)
                 .Closed(() => setBanner(null));
 
-        var content = SftpContent.Build(rows, loading, error, setSelected, HandleItemClick, HandleListKey, Refresh, ShowContextMenu);
+        var content = SftpContent.Build(rows, loading, error, setSelected, HandleItemClick, HandleListKey, Refresh);
+
+        // One subscription covers every pixel of the table area: rows, the blank
+        // space below them and the empty-folder surface.
+        var tableCells = new List<Element>(2);
+        if (loading && rows.Count > 0)
+        {
+            // A refresh keeps the rows on screen, so the thin bar is its only hint.
+            tableCells.Add(ProgressIndeterminate().Height(2).Grid(row: 0));
+        }
+
+        tableCells.Add(content.Grid(row: 1));
+        var table = Grid(columns: [GridSize.Star()], rows: [GridSize.Auto, GridSize.Star()], tableCells.ToArray())
+            .Background(TransparentSurface)
+            .Set(grid => SftpContextMenu.Attach(grid, ShowContextMenu));
 
         var transferPanel = SftpTransferPanel.Render(transfers, id => queue.Cancel(id), queue.ClearFinished);
 
@@ -598,7 +658,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                     columns: [GridSize.Star()],
                     rows: [GridSize.Auto, GridSize.Star()],
                     SftpEntryList.Header(sortColumn, ascending, SortBy).Grid(row: 0),
-                    content.Grid(row: 1))
+                    table.Grid(row: 1))
                 .MinWidth(SftpEntryList.MinimumWidth)
                 .Grid(row: 2),
             transferPanel is null ? null : transferPanel.Grid(row: 3),

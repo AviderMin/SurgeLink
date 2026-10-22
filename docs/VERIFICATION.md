@@ -56,9 +56,17 @@ Nobody on this project can look at screenshots, so verification is done through
 $p = Get-Process SurgeLink | Select-Object -First 1
 & ".\tools\dump-uia.ps1" -ProcessId $p.Id -MaxDepth 10 | Out-File artifacts/uia.txt
 
+# SFTP context-menu check: real right clicks, then assertions on the flyout items
+& ".\tools\verify-sftp-menu.ps1"
+
 # pixel statistics of a captured window (colour count, region samples)
 & ".\tools\analyze-image.ps1" -Path artifacts/ui-baseline.png
 ```
+
+A context menu is a native flyout and never shows up in a plain tree dump, so
+`verify-sftp-menu.ps1` drives actual right clicks and then asserts the MenuItem
+nodes. It covers a file row, the blank space below the last row and an empty
+folder (where "Paste into this folder" has to be reachable).
 
 **What good looks like**
 

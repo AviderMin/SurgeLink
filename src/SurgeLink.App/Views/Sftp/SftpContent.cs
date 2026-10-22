@@ -1,6 +1,5 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
-using Microsoft.UI.Reactor.Hosting;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -19,7 +18,11 @@ namespace SurgeLink.App.Views.Sftp;
 /// </summary>
 internal static class SftpContent
 {
-    /// <summary>Renders whatever the current state should show in place of the list.</summary>
+    /// <summary>
+    /// Renders whatever the current state should show inside the table area. The
+    /// caller owns the surrounding surface, so right-click and keyboard handling
+    /// stay in one place.
+    /// </summary>
     public static Element Build(
         IReadOnlyList<RemoteFileEntry> rows,
         bool loading,
@@ -27,10 +30,12 @@ internal static class SftpContent
         Action<IReadOnlyList<RemoteFileEntry>> setSelected,
         Action<RemoteFileEntry> openEntry,
         Action<object, KeyRoutedEventArgs> keyDown,
-        Action refresh,
-        Action<FrameworkElement, ContextRequestedEventArgs> contextRequested)
+        Action refresh)
     {
-        if (loading)
+        // Only the first load of a folder replaces the table with a spinner. A
+        // refresh keeps the previous listing on screen, so selection, scrolling
+        // and the context menu stay usable while the new listing arrives.
+        if (loading && rows.Count == 0)
         {
             return Grid(
                     columns: [GridSize.Star()],
@@ -55,30 +60,17 @@ internal static class SftpContent
 
         if (rows.Count == 0)
         {
-            // A list footer only occupies its desired height. The empty directory
-            // instead owns the entire viewport, including the blank area below text.
-            return new XamlHostElement(() => new ContentControl
-            {
-                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                VerticalContentAlignment = VerticalAlignment.Stretch,
-                Content = new Microsoft.UI.Xaml.Controls.TextBlock
-                {
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Top,
-                    Margin = new Thickness(16),
-                },
-            }, element =>
-            {
-                var surface = (ContentControl)element;
-                ((Microsoft.UI.Xaml.Controls.TextBlock)surface.Content).Text = Str.T("sftp.empty.title", "This folder is empty");
-                SftpContextMenu.Attach(surface, contextRequested);
-            }) { TypeKey = "EmptyDirectorySurface" };
+            return Grid(
+                    columns: [GridSize.Star()],
+                    rows: [GridSize.Star()],
+                    TextBlock(Str.T("sftp.empty.title", "This folder is empty"))
+                        .HAlign(HorizontalAlignment.Center)
+                        .VAlign(VerticalAlignment.Top)
+                        .Margin(AppTheme.SpacingL))
+                .MinHeight(160);
         }
 
-        return SftpEntryList.Body(rows, setSelected, openEntry, keyDown, contextRequested);
+        return SftpEntryList.Body(rows, setSelected, openEntry, keyDown);
     }
 
     /// <summary>Shown when the protocol has no file system at all.</summary>
