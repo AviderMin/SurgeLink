@@ -152,6 +152,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                     if (args.NewState is ConnectionState.Disconnected or ConnectionState.Disconnecting or ConnectionState.Faulted)
                     {
                         lifetime.Cancel();
+                        setLoading(false);
+                        setSaving(false);
                         setError(Str.T("sftp.editor.sessionClosed", "The session has closed. Keep a copy of any unsaved text before closing this window."));
                     }
                 }
@@ -187,15 +189,18 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 cancellationToken.ThrowIfCancellationRequested();
                 setText(content);
                 setSavedText(content);
-                setLoading(false);
             }
             catch (OperationCanceledException)
             {
+                setLoadFailed(true);
             }
             catch (Exception exception)
             {
                 setError(exception.Message);
                 setLoadFailed(true);
+            }
+            finally
+            {
                 setLoading(false);
             }
         }
@@ -230,7 +235,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             finally
             {
                 operationBusy.Current = false;
-                if (!token.IsCancellationRequested) { setSaving(false); }
+                setSaving(false);
             }
         }
 
@@ -292,7 +297,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                         .AutomationName(Str.T("sftp.editor.wordWrap", "Word wrap")),
                     Button(Str.T("sftp.editor.reload", "Reload"), Reload)
                         .SubtleButton()
-                        .IsEnabled(!loading && !saving)
+                        .IsEnabled(!loading && !saving && !lifetime.IsCancellationRequested)
                         .AutomationName(Str.T("sftp.editor.reload", "Reload")),
                     Button(Str.T("sftp.editor.save", "Save"), () => _ = SaveAsync())
                         .AccentButton()
@@ -450,14 +455,17 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 
         return Grid(
             columns: [GridSize.Star()],
-            rows: [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
-            header.Grid(row: 0),
-            searchBar?.Grid(row: 1),
-            body.WithKey("editor-body").Grid(row: 2),
+            rows: [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
+            TitleBar(Str.F("sftp.editor.windowTitle", "{0} — Text editor", target.Name))
+                .Icon(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "AppLogo.png")).AbsoluteUri)
+                .Grid(row: 0),
+            header.Grid(row: 1),
+            searchBar?.Grid(row: 2),
+            body.WithKey("editor-body").Grid(row: 3),
             error is not null && !loadFailed ? InfoBar(Str.T("sftp.editor.saveFailed", "Could not save the file"), error)
-                .Severity(InfoBarSeverity.Error).IsClosable(false).Grid(row: 3) : null,
-            footer.Grid(row: 4),
-            confirmationDialog?.Grid(row: 0, rowSpan: 5))
+                .Severity(InfoBarSeverity.Error).IsClosable(false).Grid(row: 4) : null,
+            footer.Grid(row: 5),
+            confirmationDialog?.Grid(row: 0, rowSpan: 6))
             .OnKeyDown(HandleEditorKey)
             .Background(Theme.LayerFill)
             .RequestedTheme(ThemeController.ToElementTheme(settings.Theme))

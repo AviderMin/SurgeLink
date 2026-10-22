@@ -6,7 +6,18 @@ namespace SurgeLink.App.Views.Monitor;
 /// <summary>Props for <see cref="MonitorView"/>.</summary>
 /// <param name="Monitor">Performance monitor of the session; <c>null</c> when the protocol has none.</param>
 /// <param name="Settings">User preferences; supplies the sampling interval.</param>
-internal sealed record MonitorViewProps(IRemoteSystemMonitor? Monitor, IAppSettingsStore Settings);
+internal sealed record MonitorViewProps(IRemoteSystemMonitor? Monitor, IAppSettingsStore Settings, bool IsActive = true);
+
+/// <summary>Session-owned display state survives native TabView content remounts.</summary>
+internal sealed class MonitorViewState
+{
+    public MonitorHistory History { get; } = new();
+    public bool Paused { get; set; }
+    public SystemSnapshot? Snapshot { get; set; }
+    public IReadOnlyList<RemoteProcessInfo> Processes { get; set; } = Array.Empty<RemoteProcessInfo>();
+    public DateTimeOffset? UpdatedAt { get; set; }
+    public string? Error { get; set; }
+}
 
 /// <summary>
 /// Rolling history behind the charts. Network rates are derived from the

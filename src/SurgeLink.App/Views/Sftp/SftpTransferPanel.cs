@@ -17,6 +17,8 @@ internal sealed class SftpTransferPanel : Component<FileTransferQueue>
 {
     public override Element Render()
     {
+        var locale = SurgeLink.App.Services.AppServices.RequireInitialized.Localization;
+        _ = UseExternalStore(locale.Subscribe, () => locale.Revision);
         var queue = Props;
         var items = UseExternalStore(queue.Subscribe, () => queue.Snapshot);
         return RenderPanel(items, queue.Cancel, queue.ClearFinished) ?? Empty();

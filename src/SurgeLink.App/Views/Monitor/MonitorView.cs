@@ -20,6 +20,7 @@ namespace SurgeLink.App.Views.Monitor;
 internal sealed class MonitorView : Component<MonitorViewProps>
 {
     private static readonly int[] Intervals = [1, 2, 5, 10, 30];
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IRemoteSystemMonitor, MonitorViewState> States = new();
 
     public override Element Render()
     {
@@ -28,18 +29,17 @@ internal sealed class MonitorView : Component<MonitorViewProps>
 
         // Hooks: constant order and count on every render.
         var settings = UseExternalStore(settingsStore.Subscribe, () => settingsStore.Current);
+        var retained = UseMemo(() => monitor is null ? new MonitorViewState() : States.GetOrCreateValue(monitor), monitor!);
 
-        var (snapshot, setSnapshot) = UseState<SystemSnapshot?>(null, threadSafe: true);
-        var (processes, setProcesses) = UseState<IReadOnlyList<RemoteProcessInfo>>(Array.Empty<RemoteProcessInfo>(), threadSafe: true);
-        var (error, setError) = UseState<string?>(null, threadSafe: true);
-        var (updatedAt, setUpdatedAt) = UseState<DateTimeOffset?>(null, threadSafe: true);
-        var (paused, setPaused) = UseState(false);
+        var (snapshot, setSnapshot) = UseState<SystemSnapshot?>(retained.Snapshot, threadSafe: true);
+        var (processes, setProcesses) = UseState(retained.Processes, threadSafe: true);
+        var (error, setError) = UseState<string?>(retained.Error, threadSafe: true);
+        var (updatedAt, setUpdatedAt) = UseState<DateTimeOffset?>(retained.UpdatedAt, threadSafe: true);
+        var (paused, setPaused) = UseState(retained.Paused);
         var (reload, setReload) = UseState(0);
         var sampleRequested = UseRef(false);
         var (wide, setWide) = UseState(false);
-        var historyRef = UseRef<MonitorHistory?>(null);
-        historyRef.Current ??= new MonitorHistory();
-        var history = historyRef.Current;
+        var history = retained.History;
 
         var intervalSeconds = Normalize(settings.MonitorIntervalSeconds);
         var runKey = (paused ? "paused:" : "run:") + reload;
@@ -50,7 +50,7 @@ internal sealed class MonitorView : Component<MonitorViewProps>
                 var target = monitor;
                 var requested = sampleRequested.Current;
                 sampleRequested.Current = false;
-                if (target is null || (paused && !requested))
+                if (target is null || !Props.IsActive || (paused && !requested))
                 {
                     return () => { };
                 }
@@ -84,10 +84,14 @@ internal sealed class MonitorView : Component<MonitorViewProps>
 
                             cancellation.Token.ThrowIfCancellationRequested();
                             clock.Add(sample);
+                            retained.Snapshot = sample;
+                            retained.Processes = top;
+                            retained.Error = null;
+                            retained.UpdatedAt = DateTimeOffset.Now;
                             setSnapshot(sample);
                             setProcesses(top);
                             setError(null);
-                            setUpdatedAt(DateTimeOffset.Now);
+                            setUpdatedAt(retained.UpdatedAt);
                         }
                         catch (OperationCanceledException)
                         {
@@ -100,6 +104,7 @@ internal sealed class MonitorView : Component<MonitorViewProps>
                                 return;
                             }
 
+                            retained.Error = ex.Message;
                             setError(ex.Message);
                         }
 
@@ -122,8 +127,9 @@ internal sealed class MonitorView : Component<MonitorViewProps>
 
                 return () => cancellation.Cancel();
             },
-            monitor,
+            monitor!,
             intervalSeconds,
+            Props.IsActive,
             runKey);
 
         if (monitor is null)
@@ -135,7 +141,7 @@ internal sealed class MonitorView : Component<MonitorViewProps>
             paused,
             intervalSeconds,
             updatedAt,
-            () => setPaused(!paused),
+            () => { retained.Paused = !paused; setPaused(retained.Paused); },
             () =>
             {
                 sampleRequested.Current = true;

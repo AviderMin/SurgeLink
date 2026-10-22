@@ -47,10 +47,9 @@ internal sealed class MainShell : Component
         var snapshot = UseExternalStore(workspace.Subscribe, () => workspace.Snapshot);
         var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
 
-        // The localization service bumps Revision on every language change; the
-        // root element is keyed by it so the whole tree rebuilds with new text.
+        // Subscribe for translated shell text without remounting stateful workspaces.
         var localization = services.Localization;
-        var localeRevision = UseExternalStore(localization.Subscribe, () => localization.Revision);
+        _ = UseExternalStore(localization.Subscribe, () => localization.Revision);
 
         // WinUI terminates the process when an exception escapes a UI callback;
         // record it before that happens so the crash is diagnosable.
@@ -69,6 +68,7 @@ internal sealed class MainShell : Component
         var (settingsRequest, setSettingsRequest) = UseState(0);
         var (aboutOpen, setAboutOpen) = UseState(false);
         var (aboutRequest, setAboutRequest) = UseState(0);
+        var shellModal = UseRef<string?>(null);
         var connectPending = UseRef(false);
         var connectionCancellation = UseRef<CancellationTokenSource?>(null);
 
@@ -84,16 +84,22 @@ internal sealed class MainShell : Component
 
         void OpenEditor(SessionEditorMode mode, SessionProfile? profile)
         {
+            if (shellModal.Current is not null || QueuedDialog.IsBusy(ownerWindow?.NativeWindow)) return;
+            shellModal.Current = "editor";
             setEditor(EditorRequest.Create(mode, profile));
         }
 
         void OpenSettings()
         {
+            if (shellModal.Current is not null || QueuedDialog.IsBusy(ownerWindow?.NativeWindow)) return;
+            shellModal.Current = "settings";
             setSettingsRequest(settingsRequest + 1);
             setSettingsOpen(true);
         }
         void ShowAbout()
         {
+            if (shellModal.Current is not null || QueuedDialog.IsBusy(ownerWindow?.NativeWindow)) return;
+            shellModal.Current = "about";
             setAboutRequest(aboutRequest + 1);
             setAboutOpen(true);
         }
@@ -123,7 +129,7 @@ internal sealed class MainShell : Component
                 var options = suppliedOptions is { Password: not null } ||
                               profile.Authentication == AuthenticationMethod.PublicKey && suppliedOptions is not null
                     ? suppliedOptions
-                    : await BuildConnectOptionsAsync(services, profile);
+                    : await BuildConnectOptionsAsync(services, profile, cancellation.Token);
                 if (options is null)
                 {
                     return;
@@ -168,6 +174,7 @@ internal sealed class MainShell : Component
 
         void SaveProfile(SessionEditorOutcome outcome)
         {
+            shellModal.Current = null;
             setEditor(null);
             workspace.SaveProfile(outcome.Profile, outcome.Credential);
             if (outcome.ConnectAfterSave)
@@ -222,6 +229,7 @@ internal sealed class MainShell : Component
 
         void CloseActiveTab()
         {
+            if (QueuedDialog.IsBusy(ownerWindow?.NativeWindow)) return;
             if (workspace.Snapshot.ActiveTab is { } active)
             {
                 CloseTab(active);
@@ -230,6 +238,7 @@ internal sealed class MainShell : Component
 
         void CycleTab(int delta)
         {
+            if (QueuedDialog.IsBusy(ownerWindow?.NativeWindow)) return;
             var tabs = workspace.Snapshot.Tabs;
             if (tabs.Count < 2)
             {
@@ -359,19 +368,19 @@ internal sealed class MainShell : Component
                     editor.Mode,
                     editor.Existing,
                     SaveProfile,
-                    () => setEditor(null)))
+                    () => { shellModal.Current = null; setEditor(null); }))
                 .WithKey(editor.RequestId.ToString("n"));
             editorOverlay = lastEditor.Current;
         }
 
         var settingsOverlay = settingsOpen
             ? Component<SettingsDialog, SettingsDialogProps>(
-                new SettingsDialogProps(() => setSettingsOpen(false)))
+                new SettingsDialogProps(() => { shellModal.Current = null; setSettingsOpen(false); }))
                 .WithKey("settings-dialog-" + settingsRequest)
             : Empty();
 
         var aboutOverlay = aboutOpen
-            ? Component<AboutDialog, AboutDialogProps>(new AboutDialogProps(() => setAboutOpen(false)))
+            ? Component<AboutDialog, AboutDialogProps>(new AboutDialogProps(() => { shellModal.Current = null; setAboutOpen(false); }))
                 .WithKey("about-dialog-" + aboutRequest)
             : Empty();
 
@@ -397,17 +406,15 @@ internal sealed class MainShell : Component
             () => CycleTab(-1),
             OpenSettings);
 
-        // Keying the root by the locale revision rebuilds the whole tree in the new
-        // language; sessions and terminal state live in the stores, not in the tree.
+        // Keep component identities stable when the language changes.
         return CommandHost(commands, root)
-            .RequestedTheme(ThemeController.ToElementTheme(settings.Theme))
-            .WithKey("locale-" + localeRevision);
+            .RequestedTheme(ThemeController.ToElementTheme(settings.Theme));
     }
 
     private static void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs args) =>
         CrashLog.Write("WinUI", args.Exception);
 
-    private static async Task<ConnectOptions?> BuildConnectOptionsAsync(AppServices services, SessionProfile profile)
+    private static async Task<ConnectOptions?> BuildConnectOptionsAsync(AppServices services, SessionProfile profile, CancellationToken cancellationToken)
     {
         var stored = services.Credentials.Get(profile.Id);
 
@@ -440,7 +447,7 @@ internal sealed class MainShell : Component
                         Str.T("shell.prompt.password.body",
                             "This login is not saved. Enter the password for this session."),
                         IsPassword: true),
-                    CancellationToken.None);
+                    cancellationToken);
 
                 return secret is null ? null : new ConnectOptions { Password = secret };
         }

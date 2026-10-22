@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using SurgeLink.App.Components;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Styling;
+using SurgeLink.App.Shell;
 using SurgeLink.Core.Files;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -25,7 +26,7 @@ internal static class SftpDialogs
         Element Field(string label, string value) => VStack(AppTheme.SpacingXs,
             Caption(label).Foreground(Theme.SecondaryText),
             TextBlock(value).TextWrapping(TextWrapping.Wrap).Set(text => text.IsTextSelectionEnabled = true));
-        return ContentDialog(Str.T("sftp.menu.properties", "Properties"),
+        return QueuedDialog.Wrap(ContentDialog(Str.T("sftp.menu.properties", "Properties"),
             ScrollViewer(VStack(AppTheme.SpacingM,
                 Field(Str.T("sftp.column.name", "Name"), target.Name),
                 Field(Str.T("sftp.properties.path", "Path"), target.FullPath),
@@ -47,12 +48,12 @@ internal static class SftpDialogs
             CloseButtonText = Str.T("common.close", "Close"),
             DefaultButton = ContentDialogButton.Close,
             OnClosed = _ => close(),
-        };
+        });
     }
 
     /// <summary>Create file dialog.</summary>
     public static Element NewFile(bool open, string name, Action<string> setName, Action commit, Action close) =>
-        ContentDialog(
+        QueuedDialog.Wrap(ContentDialog(
                 Str.T("sftp.dialog.newFile.title", "New file"),
                 VStack(
                     AppTheme.SpacingM,
@@ -67,11 +68,11 @@ internal static class SftpDialogs
             CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result => Handle(result, commit, close),
-        };
+        });
 
     /// <summary>Create folder dialog.</summary>
     public static Element NewFolder(bool open, string name, Action<string> setName, Action commit, Action close) =>
-        ContentDialog(
+        QueuedDialog.Wrap(ContentDialog(
                 Str.T("sftp.dialog.newFolder.title", "New folder"),
                 VStack(
                     AppTheme.SpacingM,
@@ -86,11 +87,11 @@ internal static class SftpDialogs
             CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result => Handle(result, commit, close),
-        };
+        });
 
     /// <summary>Rename dialog, pre-filled with the current name.</summary>
     public static Element Rename(bool open, RemoteFileEntry target, string name, Action<string> setName, Action commit, Action close) =>
-        ContentDialog(
+        QueuedDialog.Wrap(ContentDialog(
                 Str.T("sftp.dialog.rename.title", "Rename"),
                 VStack(
                     AppTheme.SpacingM,
@@ -104,11 +105,11 @@ internal static class SftpDialogs
             CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result => Handle(result, commit, close),
-        };
+        });
 
     /// <summary>Delete confirmation dialog; directories are deleted recursively.</summary>
     public static Element Delete(bool open, RemoteFileEntry target, Action commit, Action close) =>
-        ContentDialog(
+        QueuedDialog.Wrap(ContentDialog(
                 Str.T("sftp.dialog.delete.title", "Delete"),
                 VStack(
                     AppTheme.SpacingM,
@@ -123,7 +124,7 @@ internal static class SftpDialogs
             CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Close,
             OnClosed = result => Handle(result, commit, close),
-        };
+        });
 
     /// <summary>POSIX permission editor: nine rwx checkboxes plus the octal preview.</summary>
     public static Element Permissions(
@@ -133,7 +134,7 @@ internal static class SftpDialogs
         Action<int> setMode,
         Action commit,
         Action close) =>
-        ContentDialog(
+        QueuedDialog.Wrap(ContentDialog(
                 Str.T("sftp.dialog.permissions.title", "Permissions"),
                 VStack(
                     AppTheme.SpacingM,
@@ -150,7 +151,7 @@ internal static class SftpDialogs
             CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result => Handle(result, commit, close),
-        };
+        });
 
     private static Element PermissionRow(string label, int readBit, int writeBit, int execBit, int mode, Action<int> setMode) =>
         Grid(

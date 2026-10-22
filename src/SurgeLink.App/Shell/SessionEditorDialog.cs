@@ -146,7 +146,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
         // Keep the buttons enabled: an invalid form cancels the click and shows the
         // InfoBar instead of leaving the user with a dead button and no reason.
-        return dialog
+        return QueuedDialog.Wrap(dialog
             .Set(control =>
             {
                 // Set runs against the live ContentDialog created by the overlay
@@ -156,7 +156,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                 control.RequestedTheme = ThemeController.ToElementTheme(settings.Theme);
                 DialogAutomation.Tag("SessionEditor")(control);
             })
-            .Opened(AttachDialogEvents);
+            .Opened(AttachDialogEvents));
 
         void AttachDialogEvents()
         {

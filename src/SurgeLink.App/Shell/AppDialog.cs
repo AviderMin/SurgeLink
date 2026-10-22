@@ -51,20 +51,11 @@ internal static class AppDialog
             {
                 if (sizingRoot is not null && sizingHandler is not null) { sizingRoot.Changed -= sizingHandler; }
                 nativeDialog?.Resources.Remove("ContentDialogMaxHeight");
-                // Native dialog teardown must finish before a callback removes its component.
-                var dispatcher = DispatcherQueue.GetForCurrentThread();
-                if (dispatcher is null)
-                {
-                    onClosed(result);
-                }
-                else
-                {
-                    dispatcher.TryEnqueue(() => onClosed(result));
-                }
+                onClosed(result);
             },
         };
 
-        return dialog.Set(control =>
+        return QueuedDialog.Wrap(dialog.Set(control =>
         {
             nativeDialog = control;
             control.RequestedTheme = theme;
@@ -91,7 +82,7 @@ internal static class AppDialog
                     DialogAutomation.Tag(automationPrefix)(control);
                 });
             }
-        });
+        }));
     }
 
 }

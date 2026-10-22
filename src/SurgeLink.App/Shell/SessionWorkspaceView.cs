@@ -92,20 +92,29 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
             .MinHeight(56);
 
         var filesVisited = UseRef(false);
+        var monitorVisited = UseRef(false);
+        var terminalVisited = UseRef(false);
         filesVisited.Current |= props.View == SessionViewKind.Files;
-        Element content = props.View switch
-        {
-            SessionViewKind.Files => Empty(),
-            SessionViewKind.Monitor => Component<MonitorView, MonitorViewProps>(
-                new MonitorViewProps(tab.Session.Monitor, services.Settings)),
-            _ => Component<TerminalView, TerminalViewProps>(new TerminalViewProps(tab.Terminal)),
-        };
+        monitorVisited.Current |= props.View == SessionViewKind.Monitor;
+        terminalVisited.Current |= props.View == SessionViewKind.Terminal;
+        var activeTabId = UseExternalStore(services.Workspace.Subscribe, () => services.Workspace.Snapshot.ActiveTabId);
 
         return Grid(
             columns: [GridSize.Star()],
             rows: [GridSize.Auto, GridSize.Star()],
             header.Grid(row: 0),
-            content.WithKey("active-view").Grid(row: 1),
+            terminalVisited.Current
+                ? Border(Component<TerminalView, TerminalViewProps>(new TerminalViewProps(tab.Terminal)))
+                    .IsVisible(props.View == SessionViewKind.Terminal)
+                    .Grid(row: 1).WithKey("terminal-view")
+                : null,
+            monitorVisited.Current
+                ? Border(Component<MonitorView, MonitorViewProps>(new MonitorViewProps(
+                    tab.Session.Monitor, services.Settings,
+                    props.View == SessionViewKind.Monitor && activeTabId == tab.Id)))
+                    .IsVisible(props.View == SessionViewKind.Monitor)
+                    .Grid(row: 1).WithKey("monitor-view")
+                : null,
             filesVisited.Current
                 ? Border(Component<SftpView, SftpViewProps>(
                 new SftpViewProps(
@@ -116,7 +125,7 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
                     tab.FileBrowserPath,
                     path => services.Workspace.SetFileBrowserPath(tab.Id, path), tab.Session)))
                     .IsVisible(props.View == SessionViewKind.Files)
-                    .WithKey("files-view").Grid(row: 1)
+                    .Grid(row: 1).WithKey("files-view")
                 : null);
     }
 

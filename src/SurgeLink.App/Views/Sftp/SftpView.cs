@@ -229,19 +229,7 @@ internal sealed class SftpView : Component<SftpViewProps>
             }
 
             var target = selected[0];
-            ReactorApp.OpenWindow(
-                new WindowSpec
-                {
-                    Title = Str.F("sftp.editor.windowTitle", "{0} — Text editor", target.Name),
-                    Width = 1000,
-                    Height = 720,
-                    MinWidth = 640,
-                    MinHeight = 480,
-                    StartPosition = WindowStartPosition.CenterOnPrimary,
-                    Backdrop = BackdropChoice.Of(OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621) ? BackdropKind.MicaAlt : BackdropKind.None),
-                },
-                _ => Component<FileEditorWindow, FileEditorWindowProps>(
-                    new FileEditorWindowProps(fileSystem, target, settingsStore, Props.Session)));
+            FileEditorWindows.Open(fileSystem, target, settingsStore, Props.Session);
         }
 
         void OpenRename(RemoteFileEntry? entry)

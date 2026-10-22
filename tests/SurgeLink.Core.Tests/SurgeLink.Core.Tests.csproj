@@ -20,5 +20,6 @@
     <Compile Include="..\..\src\SurgeLink.App\Sessions\WorkspaceStore.cs" Link="AppLogic\WorkspaceStore.cs" />
     <Compile Include="..\..\src\SurgeLink.App\Sessions\TerminalBridge.cs" Link="AppLogic\TerminalBridge.cs" />
     <Compile Include="..\..\src\SurgeLink.App\Services\IUiDispatcher.cs" Link="AppLogic\IUiDispatcher.cs" />
+    <Compile Include="..\..\src\SurgeLink.App\Services\ModalQueue.cs" Link="AppLogic\ModalQueue.cs" />
   </ItemGroup>
 </Project>
