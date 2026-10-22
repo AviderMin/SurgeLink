@@ -1,4 +1,4 @@
-name: Package EXE Installer
+name: Package Installer
 
 on:
   workflow_dispatch:
@@ -57,7 +57,7 @@ jobs:
         run: dotnet test SurgeLink.slnx -c Release -p:Platform=x64 --nologo
 
   package:
-    name: EXE ${{ matrix.architecture }}
+    name: ${{ matrix.architecture }}
     needs: check
     runs-on: windows-2025
     timeout-minutes: 40
@@ -119,7 +119,7 @@ jobs:
           } finally {
             if (!$probe.HasExited) { Stop-Process -Id $probe.Id }
           }
-      - name: Upload EXE
+      - name: Upload Installer
         uses: actions/upload-artifact@v7
         with:
           path: artifacts/installer/${{ matrix.architecture }}/SurgeLink-Setup-${{ env.RELEASE_VERSION }}-${{ matrix.architecture }}.exe

@@ -95,7 +95,7 @@ EXE 发布检查包含应用自身的 `SurgeLink.pri`，缺失时直接停止打
 
 ### GitHub Actions EXE 打包
 
-工作流 `.github/workflows/package-exe.yml` 在 Actions 中显示为 **Package EXE Installer**。
+工作流 `.github/workflows/package-exe.yml` 在 Actions 中显示为 **Package Installer**。
 支持手动 Run workflow（版本留空读取 `Directory.Build.props`）及推送 `v1.0.2.5` 形式标签触发。
 先执行测试，再在 Windows runner 上分别生成 x64、ARM64 安装包；沿用 `tools/package-exe.ps1`，
 优先使用 runner 自带 Inno Setup，缺失时通过 Chocolatey 安装。
