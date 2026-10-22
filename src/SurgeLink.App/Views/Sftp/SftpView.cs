@@ -59,19 +59,10 @@ internal sealed class SftpView : Component<SftpViewProps>
             clipboard.Current = (fileSystem, Array.Empty<RemoteFileEntry>(), false);
         }
 
-        // The queue belongs to the session tab, not to this component: switching
-        // to Monitor/Terminal (or rebuilding the tree for a language change)
-        // unmounts the view while transfers keep running. The snapshot is the
-        // only thing the view owns; cancel and clear go straight to the queue.
-        var transfers = UseExternalStore(queue.Subscribe, () => queue.Snapshot);
-
-        // Ordinary file operations are view-scoped work: cancel them when this
-        // view unmounts so a dialog command cannot outlive its list.
+        var selections = UseRef(new System.Collections.Concurrent.ConcurrentDictionary<string, string[]>());
+        var restoringSelection = UseRef(false);
+        // Ordinary file operations are cancelled when the session view unmounts.
         var operationLifetime = UseRef<CancellationTokenSource?>(null);
-        // ItemClick is the reliable input path for a WinUI ListView; the
-        // platform's DoubleTapped event is swallowed by the item container.
-        // Track two clicks on the same row to preserve Explorer-style opening.
-        var lastClick = UseRef<(string Path, DateTime At)>((string.Empty, DateTime.MinValue));
         UseEffect(
             () =>
             {
@@ -101,7 +92,6 @@ internal sealed class SftpView : Component<SftpViewProps>
                 var cancellation = new CancellationTokenSource();
                 var target = requestedPath;
                 setLoading(true);
-                setSelected(Array.Empty<RemoteFileEntry>());
                 _ = Task.Run(async () =>
                 {
                     try
@@ -117,10 +107,13 @@ internal sealed class SftpView : Component<SftpViewProps>
 
                         setCwd(path);
                         Props.PathChanged?.Invoke(path);
+                        var paths = selections.Current.TryGetValue(path, out var saved) ? saved : Array.Empty<string>();
+                        var restored = listing.Where(entry => paths.Contains(entry.FullPath, StringComparer.Ordinal)).ToArray();
+                        selections.Current[path] = restored.Select(entry => entry.FullPath).ToArray();
+                        setSelected(restored);
                         setEntries(listing);
                         setError(null);
                         setLoading(false);
-                        setSelected(Array.Empty<RemoteFileEntry>());
                     }
                     catch (OperationCanceledException)
                     {
@@ -144,9 +137,8 @@ internal sealed class SftpView : Component<SftpViewProps>
             refreshToken);
 
         // A completion banner is view-local chrome; it is subscribed only while
-        // this view is mounted, so a transfer that ends while the user is on
-        // another tab still lands in the queue snapshot without touching an
-        // unmounted component's state.
+        // this view is mounted. Progress updates belong to the child panel;
+        // only completion updates the browser's banner.
         UseEffect(
             () =>
             {
@@ -179,7 +171,6 @@ internal sealed class SftpView : Component<SftpViewProps>
         void Refresh()
         {
             setLoading(true);
-            setSelected(Array.Empty<RemoteFileEntry>());
             setRefreshToken(Guid.NewGuid());
         }
 
@@ -230,22 +221,6 @@ internal sealed class SftpView : Component<SftpViewProps>
             if (entry.IsDirectory)
             {
                 Navigate(entry.FullPath);
-            }
-        }
-
-        void HandleItemClick(RemoteFileEntry entry)
-        {
-            var now = DateTime.UtcNow;
-            var previous = lastClick.Current;
-            if (previous.Path == entry.FullPath &&
-                now - previous.At <= TimeSpan.FromMilliseconds(500))
-            {
-                lastClick.Current = (string.Empty, DateTime.MinValue);
-                OpenEntry(entry);
-            }
-            else
-            {
-                lastClick.Current = (entry.FullPath, now);
             }
         }
 
@@ -601,7 +576,33 @@ internal sealed class SftpView : Component<SftpViewProps>
                 .IsClosable(true)
                 .Closed(() => setBanner(null));
 
-        var content = SftpContent.Build(rows, loading, error, setSelected, HandleItemClick, HandleListKey, Refresh);
+        // Reconciliation may remove old native items and emit SelectionChanged.
+        // Keep those notifications from replacing the saved paths with an empty set.
+        restoringSelection.Current = true;
+        void SelectionChanged(IReadOnlyList<RemoteFileEntry> items)
+        {
+            if (restoringSelection.Current || loading) { return; }
+            selections.Current[cwd] = items.Select(entry => entry.FullPath).ToArray();
+            setSelected(items);
+        }
+        void RestoreSelection(ListView list)
+        {
+            try
+            {
+                var paths = selected.Select(entry => entry.FullPath).ToHashSet(StringComparer.Ordinal);
+                for (var index = 0; index < rows.Count && index < list.Items.Count; index++)
+                {
+                    var item = list.Items[index];
+                    if (paths.Contains(rows[index].FullPath))
+                    {
+                        if (!list.SelectedItems.Contains(item)) { list.SelectedItems.Add(item); }
+                    }
+                    else { list.SelectedItems.Remove(item); }
+                }
+            }
+            finally { restoringSelection.Current = false; }
+        }
+        var content = SftpContent.Build(rows, loading, error, SelectionChanged, OpenEntry, HandleListKey, Refresh, RestoreSelection);
 
         // One subscription covers every pixel of the table area: rows, the blank
         // space below them and the empty-folder surface.
@@ -617,7 +618,7 @@ internal sealed class SftpView : Component<SftpViewProps>
             .Background(TransparentSurface)
             .Set(grid => SftpContextMenu.Attach(grid, ShowContextMenu));
 
-        var transferPanel = SftpTransferPanel.Render(transfers, id => queue.Cancel(id), queue.ClearFinished);
+        var transferPanel = Component<SftpTransferPanel, FileTransferQueue>(queue);
 
         var dialogs = new List<Element>();
         if (dialog.Kind == SftpDialogKind.NewFile)
@@ -661,7 +662,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                     table.Grid(row: 1))
                 .MinWidth(SftpEntryList.MinimumWidth)
                 .Grid(row: 2),
-            transferPanel is null ? null : transferPanel.Grid(row: 3),
+            transferPanel.Grid(row: 3),
             dialogs.Count == 0 ? null : Grid(columns: [GridSize.Star()], rows: [GridSize.Star()], dialogs.ToArray()).Grid(row: 0, rowSpan: 4));
     }
 }

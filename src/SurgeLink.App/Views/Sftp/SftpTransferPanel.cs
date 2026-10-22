@@ -13,10 +13,17 @@ namespace SurgeLink.App.Views.Sftp;
 /// The transfer queue panel: one row per file with progress and a cancel
 /// button. Transfers are sequential, so the panel doubles as the queue view.
 /// </summary>
-internal static class SftpTransferPanel
+internal sealed class SftpTransferPanel : Component<FileTransferQueue>
 {
+    public override Element Render()
+    {
+        var queue = Props;
+        var items = UseExternalStore(queue.Subscribe, () => queue.Snapshot);
+        return RenderPanel(items, queue.Cancel, queue.ClearFinished) ?? Empty();
+    }
+
     /// <summary>Renders the panel; returns <c>null</c> when there is nothing to show.</summary>
-    public static Element? Render(IReadOnlyList<TransferItem> items, Action<string> cancel, Action clearFinished)
+    private static Element? RenderPanel(IReadOnlyList<TransferItem> items, Action<string> cancel, Action clearFinished)
     {
         if (items.Count == 0)
         {

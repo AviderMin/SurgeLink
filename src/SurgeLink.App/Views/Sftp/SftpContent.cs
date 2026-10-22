@@ -30,7 +30,8 @@ internal static class SftpContent
         Action<IReadOnlyList<RemoteFileEntry>> setSelected,
         Action<RemoteFileEntry> openEntry,
         Action<object, KeyRoutedEventArgs> keyDown,
-        Action refresh)
+        Action refresh,
+        Action<ListView> restoreSelection)
     {
         // Only the first load of a folder replaces the table with a spinner. A
         // refresh keeps the previous listing on screen, so selection, scrolling
@@ -70,7 +71,7 @@ internal static class SftpContent
                 .MinHeight(160);
         }
 
-        return SftpEntryList.Body(rows, setSelected, openEntry, keyDown);
+        return SftpEntryList.Body(rows, setSelected, openEntry, keyDown, restoreSelection);
     }
 
     /// <summary>Shown when the protocol has no file system at all.</summary>

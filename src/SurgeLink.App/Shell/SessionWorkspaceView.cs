@@ -20,7 +20,8 @@ internal sealed record SessionViewProps(WorkspaceTab Tab, ConnectionState State,
 
 /// <summary>
 /// One session tab: a capability switcher (Terminal / Files / Monitor) plus the
-/// active view. Views are keyed by kind so their state survives tab switches.
+/// active view. The file browser stays mounted after its first visit so its
+/// selection and native scroll position survive capability switches.
 /// </summary>
 internal sealed class SessionWorkspaceView : Component<SessionViewProps>
 {
@@ -83,16 +84,11 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
             .Padding(AppTheme.SpacingM, AppTheme.SpacingS)
             .MinHeight(56);
 
+        var filesVisited = UseRef(false);
+        filesVisited.Current |= props.View == SessionViewKind.Files;
         Element content = props.View switch
         {
-            SessionViewKind.Files => Component<SftpView, SftpViewProps>(
-                new SftpViewProps(
-                    tab.Session.FileSystem,
-                    tab.Profile,
-                    services.Settings,
-                    tab.Transfers,
-                    tab.FileBrowserPath,
-                    path => services.Workspace.SetFileBrowserPath(tab.Id, path), tab.Session)),
+            SessionViewKind.Files => Empty(),
             SessionViewKind.Monitor => Component<MonitorView, MonitorViewProps>(
                 new MonitorViewProps(tab.Session.Monitor, services.Settings)),
             _ => Component<TerminalView, TerminalViewProps>(new TerminalViewProps(tab.Terminal)),
@@ -102,7 +98,19 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
             columns: [GridSize.Star()],
             rows: [GridSize.Auto, GridSize.Star()],
             header.Grid(row: 0),
-            content.Grid(row: 1));
+            content.WithKey("active-view").Grid(row: 1),
+            filesVisited.Current
+                ? Border(Component<SftpView, SftpViewProps>(
+                new SftpViewProps(
+                    tab.Session.FileSystem,
+                    tab.Profile,
+                    services.Settings,
+                    tab.Transfers,
+                    tab.FileBrowserPath,
+                    path => services.Workspace.SetFileBrowserPath(tab.Id, path), tab.Session)))
+                    .IsVisible(props.View == SessionViewKind.Files)
+                    .WithKey("files-view").Grid(row: 1)
+                : null);
     }
 
     private static Element Box() => Border(Empty()).Flex(grow: 1, basis: 0);

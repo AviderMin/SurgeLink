@@ -55,7 +55,8 @@ internal static class SftpEntryList
         IReadOnlyList<RemoteFileEntry> entries,
         Action<IReadOnlyList<RemoteFileEntry>> selectionChanged,
         Action<RemoteFileEntry> itemClick,
-        Action<object, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs> keyDown) =>
+        Action<object, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs> keyDown,
+        Action<ListView> restoreSelection) =>
         (ListView<RemoteFileEntry>(entries, entry => entry.FullPath, (entry, _) => Row(entry)) with
         {
             // Declare multi-select on the element itself. Setting SelectionMode
@@ -65,10 +66,11 @@ internal static class SftpEntryList
             SelectionMode = ListViewSelectionMode.Extended,
         })
             .SelectionChanged(selectionChanged)
-            .ItemClick(itemClick)
             .OnKeyDown(keyDown)
             .Set(list =>
             {
+                SftpListInput.Attach(list, entries, itemClick);
+                restoreSelection(list);
                 list.HorizontalAlignment = HorizontalAlignment.Stretch;
                 list.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                 // Trailing scroll padding: the last file never sits flush against the
@@ -83,7 +85,7 @@ internal static class SftpEntryList
                     IsTabStop = false,
                 };
                 list.Footer = footer;
-                if (RowStyle.Value is { } style)
+                if (RowStyle.Value is { } style && !ReferenceEquals(list.ItemContainerStyle, style))
                 {
                     list.ItemContainerStyle = style;
                 }
