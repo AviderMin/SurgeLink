@@ -55,7 +55,7 @@ SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github
 
 ### 系统要求
 
-- Windows 11 22H2（内部版本 22621）或更新版本。
+- Windows 10 22H2（内部版本 19045）或更新版本。
 - 提供 **x64**、**ARM64** 两种安装包，请按设备架构选择。
 - 分发包包含 .NET 与 Windows App SDK 运行库，无需安装 .NET SDK。
 

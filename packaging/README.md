@@ -65,7 +65,7 @@ x64 保持输出到 `artifacts/appx`；ARM64 输出到 `artifacts/appx/arm64`。
 
 打包参数支持 `-Version 1.0.2` 或四段版本号；已完成发布时 `-SkipPublish` 可仅重打包。版本覆盖参数同时传递给 .NET 发布，避免应用内版本和包版本不一致。
 
-默认 x64 Release，面向 Windows 11 22H2（10.0.22621）及以上，包含 .NET 和 Windows App SDK 运行库。应用 ICO、标题栏及关于页、安装包图标统一使用 `docs/LOGO.png`；ICO 由 `tools/make-icon.ps1` 生成。MakePRI 合并资源到 `resources.pri`，并检查 Reactor 启动资源；MakeAppx 执行包校验，SignTool 使用开发证书签名。
+默认 x64 Release，面向 Windows 10 22H2（10.0.19045）及以上，包含 .NET 和 Windows App SDK 运行库。应用 ICO、标题栏及关于页、安装包图标统一使用 `docs/LOGO.png`；ICO 由 `tools/make-icon.ps1` 生成。MakePRI 合并资源到 `resources.pri`，并检查 Reactor 启动资源；MakeAppx 执行包校验，SignTool 使用开发证书签名。
 
 开发私钥仅用于此次签名，临时 PFX 完成后删除。每次重打包生成新证书，安装脚本会绑定本次证书指纹与 APPX 哈希；请分发同一个 ZIP 内的配套文件。此签名适合开发测试，公开发行应使用正式签名渠道。
 
@@ -86,7 +86,7 @@ pwsh -NoProfile -File tools/package-exe.ps1 -Architecture arm64
 使用 `-PublishOnly` 可仅发布完整运行目录，不需要 Inno Setup。
 
 脚本每次使用新的 staging 目录发布 Release，将 .NET、Windows App SDK、资源及许可说明一起打包。
-安装器面向 Windows 11 22H2 及以上，默认按当前用户安装到 `%LOCALAPPDATA%\Programs\SurgeLink`，
+安装器面向 Windows 10 22H2 及以上，默认按当前用户安装到 `%LOCALAPPDATA%\Programs\SurgeLink`，
 创建开始菜单入口、可选桌面快捷方式以及卸载入口；卸载保留 `%LOCALAPPDATA%\SurgeLink` 中的用户数据。
 EXE 安装器和 APPX 是独立的安装渠道，不会自动迁移 APPX 数据或卸载 APPX。
 此脚本不执行安装，也不自动签名；ARM64 包仍需在对应设备验证。

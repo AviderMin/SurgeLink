@@ -238,7 +238,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                     MinWidth = 640,
                     MinHeight = 480,
                     StartPosition = WindowStartPosition.CenterOnPrimary,
-                    Backdrop = BackdropChoice.Of(BackdropKind.MicaAlt),
+                    Backdrop = BackdropChoice.Of(OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621) ? BackdropKind.MicaAlt : BackdropKind.None),
                 },
                 _ => Component<FileEditorWindow, FileEditorWindowProps>(
                     new FileEditorWindowProps(fileSystem, target, settingsStore, Props.Session)));

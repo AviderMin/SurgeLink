@@ -22,7 +22,7 @@ DefaultDirName={localappdata}\Programs\SurgeLink
 DefaultGroupName=SurgeLink
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-MinVersion=10.0.22621
+MinVersion=10.0.19045
 #if AppArchitecture == "arm64"
 ArchitecturesAllowed=arm64
 ArchitecturesInstallIn64BitMode=arm64

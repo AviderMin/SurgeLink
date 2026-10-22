@@ -31,7 +31,7 @@ public static class Program
                 MinWidth = 960,
                 MinHeight = 600,
                 StartPosition = WindowStartPosition.CenterOnCurrent,
-                Backdrop = BackdropChoice.Of(BackdropKind.Mica),
+                Backdrop = BackdropChoice.Of(OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) ? BackdropKind.Mica : BackdropKind.None),
                 ExtendsContentIntoTitleBar = true,
                 PersistPlacement = true,
                 PersistenceId = "surge-link-main",

@@ -117,3 +117,20 @@ When testing host key handling, switch the server's key and confirm the app show
 ```
 
 Deleting the folder resets the app completely (including saved credentials and trusted keys).
+## Windows 10 compatibility
+
+The minimum OS version is Windows 10 22H2 (build 19045) in the project,
+APPX manifest and Inno Setup installer. The build still targets SDK 22621;
+that SDK target does not set the minimum OS version.
+Main-window Mica and editor-window MicaAlt are disabled on Windows 10.
+
+Validation on 2026-10-22: x64 Release build passed without warnings and all
+802 offline tests passed on Windows 11 build 28000. Windows 10 execution is
+pending; lowering the package minimum does not establish runtime compatibility.
+
+On a Windows 10 22H2 x64 machine, extract the complete distribution ZIP and
+run Install.ps1. Verify installation and launch, light/dark/high-contrast
+backgrounds, title bar and window resizing, an offline Demo session across
+Terminal/Files/Monitor, file editor opening, local upload/download pickers,
+and an SSH connection with file transfer. Check for startup/crash logs.
+Record the exact OS build and results before claiming verified Win10 support.
