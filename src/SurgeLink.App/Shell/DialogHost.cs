@@ -29,6 +29,7 @@ internal sealed class DialogHost : Component
         var services = UseContext(AppServices.ReactorContext)
             ?? throw new InvalidOperationException("The component must be inside the shell service context.");
         var interaction = services.Interaction;
+        var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
         var pending = UseExternalStore(interaction.Subscribe, () => interaction.Current);
 
         // Hooks run unconditionally; this single buffer backs the text and secret
@@ -56,7 +57,11 @@ internal sealed class DialogHost : Component
             _ => BuildMessage((MessageRequest)pending.Request, false, pending, interaction),
         };
 
-        lastDialog.Current = dialog.WithKey(pending.Id.ToString("n"));
+        // ContentDialog is hosted in a popup and does not inherit the shell's
+        // RequestedTheme. Apply the current preference to every queued prompt.
+        lastDialog.Current = dialog
+            .RequestedTheme(ThemeController.ToElementTheme(settings.Theme))
+            .WithKey(pending.Id.ToString("n"));
         return lastDialog.Current;
     }
 
