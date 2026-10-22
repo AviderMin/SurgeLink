@@ -16,6 +16,7 @@ public static class ZhData
         ["sftp.menu.cut"] = "剪切",
         ["sftp.menu.copy"] = "复制",
         ["sftp.menu.paste"] = "粘贴",
+        ["sftp.menu.pasteHere"] = "粘贴到此目录",
         ["sftp.menu.properties"] = "属性",
         ["sftp.clipboard.ready"] = "已选取 {0} 个项目，请打开目标文件夹后粘贴。",
         ["sftp.clipboard.working"] = "正在粘贴…",

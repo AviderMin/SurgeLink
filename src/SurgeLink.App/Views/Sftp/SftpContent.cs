@@ -58,7 +58,7 @@ internal static class SftpContent
         {
             return Grid(
                 columns: [GridSize.Star()],
-                rows: [GridSize.Star()],
+                rows: [GridSize.Star(), GridSize.Auto],
                 VStack(
                         AppTheme.SpacingS,
                         Icon(FontIcon("\uE8B7", fontSize: 32)),
@@ -74,7 +74,8 @@ internal static class SftpContent
                             .Margin(0, AppTheme.SpacingS, 0, 0))
                     .HAlign(HorizontalAlignment.Center)
                     .VAlign(VerticalAlignment.Center)
-                    .Grid(row: 0, column: 0))
+                    .Grid(row: 0, column: 0),
+                SftpEntryList.Body(rows, setSelected, openEntry, keyDown, contextRequested).Grid(row: 1))
                 .Background(Theme.LayerFill)
                 .OnKeyDown(keyDown)
                 .Set(grid => SftpContextMenu.Attach(grid, contextRequested));

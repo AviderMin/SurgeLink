@@ -503,7 +503,9 @@ internal sealed class SftpView : Component<SftpViewProps>
             var available = !pasteRunning.Current;
             SftpContextMenu.Add(menu, Str.T("sftp.menu.cut", "Cut"), "\uE8C6", () => Capture(items, true), available && items.Length > 0);
             SftpContextMenu.Add(menu, Str.T("sftp.menu.copy", "Copy"), "\uE8C8", () => Capture(items, false), available && items.Length > 0);
-            SftpContextMenu.Add(menu, Str.T("sftp.menu.paste", "Paste"), "\uE77F", () => _ = PasteAsync(), available && clipboard.Current.Entries.Count > 0);
+            SftpContextMenu.Add(menu, items.Length == 0
+                ? Str.T("sftp.menu.pasteHere", "Paste into this folder")
+                : Str.T("sftp.menu.paste", "Paste"), "\uE77F", () => _ = PasteAsync(), available && clipboard.Current.Entries.Count > 0);
             menu.Items.Add(new MenuFlyoutSeparator());
             SftpContextMenu.Add(menu, Str.T("sftp.menu.properties", "Properties"), "\uE946",
                 () => setDialog(new SftpDialogState(SftpDialogKind.Properties, items[0])), items.Length == 1);

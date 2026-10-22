@@ -69,6 +69,19 @@ internal static class SftpEntryList
             {
                 SftpContextMenu.Attach(list, contextRequested);
                 list.HorizontalAlignment = HorizontalAlignment.Stretch;
+                list.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                // A real footer stays reachable even when the last file fills the viewport.
+                // Use a Control so WinUI raises ContextRequested on the blank surface.
+                var footer = list.Footer as ContentControl ?? new ContentControl
+                {
+                    MinHeight = 80,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                    IsTabStop = false,
+                };
+                SftpContextMenu.Attach(footer, contextRequested);
+                list.Footer = footer;
                 if (RowStyle.Value is { } style)
                 {
                     list.ItemContainerStyle = style;
