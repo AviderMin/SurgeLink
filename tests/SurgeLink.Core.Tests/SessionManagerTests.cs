@@ -379,6 +379,34 @@ public sealed class SessionManagerTests
     }
 
     [Fact]
+    public async Task ConnectionCompletingAfterDisposeIsRejectedAndReleased()
+    {
+        await using var harness = new Harness();
+        var ready = new TaskCompletionSource<IProtocolSession>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeProtocolSession(harness.Plugin.Descriptor);
+        harness.Plugin.AsyncSessionFactory = (_, _) => ready.Task;
+        var opening = harness.Manager.OpenAsync(Profile(), null, CancellationToken.None);
+        await harness.Manager.DisposeAsync();
+        ready.SetResult(session);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => opening);
+        Assert.Empty(harness.Manager.Sessions);
+        Assert.Equal(1, session.DisposeCount);
+        Assert.Equal(0, harness.OpenedCount);
+    }
+
+    [Fact]
+    public async Task FailingOpenedSubscriberDoesNotLeakConnection()
+    {
+        await using var harness = new Harness();
+        var session = new FakeProtocolSession(harness.Plugin.Descriptor);
+        harness.Plugin.SessionFactory = _ => session;
+        harness.Manager.SessionOpened += (_, _) => throw new IOException("subscriber failed");
+        await Assert.ThrowsAsync<IOException>(() => harness.Manager.OpenAsync(Profile(), null, CancellationToken.None));
+        Assert.Empty(harness.Manager.Sessions);
+        Assert.Equal(1, session.DisposeCount);
+    }
+
+    [Fact]
     public async Task OpenAfterDisposeThrowsObjectDisposedException()
     {
         await using var harness = new Harness();

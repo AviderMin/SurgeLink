@@ -151,11 +151,12 @@ public sealed class WorkspaceStore
     public async Task<WorkspaceTab> OpenAsync(SessionProfile profile, ConnectOptions? options, CancellationToken cancellationToken)
     {
         Update(s => s with { IsConnecting = true }, force: true);
+        IProtocolSession? session = null;
+        TerminalBridge? terminal = null;
+        WorkspaceTab? openingTab = null;
         try
         {
-            var session = await _sessions.OpenAsync(profile, options, cancellationToken);
-
-            TerminalBridge? terminal = null;
+            session = await _sessions.OpenAsync(profile, options, cancellationToken);
             if (session.Terminal is { } remoteTerminal)
             {
                 terminal = new TerminalBridge(remoteTerminal, _dispatcher, _logger);
@@ -163,6 +164,7 @@ public sealed class WorkspaceStore
             }
 
             var tab = new WorkspaceTab(Guid.NewGuid(), profile, session, terminal, new FileTransferQueue(_logger));
+            openingTab = tab;
             session.StateChanged += OnSessionStateChanged;
             await ProbeHostInfoAsync(tab, session);
 
@@ -187,6 +189,24 @@ public sealed class WorkspaceStore
 
             _logger.LogInformation("Session {Name} opened", profile.Name);
             return tab;
+        }
+        catch
+        {
+            if (session is not null) { session.StateChanged -= OnSessionStateChanged; }
+            if (openingTab is not null)
+            {
+                try { await openingTab.Transfers.DisposeAsync(); } catch (Exception ex) { _logger.LogDebug(ex, "Opening queue cleanup failed."); }
+            }
+            if (terminal is not null)
+            {
+                try { await terminal.DisposeAsync(); } catch (Exception ex) { _logger.LogDebug(ex, "Opening terminal cleanup failed."); }
+            }
+            if (session is not null)
+            {
+                try { await _sessions.CloseAsync(session.SessionId); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Opening session cleanup failed."); }
+            }
+            throw;
         }
         finally
         {

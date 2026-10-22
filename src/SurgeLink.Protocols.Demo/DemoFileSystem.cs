@@ -179,6 +179,22 @@ public sealed class DemoFileSystem : IRemoteFileSystem
         }
     }
 
+    public Task CommitWriteAsync(string temporaryPath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            var destination = PosixPath.Normalize(destinationPath, _current);
+            var parent = Resolve(PosixPath.Parent(destination));
+            var name = PosixPath.Name(destination);
+            if (parent.Children.TryGetValue(name, out var existing) && (!overwrite || existing.IsDirectory))
+            {
+                throw new IOException("Destination already exists or is a directory.");
+            }
+            return RenameAsync(temporaryPath, destination, cancellationToken);
+        }
+    }
+
     /// <inheritdoc />
     public Task SetPermissionsAsync(string path, int unixMode, CancellationToken cancellationToken)
     {

@@ -18,7 +18,8 @@ internal sealed record SftpViewProps(
     IAppSettingsStore Settings,
     FileTransferQueue Transfers,
     string? InitialPath = null,
-    Action<string>? PathChanged = null);
+    Action<string>? PathChanged = null,
+    IProtocolSession? Session = null);
 
 /// <summary>Columns the file list can be sorted by.</summary>
 internal enum SftpSortColumn

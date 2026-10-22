@@ -73,6 +73,9 @@ internal sealed class SshFileSystem : IRemoteFileSystem, IAsyncDisposable
     public Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken) =>
         ExecuteAsync((fileSystem, token) => fileSystem.DeleteAsync(path, recursive, token), cancellationToken);
 
+    public Task CommitWriteAsync(string temporaryPath, string destinationPath, bool overwrite, CancellationToken cancellationToken) =>
+        ExecuteAsync((fileSystem, token) => fileSystem.CommitWriteAsync(temporaryPath, destinationPath, overwrite, token), cancellationToken);
+
     /// <inheritdoc />
     public Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken) =>
         ExecuteAsync((fileSystem, token) => fileSystem.RenameAsync(sourcePath, destinationPath, token), cancellationToken);

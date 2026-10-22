@@ -174,6 +174,48 @@ public sealed class FileTransferQueueTests
         await queue.DisposeAsync();
     }
 
+    [Fact]
+    public async Task DownloadDoesNotOverwriteExistingLocalFile()
+    {
+        using var temp = new TempDirectory();
+        var destination = temp.File("same.txt");
+        await File.WriteAllTextAsync(destination, "original");
+        var fs = new FakeFileSystem();
+        fs.Files["/remote/new"] = Encoding.UTF8.GetBytes("replacement");
+        await using var queue = new FileTransferQueue();
+        var item = Download("/remote/new", destination, 11);
+        queue.Enqueue(item, fs);
+        Assert.True(await WaitAsync(() => item.Status == TransferStatus.Failed));
+        Assert.Equal("original", await File.ReadAllTextAsync(destination));
+        Assert.Empty(Directory.GetFiles(temp.Root, ".surge-*.tmp"));
+    }
+
+    [Fact]
+    public async Task InterruptedDownloadDoesNotLeavePartialDestination()
+    {
+        using var temp = new TempDirectory();
+        var fs = new FakeFileSystem { OpenReadOverride = (_, _) => Task.FromResult<Stream>(new FailingReadStream()) };
+        await using var queue = new FileTransferQueue();
+        var destination = temp.File("interrupted.txt");
+        var item = Download("/remote/file", destination, 1024);
+        queue.Enqueue(item, fs);
+        Assert.True(await WaitAsync(() => item.Status == TransferStatus.Failed));
+        Assert.False(File.Exists(destination));
+        Assert.Empty(Directory.GetFiles(temp.Root, ".surge-*.tmp"));
+    }
+
+    private sealed class FailingReadStream : MemoryStream
+    {
+        private bool _read;
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_read) { throw new IOException("connection dropped"); }
+            _read = true;
+            buffer.Span[0] = 42;
+            return ValueTask.FromResult(1);
+        }
+    }
+
     private static TransferItem Download(string remotePath, string localPath, long totalBytes) => new()
     {
         Id = Guid.NewGuid().ToString("n"),

@@ -92,7 +92,7 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
                     services.Settings,
                     tab.Transfers,
                     tab.FileBrowserPath,
-                    path => services.Workspace.SetFileBrowserPath(tab.Id, path))),
+                    path => services.Workspace.SetFileBrowserPath(tab.Id, path), tab.Session)),
             SessionViewKind.Monitor => Component<MonitorView, MonitorViewProps>(
                 new MonitorViewProps(tab.Session.Monitor, services.Settings)),
             _ => Component<TerminalView, TerminalViewProps>(new TerminalViewProps(tab.Terminal)),

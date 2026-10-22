@@ -14,5 +14,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SurgeLink.Core\SurgeLink.Core.csproj" />
+    <ProjectReference Include="..\..\src\SurgeLink.Terminal\SurgeLink.Terminal.csproj" />
+    <!-- Exercise UI-independent workspace ownership with the actual application sources. -->
+    <Compile Include="..\..\src\SurgeLink.App\Sessions\WorkspaceStore.cs" Link="AppLogic\WorkspaceStore.cs" />
+    <Compile Include="..\..\src\SurgeLink.App\Sessions\TerminalBridge.cs" Link="AppLogic\TerminalBridge.cs" />
+    <Compile Include="..\..\src\SurgeLink.App\Services\IUiDispatcher.cs" Link="AppLogic\IUiDispatcher.cs" />
   </ItemGroup>
 </Project>

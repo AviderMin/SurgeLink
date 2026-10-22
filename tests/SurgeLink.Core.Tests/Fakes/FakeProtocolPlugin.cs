@@ -32,6 +32,8 @@ internal sealed class FakeProtocolPlugin : IProtocolPlugin
     /// <summary>Overrides the session returned on success.</summary>
     public Func<ConnectionRequest, IProtocolSession>? SessionFactory { get; set; }
 
+    public Func<ConnectionRequest, CancellationToken, Task<IProtocolSession>>? AsyncSessionFactory { get; set; }
+
     /// <inheritdoc />
     public Task<IProtocolSession> ConnectAsync(
         ConnectionRequest request,
@@ -51,6 +53,8 @@ internal sealed class FakeProtocolPlugin : IProtocolPlugin
         {
             return Task.FromException<IProtocolSession>(Failure);
         }
+
+        if (AsyncSessionFactory is { } factory) { return factory(request, cancellationToken); }
 
         IProtocolSession session = SessionFactory?.Invoke(request) ?? new FakeProtocolSession(Descriptor);
         return Task.FromResult(session);

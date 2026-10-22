@@ -17,6 +17,7 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
     private readonly object _gate = new();
     private readonly List<IProtocolSession> _sessions = new();
     private bool _disposed;
+    private readonly CancellationTokenSource _lifetime = new();
 
     /// <summary>Creates a manager over a protocol catalog and credential store.</summary>
     public SessionManager(
@@ -53,7 +54,13 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
     public async Task<IProtocolSession> OpenAsync(SessionProfile profile, ConnectOptions? options, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(profile);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        CancellationTokenSource connectionLifetime;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        }
+        using var connection = connectionLifetime;
 
         var plugin = _catalog.Get(profile.ProtocolId);
         var request = BuildRequest(profile, plugin.Descriptor, options);
@@ -65,16 +72,34 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
             request.Username,
             plugin.Descriptor.Id);
 
-        var session = await plugin.ConnectAsync(request, _hostContext, cancellationToken).ConfigureAwait(false);
-        session.StateChanged += OnSessionStateChanged;
-
+        var session = await plugin.ConnectAsync(request, _hostContext, connection.Token).ConfigureAwait(false);
+        var accepted = false;
         lock (_gate)
         {
-            _sessions.Add(session);
+            if (!_disposed && !connection.IsCancellationRequested)
+            {
+                session.StateChanged += OnSessionStateChanged;
+                _sessions.Add(session);
+                accepted = true;
+            }
         }
-
-        SessionOpened?.Invoke(this, new SessionOpenedEventArgs(profile, session));
-        return session;
+        if (!accepted)
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
+            lock (_gate) { ObjectDisposedException.ThrowIf(_disposed, this); }
+            connection.Token.ThrowIfCancellationRequested();
+            throw new OperationCanceledException();
+        }
+        try
+        {
+            SessionOpened?.Invoke(this, new SessionOpenedEventArgs(profile, session));
+            return session;
+        }
+        catch
+        {
+            await CloseCoreAsync(session.SessionId).ConfigureAwait(false);
+            throw;
+        }
     }
 
     /// <inheritdoc />
@@ -163,21 +188,21 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
         IProtocolSession[] snapshot;
         lock (_gate)
         {
+            if (_disposed) { return; }
+            _disposed = true;
             snapshot = _sessions.ToArray();
             _sessions.Clear();
         }
+        try { _lifetime.Cancel(); }
+        catch (AggregateException exception) { _logger.LogWarning(exception, "A connection cancellation callback failed."); }
+        finally { _lifetime.Dispose(); }
 
         foreach (var session in snapshot)
         {
+            session.StateChanged -= OnSessionStateChanged;
             try
             {
                 await session.DisposeAsync().ConfigureAwait(false);

@@ -50,8 +50,18 @@ public sealed class FileTransferQueue : IAsyncDisposable
     public Action Subscribe(Action listener)
     {
         ArgumentNullException.ThrowIfNull(listener);
-        Changed += listener;
-        return () => Changed -= listener;
+        var subscriptionGate = new object();
+        var active = true;
+        void Notify()
+        {
+            lock (subscriptionGate) { if (active) { listener(); } }
+        }
+        Changed += Notify;
+        return () =>
+        {
+            lock (subscriptionGate) { active = false; }
+            Changed -= Notify;
+        };
     }
 
     /// <summary>Adds a job and starts the worker when it is idle.</summary>
@@ -255,50 +265,58 @@ public sealed class FileTransferQueue : IAsyncDisposable
         // protocols that never report still show movement.
         var protocolProgress = new Progress<TransferProgress>(progress => SetDone(item, progress.BytesTransferred));
 
-        await using var target = await fileSystem
-            .OpenWriteAsync(item.RemotePath, item.TotalBytes > 0 ? item.TotalBytes : null, protocolProgress, token)
-            .ConfigureAwait(false);
-
-        var buffer = new byte[BufferSize];
-        long done = 0;
-        int read;
-        while ((read = await source.ReadAsync(buffer, token).ConfigureAwait(false)) > 0)
-        {
-            await target.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
-            done += read;
-            SetDone(item, done);
-        }
-
-        await target.FlushAsync(token).ConfigureAwait(false);
+        await RemoteFileWrite.WriteAsync(fileSystem, item.RemotePath, item.TotalBytes > 0 ? item.TotalBytes : null,
+            protocolProgress, true, async (target, writeToken) =>
+            {
+                var buffer = new byte[BufferSize];
+                long done = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, writeToken).ConfigureAwait(false)) > 0)
+                {
+                    await target.WriteAsync(buffer.AsMemory(0, read), writeToken).ConfigureAwait(false);
+                    done += read;
+                    SetDone(item, done);
+                }
+            }, token).ConfigureAwait(false);
     }
 
     private async Task DownloadAsync(TransferItem item, IRemoteFileSystem fileSystem, CancellationToken token)
     {
-        if (item.LocalPath is null)
+        if (item.LocalPath is null) { throw new InvalidOperationException("Download has no local destination."); }
+        var directory = Path.GetDirectoryName(Path.GetFullPath(item.LocalPath))!;
+        // Validate again at the write boundary, including jobs created outside the UI.
+        var destination = LocalDownloadPath.Resolve(directory, item.Name);
+        if (!string.Equals(destination, Path.GetFullPath(item.LocalPath), StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("Download has no local destination.");
+            throw new IOException("The download destination does not match its file name.");
         }
-
-        var directory = Path.GetDirectoryName(item.LocalPath);
-        if (!string.IsNullOrEmpty(directory))
+        Directory.CreateDirectory(directory);
+        var temporary = Path.Combine(directory, ".surge-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
         {
-            Directory.CreateDirectory(directory);
+            await using var source = await fileSystem.OpenReadAsync(item.RemotePath, token).ConfigureAwait(false);
+            await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, BufferSize, useAsync: true))
+            {
+                var buffer = new byte[BufferSize];
+                long done = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, token).ConfigureAwait(false)) > 0)
+                {
+                    await target.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
+                    done += read;
+                    SetDone(item, done);
+                }
+                await target.FlushAsync(token).ConfigureAwait(false);
+            }
+            token.ThrowIfCancellationRequested();
+            // Refuse concurrent target creation instead of silently overwriting user data.
+            File.Move(temporary, destination, overwrite: false);
         }
-
-        await using var source = await fileSystem.OpenReadAsync(item.RemotePath, token).ConfigureAwait(false);
-        await using var target = new FileStream(item.LocalPath, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize, useAsync: true);
-
-        var buffer = new byte[BufferSize];
-        long done = 0;
-        int read;
-        while ((read = await source.ReadAsync(buffer, token).ConfigureAwait(false)) > 0)
+        finally
         {
-            await target.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
-            done += read;
-            SetDone(item, done);
+            try { File.Delete(temporary); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
-
-        await target.FlushAsync(token).ConfigureAwait(false);
     }
 
     private void SetDone(TransferItem item, long done)

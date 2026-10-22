@@ -138,6 +138,22 @@ produce no test cases, so a terminal-only protocol runs the relevant subset.
 
 ## Reference implementation
 
+### Safe file publication
+
+`OpenWriteAsync` is a low-level stream primitive. Application uploads, copies and editor saves
+use `RemoteFileWrite.WriteAsync` to stage data in the destination directory, flush and close it,
+preserve an existing regular file's Unix mode, then call `CommitWriteAsync`.
+Implement `CommitWriteAsync` as an atomic same-directory replacement when `overwrite` is true.
+When false, it must refuse an existing destination at commit time, including concurrent creation.
+Never emulate replacement by deleting the destination first. The default implementation rejects
+unsupported commits. Failed/cancelled writes attempt to remove only the staging file.
+
+The SSH implementation uses POSIX rename for SFTP replacement and standard no-clobber SFTP
+rename for new files. The SCP fallback uses `mv -fT` for replacement and `ln -T` followed by
+staging-file removal for no-clobber publication. Servers lacking those commands/options or
+hard-link support fail safely. Cancellation during server commit can have an uncertain outcome;
+refresh the directory before retrying. No remote protocol can undo an already completed commit.
+
 `src/SurgeLink.Protocols.Demo` is the smallest complete protocol in the repository:
 
 | File | Shows |

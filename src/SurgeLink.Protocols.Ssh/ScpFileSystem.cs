@@ -208,14 +208,9 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 81920,
                 FileOptions.Asynchronous);
 
-            return new ScpUploadStream(
-                this,
-                client,
-                file,
-                temporaryPath,
-                fullPath,
-                expectedSize,
-                progress);
+            return new DeferredUploadStream(file, temporaryPath,
+                token => UploadFileAsync(client, temporaryPath, fullPath, expectedSize, progress, token),
+                cancellationToken);
         }
         catch (Exception exception)
         {
@@ -259,6 +254,19 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         var command = entry.IsDirectory ? "rmdir " : "rm -f ";
         await RunAsync(runner, command + Quote(fullPath), "delete", fullPath, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task CommitWriteAsync(string temporaryPath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
+    {
+        var source = NormalizePath(temporaryPath);
+        var destination = NormalizePath(destinationPath);
+        var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
+        // -T prevents a directory or symlink-to-directory being treated as a folder
+        // to move/link into. Missing server support must fail rather than overwrite.
+        var command = overwrite
+            ? "mv -fT -- " + Quote(source) + " " + Quote(destination)
+            : "ln -T -- " + Quote(source) + " " + Quote(destination) + " && rm -f -- " + Quote(source);
+        await RunAsync(runner, command, "commit staged file", destination, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -329,11 +337,17 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
             await _transferLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                using var cancelTransfer = cancellationToken.Register(() =>
+                {
+                    try { client.Disconnect(); } catch (Exception) { }
+                });
+                cancellationToken.ThrowIfCancellationRequested();
                 progress?.Report(new TransferProgress(0, expectedSize, remotePath));
                 await Task.Run(
                         () => client.Upload(new FileInfo(localPath), remotePath),
                         cancellationToken)
                     .ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 progress?.Report(new TransferProgress(new FileInfo(localPath).Length, expectedSize, remotePath));
             }
             finally
@@ -343,6 +357,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         }
         catch (Exception exception)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (exception is OperationCanceledException)
             {
                 throw;
@@ -717,110 +732,4 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         }
     }
 
-    private sealed class ScpUploadStream : Stream
-    {
-        private readonly ScpFileSystem _owner;
-        private readonly ScpClient _client;
-        private readonly FileStream _file;
-        private readonly string _temporaryPath;
-        private readonly string _remotePath;
-        private readonly long? _expectedSize;
-        private readonly IProgress<TransferProgress>? _progress;
-        private int _disposed;
-
-        public ScpUploadStream(
-            ScpFileSystem owner,
-            ScpClient client,
-            FileStream file,
-            string temporaryPath,
-            string remotePath,
-            long? expectedSize,
-            IProgress<TransferProgress>? progress)
-        {
-            _owner = owner;
-            _client = client;
-            _file = file;
-            _temporaryPath = temporaryPath;
-            _remotePath = remotePath;
-            _expectedSize = expectedSize;
-            _progress = progress;
-        }
-
-        public override bool CanRead => false;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => _file.Length;
-        public override long Position
-        {
-            get => _file.Position;
-            set => throw new NotSupportedException();
-        }
-
-        public override void Flush() => _file.Flush();
-
-        public override Task FlushAsync(CancellationToken cancellationToken) =>
-            _file.FlushAsync(cancellationToken);
-
-        public override int Read(byte[] buffer, int offset, int count) =>
-            throw new NotSupportedException();
-
-        public override long Seek(long offset, SeekOrigin origin) =>
-            throw new NotSupportedException();
-
-        public override void SetLength(long value) => _file.SetLength(value);
-
-        public override void Write(byte[] buffer, int offset, int count) =>
-            _file.Write(buffer, offset, count);
-
-        public override Task WriteAsync(
-            byte[] buffer,
-            int offset,
-            int count,
-            CancellationToken cancellationToken) =>
-            _file.WriteAsync(buffer, offset, count, cancellationToken);
-
-        public override ValueTask WriteAsync(
-            ReadOnlyMemory<byte> buffer,
-            CancellationToken cancellationToken = default) =>
-            _file.WriteAsync(buffer, cancellationToken);
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                DisposeAsync().AsTask().GetAwaiter().GetResult();
-            }
-
-            base.Dispose(disposing);
-        }
-
-        public override async ValueTask DisposeAsync()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            {
-                return;
-            }
-
-            try
-            {
-                await _file.FlushAsync().ConfigureAwait(false);
-                await _file.DisposeAsync().ConfigureAwait(false);
-                await _owner.UploadFileAsync(
-                        _client,
-                        _temporaryPath,
-                        _remotePath,
-                        _expectedSize,
-                        _progress,
-                        CancellationToken.None)
-                    .ConfigureAwait(false);
-            }
-            finally
-            {
-                TryDelete(_temporaryPath);
-            }
-
-            await base.DisposeAsync().ConfigureAwait(false);
-            GC.SuppressFinalize(this);
-        }
-    }
 }

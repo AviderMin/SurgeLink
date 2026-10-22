@@ -232,6 +232,25 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         }
     }
 
+    public async Task CommitWriteAsync(string temporaryPath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
+    {
+        var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        var source = ResolvePath(client, temporaryPath);
+        var destination = ResolvePath(client, destinationPath);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (overwrite)
+        {
+            // OpenSSH posix-rename is an atomic replacement. If unsupported, fail
+            // without deleting the old target; never emulate with delete + rename.
+            await Task.Run(() => client.RenameFile(source, destination, isPosix: true), cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            // Standard SFTP rename fails when the destination already exists.
+            await client.RenameFileAsync(source, destination, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     /// <inheritdoc />
     public async Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)
     {

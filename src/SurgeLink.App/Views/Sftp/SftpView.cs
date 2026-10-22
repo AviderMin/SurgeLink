@@ -265,7 +265,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                     Backdrop = BackdropChoice.Of(BackdropKind.MicaAlt),
                 },
                 _ => Component<FileEditorWindow, FileEditorWindowProps>(
-                    new FileEditorWindowProps(fileSystem, target, settingsStore)));
+                    new FileEditorWindowProps(fileSystem, target, settingsStore, Props.Session)));
         }
 
         void OpenRename(RemoteFileEntry? entry)
@@ -367,7 +367,8 @@ internal sealed class SftpView : Component<SftpViewProps>
         void HandleListKey(object sender, KeyRoutedEventArgs args)
         {
             var list = sender as ListView;
-            var current = list?.SelectedItems.Count == 1 ? list.SelectedItem as RemoteFileEntry : null;
+            var current = list?.SelectedItems.Count == 1 && list.SelectedIndex >= 0 && list.SelectedIndex < rows.Count
+                ? rows[list.SelectedIndex] : null;
             var control = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)
                 & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
             if (control && args.Key is VirtualKey.C or VirtualKey.X or VirtualKey.V)
@@ -375,7 +376,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 if (!loading && error is null)
                 {
                     if (args.Key == VirtualKey.V) { _ = PasteAsync(); }
-                    else { Capture(list?.SelectedItems.OfType<RemoteFileEntry>().ToArray() ?? Array.Empty<RemoteFileEntry>(), args.Key == VirtualKey.X); }
+                    else { Capture(SelectedEntries(list), args.Key == VirtualKey.X); }
                 }
                 args.Handled = true;
                 return;
@@ -408,6 +409,10 @@ internal sealed class SftpView : Component<SftpViewProps>
                     break;
             }
         }
+
+        RemoteFileEntry[] SelectedEntries(ListView? list) => list is null ? Array.Empty<RemoteFileEntry>()
+            : list.SelectedItems.Select(item => list.Items.IndexOf(item))
+                .Where(index => index >= 0 && index < rows.Count).Select(index => rows[index]).ToArray();
 
         void Capture(IReadOnlyList<RemoteFileEntry> items, bool cut)
         {
@@ -479,18 +484,19 @@ internal sealed class SftpView : Component<SftpViewProps>
                 {
                     node = VisualTreeHelper.GetParent(node);
                 }
-                if (node is ListViewItem container && list.ItemFromContainer(container) is RemoteFileEntry entry)
+                if (node is ListViewItem container && list.IndexFromContainer(container) is var index && index >= 0 && index < rows.Count)
                 {
-                    if (!list.SelectedItems.Contains(entry))
+                    var nativeItem = list.ItemFromContainer(container);
+                    if (!list.SelectedItems.Contains(nativeItem))
                     {
                         list.SelectedItems.Clear();
-                        list.SelectedItems.Add(entry);
+                        list.SelectedItems.Add(nativeItem);
                     }
-                    items = list.SelectedItems.OfType<RemoteFileEntry>().ToArray();
+                    items = SelectedEntries(list);
                 }
                 else if (!args.TryGetPosition(sender, out _))
                 {
-                    items = list.SelectedItems.OfType<RemoteFileEntry>().ToArray();
+                    items = SelectedEntries(list);
                 }
             }
             var menu = new MenuFlyout();

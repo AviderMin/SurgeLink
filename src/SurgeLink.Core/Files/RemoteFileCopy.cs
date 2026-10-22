@@ -53,9 +53,8 @@ public static class RemoteFileCopy
             else
             {
                 await using var input = await fileSystem.OpenReadAsync(from, cancellationToken).ConfigureAwait(false);
-                await using var output = await fileSystem.OpenWriteAsync(to, entry.Size, null, cancellationToken).ConfigureAwait(false);
-                await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
-                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                await RemoteFileWrite.WriteAsync(fileSystem, to, entry.Size, null, false,
+                    (output, token) => input.CopyToAsync(output, token), cancellationToken).ConfigureAwait(false);
             }
         }
     }

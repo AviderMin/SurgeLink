@@ -64,10 +64,8 @@ internal static class SftpOperations
         string path,
         CancellationToken cancellationToken)
     {
-        await using var stream = await fileSystem
-            .OpenWriteAsync(path, expectedSize: 0, progress: null, cancellationToken)
-            .ConfigureAwait(false);
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await RemoteFileWrite.WriteAsync(fileSystem, path, 0, null, false,
+            (_, _) => Task.CompletedTask, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Builds the upload job for a picked local file.</summary>
@@ -92,7 +90,7 @@ internal static class SftpOperations
         Direction = TransferDirection.Download,
         Name = entry.Name,
         RemotePath = entry.FullPath,
-        LocalPath = Path.Combine(localFolder, entry.Name),
+        LocalPath = LocalDownloadPath.Resolve(localFolder, entry.Name),
         TotalBytes = entry.Size,
     };
 }

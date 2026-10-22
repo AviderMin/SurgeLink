@@ -28,7 +28,7 @@ internal sealed class FakeProtocolSession : IProtocolSession
     public RemoteHostInfo HostInfo { get; } = new() { HostName = "fake-host" };
 
     /// <inheritdoc />
-    public IRemoteTerminal? Terminal => null;
+    public IRemoteTerminal? Terminal { get; set; }
 
     /// <inheritdoc />
     public IRemoteFileSystem? FileSystem => null;
