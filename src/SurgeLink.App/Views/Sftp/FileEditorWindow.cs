@@ -316,7 +316,19 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 .Severity(InfoBarSeverity.Error).IsClosable(false).Grid(row: 2) : null,
             footer.Grid(row: 3),
             confirmationDialog?.Grid(row: 0, rowSpan: 4))
-            .RequestedTheme(ThemeController.ToElementTheme(settings.Theme));
+            .Background(Theme.LayerFill)
+            .RequestedTheme(ThemeController.ToElementTheme(settings.Theme))
+            .Set(root =>
+            {
+                // The editor owns a separate window. Theme the host as well as
+                // the editor subtree so the window backdrop does not stay light.
+                var theme = ThemeController.ToElementTheme(settings.Theme);
+                root.RequestedTheme = theme;
+                if (root.XamlRoot?.Content is FrameworkElement windowRoot)
+                {
+                    windowRoot.RequestedTheme = theme;
+                }
+            });
     }
 
     private void AttachEditorScroll(TextBox editor)

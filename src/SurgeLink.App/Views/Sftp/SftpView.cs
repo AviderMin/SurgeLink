@@ -39,12 +39,11 @@ internal sealed class SftpView : Component<SftpViewProps>
         // Hooks: constant order and count on every render.
         var settings = UseExternalStore(settingsStore.Subscribe, () => settingsStore.Current);
 
-        var (requestedPath, setRequestedPath) = UseState<string?>(Props.InitialPath);
+        var (listingRequest, setListingRequest) = UseState((Path: Props.InitialPath, Revision: Guid.Empty));
         var (cwd, setCwd) = UseState(Props.InitialPath ?? "/", threadSafe: true);
         var (entries, setEntries) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>(), threadSafe: true);
         var (loading, setLoading) = UseState(true, threadSafe: true);
         var (error, setError) = UseState<string?>(null, threadSafe: true);
-        var (refreshToken, setRefreshToken) = UseState(Guid.Empty);
         var (sortColumn, setSortColumn) = UseState(SftpSortColumn.Name);
         var (ascending, setAscending) = UseState(true);
         var (selected, setSelected) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>(), threadSafe: true);
@@ -90,7 +89,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 }
 
                 var cancellation = new CancellationTokenSource();
-                var target = requestedPath;
+                var target = listingRequest.Path;
                 setLoading(true);
                 _ = Task.Run(async () =>
                 {
@@ -106,7 +105,6 @@ internal sealed class SftpView : Component<SftpViewProps>
                         }
 
                         setCwd(path);
-                        Props.PathChanged?.Invoke(path);
                         var paths = selections.Current.TryGetValue(path, out var saved) ? saved : Array.Empty<string>();
                         var restored = listing.Where(entry => paths.Contains(entry.FullPath, StringComparer.Ordinal)).ToArray();
                         selections.Current[path] = restored.Select(entry => entry.FullPath).ToArray();
@@ -114,6 +112,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                         setEntries(listing);
                         setError(null);
                         setLoading(false);
+                        Props.PathChanged?.Invoke(path);
                     }
                     catch (OperationCanceledException)
                     {
@@ -133,8 +132,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 return () => cancellation.Cancel();
             },
             fileSystem,
-            requestedPath,
-            refreshToken);
+            listingRequest);
 
         // A completion banner is view-local chrome; it is subscribed only while
         // this view is mounted. Progress updates belong to the child panel;
@@ -171,7 +169,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         void Refresh()
         {
             setLoading(true);
-            setRefreshToken(Guid.NewGuid());
+            setListingRequest((listingRequest.Path, Guid.NewGuid()));
         }
 
         void CloseDialog()
@@ -191,16 +189,15 @@ internal sealed class SftpView : Component<SftpViewProps>
                 return;
             }
 
-            setRequestedPath(normalized);
-            Refresh();
+            // Path and refresh identity are one request: no intermediate reload.
+            setListingRequest((normalized, Guid.NewGuid()));
         }
 
         void GoHome()
         {
             // A null request means "ask the protocol for the home directory" and
             // is how the very first load resolves it too.
-            setRequestedPath(null);
-            Refresh();
+            setListingRequest((null, Guid.NewGuid()));
         }
 
         void SortBy(SftpSortColumn column)
@@ -636,15 +633,13 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         // One subscription covers every pixel of the table area: rows, the blank
         // space below them and the empty-folder surface.
-        var tableCells = new List<Element>(2);
-        if (loading && rows.Count > 0)
-        {
-            // A refresh keeps the rows on screen, so the thin bar is its only hint.
-            tableCells.Add(ProgressIndeterminate().Height(2).Grid(row: 0));
-        }
-
-        tableCells.Add(content.Grid(row: 1));
-        var table = Grid(columns: [GridSize.Star()], rows: [GridSize.Auto, GridSize.Star()], tableCells.ToArray())
+        // Overlay the loading indicator so starting a request never moves rows.
+        var table = Grid(columns: [GridSize.Star()], rows: [GridSize.Star()],
+                content.Grid(row: 0),
+                loading && rows.Count > 0
+                    ? ProgressIndeterminate().Height(2).VAlign(VerticalAlignment.Top)
+                        .WithKey("listing-progress").Grid(row: 0)
+                    : null)
             .Background(TransparentSurface)
             .Set(grid =>
             {
