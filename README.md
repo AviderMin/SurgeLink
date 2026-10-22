@@ -24,6 +24,14 @@ plain C# (no XAML), reconciled onto real WinUI 3 controls.
 The UI is localized: every user-visible string goes through `Str.T("key", "English")` with the
 Chinese copy in `Localization/Zh`. Switching the language in the Settings dialog rebuilds the shell immediately.
 
+Saved sessions show bundled operating-system icons after their first successful
+system probe. Windows, macOS, Linux, Ubuntu, Debian, Fedora, RHEL, CentOS, Rocky,
+AlmaLinux, Arch, openSUSE, Alpine, Kali, Linux Mint and FreeBSD are recognized.
+The detected system is remembered across restarts; changing the host, port or
+protocol clears it. Unknown systems keep the generic connection icon. Icons use
+the current theme foreground and require no runtime downloads. Icon attribution
+and license notices are bundled under `Assets/SystemIcons`.
+
 The app is deliberately **protocol agnostic**: the shell only talks to `IProtocolSession`
 capabilities, so adding Telnet/RDP/Serial/VNC later means adding one project and one
 registration line. See [docs/ADDING-A-PROTOCOL.md](docs/ADDING-A-PROTOCOL.md).

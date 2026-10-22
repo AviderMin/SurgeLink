@@ -24,7 +24,20 @@ in review.
 - Standard page padding is 24; card padding 16; compact toolbar padding 12.
 - Use `Grid` for the window skeleton, `FlexRow`/`FlexColumn` for linear layout, and
   `ScrollView`/`ListView` for content that can overflow. Avoid nested `ScrollViewer`s.
-- Corner radii: 8 for cards and surfaces, 4 for controls.
+- Corner radii are in device-independent pixels (DIP): use `AppTheme.CardRadius`
+  (8) for standalone cards, and `AppTheme.ControlRadius` (4) for custom controls.
+  Reactor `Card(...)` already supplies the canonical 8 DIP radius.
+- Keep native buttons, inputs, list rows, `ContentDialog`, `MenuFlyout` and tooltips
+  on their WinUI templates: controls use 4 DIP; dialogs/flyouts use 8 DIP; tooltips
+  use 4 DIP. Do not override all controls to a single radius.
+- Window outlines belong to Windows/DWM. A maximized or snapped window has square
+  corners; do not simulate a window outline by rounding the root layout.
+- Flush sidebar/status-bar edges, dividers, chart canvases and adjoining surfaces
+  may remain square. Round detached cards, not every layout container.
+- For custom progress bars, draw a continuous rounded track behind the fill;
+  avoid joining two independently rounded segments that expose a seam.
+
+Geometry reference: [Windows geometry](https://learn.microsoft.com/en-us/windows/apps/design/signature-experiences/geometry).
 - Never hard-code window sizes inside views; the shell owns window geometry.
 
 ## Typography

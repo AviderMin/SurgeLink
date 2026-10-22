@@ -3,6 +3,7 @@ using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SurgeLink.App.Localization;
+using SurgeLink.App.Components;
 using SurgeLink.App.Services;
 using SurgeLink.App.Sessions;
 using SurgeLink.App.Styling;
@@ -152,7 +153,7 @@ internal sealed class SidebarView : Component<SidebarProps>
                 Grid(
                     columns: [GridSize.Auto, GridSize.Star()],
                     rows: [GridSize.Auto, GridSize.Auto],
-                    Icon(FontIcon("\uE774", fontSize: 16))
+                    SessionSystemIcon.Render(profile.DetectedOperatingSystem)
                         .VAlign(VerticalAlignment.Center)
                         .Grid(row: 0, rowSpan: 2, column: 0)
                         .Margin(0, 0, AppTheme.SpacingS, 0),
@@ -169,7 +170,8 @@ internal sealed class SidebarView : Component<SidebarProps>
             .HAlign(HorizontalAlignment.Stretch)
             .Set(button => button.HorizontalContentAlignment = HorizontalAlignment.Stretch)
             .MinHeight(AppTheme.RowMinHeight)
-            .ToolTip($"{profile.Name}\n{subtitle}")
+            .ToolTip($"{profile.Name}\n{subtitle}" +
+                (string.IsNullOrWhiteSpace(profile.DetectedOperatingSystem) ? string.Empty : "\n" + profile.DetectedOperatingSystem))
             .AutomationName(profile.Name)
             .AutomationId("Session-" + profile.Id)
             .PositionInSet(position, total)

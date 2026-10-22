@@ -38,6 +38,9 @@ public sealed record SessionProfile
     /// <summary>Accent color tag rendered next to the name.</summary>
     public string? ColorTag { get; init; }
 
+    /// <summary>Last OS description discovered after connecting; used for the saved-session icon.</summary>
+    public string? DetectedOperatingSystem { get; init; }
+
     /// <summary>When the profile was last used, used for "recent" ordering.</summary>
     public DateTimeOffset? LastUsedUtc { get; init; }
 

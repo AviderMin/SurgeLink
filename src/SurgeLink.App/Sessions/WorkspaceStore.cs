@@ -172,6 +172,10 @@ public sealed class WorkspaceStore
             }
 
             var updatedProfile = profile.MarkUsed(DateTimeOffset.UtcNow);
+            if (!string.IsNullOrWhiteSpace(session.HostInfo.OperatingSystem))
+            {
+                updatedProfile = updatedProfile with { DetectedOperatingSystem = session.HostInfo.OperatingSystem };
+            }
             _profiles.Upsert(updatedProfile);
 
             Update(s => s with
@@ -286,6 +290,13 @@ public sealed class WorkspaceStore
     /// <summary>Adds or updates a saved profile.</summary>
     public void SaveProfile(SessionProfile profile, StoredCredential? credential = null)
     {
+        var previous = _profiles.Load().FirstOrDefault(item => item.Id == profile.Id);
+        if (previous is not null &&
+            (!string.Equals(previous.Host, profile.Host, StringComparison.OrdinalIgnoreCase)
+             || previous.Port != profile.Port || previous.ProtocolId != profile.ProtocolId))
+        {
+            profile = profile with { DetectedOperatingSystem = null };
+        }
         _profiles.Upsert(profile);
         if (credential is not null)
         {
