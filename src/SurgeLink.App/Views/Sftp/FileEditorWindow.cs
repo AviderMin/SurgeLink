@@ -50,6 +50,88 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var (error, setError) = UseState<string?>(null, threadSafe: true);
         var (status, setStatus) = UseState<string?>(null, threadSafe: true);
         var (wrap, setWrap) = UseState(true);
+        var (searchOpen, setSearchOpen) = UseState(false);
+        var (replaceOpen, setReplaceOpen) = UseState(false);
+        var (query, setQuery) = UseState(string.Empty);
+        var (replacement, setReplacement) = UseState(string.Empty);
+        var (matchCase, setMatchCase) = UseState(false);
+        var (searchMessage, setSearchMessage) = UseState(string.Empty);
+        var editorRef = UseRef<TextBox?>(null);
+        var focusSearch = UseRef(false);
+        var comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+
+        void OpenSearch(bool replace)
+        {
+            if (editorRef.Current is { SelectionLength: > 0 } editor && !editor.SelectedText.Contains('\n'))
+            {
+                setQuery(editor.SelectedText);
+            }
+            focusSearch.Current = true;
+            setReplaceOpen(replace);
+            setSearchOpen(true);
+        }
+
+        void FindMatch(bool previous = false)
+        {
+            if (editorRef.Current is not { } editor || string.IsNullOrEmpty(query)) { return; }
+            var source = editor.Text;
+            var start = previous ? editor.SelectionStart - 1 : editor.SelectionStart + editor.SelectionLength;
+            var index = LiteralTextSearch.Find(source, query, start, previous, matchCase);
+            if (index < 0)
+            {
+                setSearchMessage(Str.T("sftp.editor.find.none", "No matches"));
+                return;
+            }
+            editor.Select(index, query.Length);
+            setSearchMessage(Str.T("sftp.editor.find.found", "Match selected"));
+        }
+
+        void ReplaceCurrent()
+        {
+            if (editorRef.Current is not { } editor || string.IsNullOrEmpty(query)) { return; }
+            if (string.Equals(editor.SelectedText, query, comparison))
+            {
+                editor.SelectedText = replacement;
+                setText(editor.Text);
+                setStatus(null);
+            }
+            FindMatch();
+        }
+
+        void ReplaceAll()
+        {
+            if (editorRef.Current is not { } editor || string.IsNullOrEmpty(query)) { return; }
+            var source = editor.Text;
+            var updated = source.Replace(query, replacement, comparison);
+            if (source == updated)
+            {
+                setSearchMessage(Str.T("sftp.editor.find.none", "No matches"));
+                return;
+            }
+            editor.Text = updated;
+            setText(updated);
+            setStatus(null);
+            setSearchMessage(Str.T("sftp.editor.find.replaced", "All matches replaced"));
+        }
+
+        void HandleEditorKey(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs args)
+        {
+            var control = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
+                & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+            var shift = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift)
+                & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+            if (control && args.Key == Windows.System.VirtualKey.F) { OpenSearch(false); }
+            else if (control && args.Key == Windows.System.VirtualKey.H) { OpenSearch(true); }
+            else if (args.Key == Windows.System.VirtualKey.F3) { FindMatch(shift); }
+            else if (args.Key == Windows.System.VirtualKey.Escape && searchOpen)
+            {
+                setSearchOpen(false);
+                editorRef.Current?.Focus(FocusState.Programmatic);
+            }
+            else { return; }
+            args.Handled = true;
+        }
+
         UseClosingGuard(() =>
         {
             if (operationBusy.Current)
@@ -201,6 +283,11 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 .Grid(row: 0, column: 0),
             HStack(
                     AppTheme.SpacingS,
+                    Button(Icon(FontIcon("\uE721", fontSize: 16)), () => OpenSearch(false))
+                        .AutomationName(Str.T("sftp.editor.find.title", "Find (Ctrl+F)"))
+                        .SubtleButton().ToolTip(Str.T("sftp.editor.find.title", "Find (Ctrl+F)")),
+                    Button(Str.T("sftp.editor.replace.title", "Replace"), () => OpenSearch(true))
+                        .AutomationName(Str.T("sftp.editor.replace.title", "Replace")).SubtleButton(),
                     ToggleButton(Str.T("sftp.editor.wordWrap", "Word wrap"), wrap, setWrap)
                         .AutomationName(Str.T("sftp.editor.wordWrap", "Word wrap")),
                     Button(Str.T("sftp.editor.reload", "Reload"), Reload)
@@ -272,6 +359,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                             .VAlign(VerticalAlignment.Stretch)
                             .Set(box =>
                             {
+                                editorRef.Current = box;
                                 box.IsSpellCheckEnabled = false;
                                 Microsoft.UI.Xaml.Controls.ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
                                 Microsoft.UI.Xaml.Controls.ScrollViewer.SetHorizontalScrollBarVisibility(box, ScrollBarVisibility.Auto);
@@ -289,6 +377,59 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 .WithBorder(Theme.CardStroke)
                 .CornerRadius(AppTheme.CardRadius);
         }
+
+        Element? searchBar = searchOpen ? Border(
+            VStack(AppTheme.SpacingS,
+                Grid(
+                    columns: [GridSize.Star(), GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Auto],
+                    rows: [GridSize.Auto],
+                    TextBox(Optional<string>.Of(query), value => { setQuery(value); setSearchMessage(string.Empty); },
+                            placeholderText: Str.T("sftp.editor.find.placeholder", "Find in document"))
+                        .AutomationName(Str.T("sftp.editor.find.placeholder", "Find in document"))
+                        .Set(box =>
+                        {
+                            if (focusSearch.Current)
+                            {
+                                focusSearch.Current = false;
+                                box.DispatcherQueue.TryEnqueue(() => { box.Focus(FocusState.Programmatic); box.SelectAll(); });
+                            }
+                        })
+                        .OnKeyDown((_, args) =>
+                        {
+                            if (args.Key == Windows.System.VirtualKey.Enter) { FindMatch(); args.Handled = true; }
+                        }).Grid(column: 0),
+                    ToggleButton("Aa", matchCase, setMatchCase)
+                        .ToolTip(Str.T("sftp.editor.find.case", "Match case"))
+                        .AutomationName(Str.T("sftp.editor.find.case", "Match case")).Grid(column: 1),
+                    Button(Icon(FontIcon("\uE70E", fontSize: 14)), () => FindMatch(true))
+                        .AutomationName(Str.T("sftp.editor.find.previous", "Previous match (Shift+F3)"))
+                        .SubtleButton()
+                        .IsEnabled(query.Length > 0).Grid(column: 2),
+                    Button(Icon(FontIcon("\uE70D", fontSize: 14)), () => FindMatch())
+                        .AutomationName(Str.T("sftp.editor.find.next", "Next match (F3)"))
+                        .SubtleButton()
+                        .IsEnabled(query.Length > 0).Grid(column: 3),
+                    Button(Icon(FontIcon("\uE711", fontSize: 14)), () =>
+                        { setSearchOpen(false); editorRef.Current?.Focus(FocusState.Programmatic); }).SubtleButton()
+                        .AutomationName(Str.T("sftp.editor.find.close", "Close find (Esc)")).Grid(column: 4))
+                    .Set(grid => grid.ColumnSpacing = AppTheme.SpacingS),
+                replaceOpen ? Grid(
+                    columns: [GridSize.Star(), GridSize.Auto, GridSize.Auto], rows: [GridSize.Auto],
+                    TextBox(Optional<string>.Of(replacement), setReplacement,
+                            placeholderText: Str.T("sftp.editor.replace.placeholder", "Replace with"))
+                        .AutomationName(Str.T("sftp.editor.replace.placeholder", "Replace with")).Grid(column: 0),
+                    Button(Str.T("sftp.editor.replace.title", "Replace"), ReplaceCurrent)
+                        .AutomationName(Str.T("sftp.editor.replace.title", "Replace"))
+                        .IsEnabled(query.Length > 0 && !loading && !loadFailed).Grid(column: 1),
+                    Button(Str.T("sftp.editor.replace.all", "Replace all"), ReplaceAll)
+                        .AutomationName(Str.T("sftp.editor.replace.all", "Replace all"))
+                        .IsEnabled(query.Length > 0 && !loading && !loadFailed).Grid(column: 2))
+                    .Set(grid => grid.ColumnSpacing = AppTheme.SpacingS) : null,
+                searchMessage.Length == 0 ? null : Caption(searchMessage).Foreground(Theme.SecondaryText)))
+            .Padding(AppTheme.SpacingL, AppTheme.SpacingS)
+            .Background(Theme.CardBackground)
+            .WithBorder(Theme.CardStroke)
+            .WithKey("editor-search") : null;
 
         var footer = (Grid(
                 columns: [GridSize.Star(), GridSize.Auto, GridSize.Auto],
@@ -309,13 +450,15 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 
         return Grid(
             columns: [GridSize.Star()],
-            rows: [GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
+            rows: [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
             header.Grid(row: 0),
-            body.Grid(row: 1),
+            searchBar?.Grid(row: 1),
+            body.WithKey("editor-body").Grid(row: 2),
             error is not null && !loadFailed ? InfoBar(Str.T("sftp.editor.saveFailed", "Could not save the file"), error)
-                .Severity(InfoBarSeverity.Error).IsClosable(false).Grid(row: 2) : null,
-            footer.Grid(row: 3),
-            confirmationDialog?.Grid(row: 0, rowSpan: 4))
+                .Severity(InfoBarSeverity.Error).IsClosable(false).Grid(row: 3) : null,
+            footer.Grid(row: 4),
+            confirmationDialog?.Grid(row: 0, rowSpan: 5))
+            .OnKeyDown(HandleEditorKey)
             .Background(Theme.LayerFill)
             .RequestedTheme(ThemeController.ToElementTheme(settings.Theme))
             .Set(root =>
