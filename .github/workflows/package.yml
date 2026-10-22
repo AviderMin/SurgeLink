@@ -20,7 +20,7 @@ defaults:
 
 jobs:
   test:
-    name: Test
+    name: Check
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
