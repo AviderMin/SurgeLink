@@ -1,4 +1,4 @@
-name: Package Windows
+name: Package WinAppx
 
 on:
   workflow_dispatch:
