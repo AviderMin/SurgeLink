@@ -1,108 +1,172 @@
 # SurgeLink
 
-A MobaXterm-style **multi-protocol terminal for Windows**, built with **WinUI 3** and
-[**Microsoft.UI.Reactor**](https://github.com/microsoft/microsoft-ui-reactor) — the UI is
-plain C# (no XAML), reconciled onto real WinUI 3 controls.
+**把远程终端、文件管理和系统监控放进同一个 Windows 工作区。**
 
-![SurgeLink main window](docs/images/main-window.png)
+SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH 客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-| Files (SFTP) | Remote monitor |
-|---|---|
-| ![SFTP file manager](docs/images/files-view.png) | ![Remote monitor dashboard](docs/images/monitor-view.png) |
+[功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [文档](#开发文档)
 
-## What it does
+![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
-| Area | Status |
-|---|---|
-| **Terminal** | Own VT100/xterm engine: UTF-8, 16/256/true colour, bold/italic/underline/inverse/strike, wide CJK, scrollback, selection, copy/paste, resize, block/bar/underline cursor, 6 615-cell screen rendered with ~47 UI elements |
-| **Files (SFTP / SCP fallback)** | Remote browser: breadcrumb navigation, sortable listing with permissions, upload/download with progress and cancel, rename, delete, new folder, permission editor, hidden-file toggle. Right-click to cut, copy, paste and inspect properties; Ctrl+X/C/V works within the current file view. Files and folders can be copied between remote folders; existing destinations are rejected and symbolic links are not followed when copying. Uses SFTP when available; falls back to SSH commands + SCP on servers without an SFTP subsystem. |
-| **Monitor** | Remote dashboard: CPU gauge + per-core bars + history, memory/swap, load, uptime, disks, network throughput with sparklines, sortable top processes, pause/resume |
-| **Protocols** | SSH (password, key, keyboard-interactive; TOFU host keys; Linux `/proc` **and Windows OpenSSH** monitoring) plus an offline **Demo** protocol for testing and as the reference implementation |
-| **Shell** | Session sidebar with grouping/search/context menu, tabbed workspaces, capability-driven view switcher, settings, host-key/secret dialogs, crash log, light/dark/High Contrast, encrypted credential storage |
-| **界面语言** | 简体中文 / English / 跟随系统（默认跟随 Windows；设置对话框可随时切换，无需重启） |
+## 功能
 
-The UI is localized: every user-visible string goes through `Str.T("key", "English")` with the
-Chinese copy in `Localization/Zh`. Switching the language in the Settings dialog rebuilds the shell immediately.
+| 功能 | 当前支持 |
+| --- | --- |
+| SSH 连接 | 密码、私钥及键盘交互认证；首次连接确认主机指纹，密钥变化时重新确认 |
+| 终端 | 自研 VT100/xterm 模拟器，支持 UTF-8、中日韩宽字符、16／256／真彩色、滚动历史、文本选择与复制粘贴 |
+| 远程文件 | SFTP 浏览与上传下载；服务器没有 SFTP 子系统时回退到 SSH 命令与 SCP |
+| 文件操作 | 新建文件与文件夹、编辑文本、重命名、删除、权限编辑；右键剪切、复制、粘贴及查看属性 |
+| 传输管理 | 会话内传输队列、进度与取消；切换到终端或监控视图后仍保留队列 |
+| 系统监控 | CPU、内存、交换空间、磁盘、网络和进程；支持 Linux 与 Windows OpenSSH 主机，具体指标取决于服务器能力 |
+| 会话管理 | 分组、筛选、多标签页，以及编辑、复制和删除保存的连接 |
+| 系统图标 | 连接后识别系统并保存图标信息，内置 Windows、macOS、常见 Linux 发行版和 FreeBSD 图标 |
+| 界面 | 简体中文／English／跟随系统，浅色、深色及高对比度主题 |
+| 离线演示 | 模拟终端、内存文件系统和合成监控指标，无需连接外部服务器 |
 
-Saved sessions show bundled operating-system icons after their first successful
-system probe. Windows, macOS, Linux, Ubuntu, Debian, Fedora, RHEL, CentOS, Rocky,
-AlmaLinux, Arch, openSUSE, Alpine, Kali, Linux Mint and FreeBSD are recognized.
-The detected system is remembered across restarts; changing the host, port or
-protocol clears it. Unknown systems keep the generic connection icon. Icons use
-the current theme foreground and require no runtime downloads. Icon attribution
-and license notices are bundled under `Assets/SystemIcons`.
+当前实现的协议是 **SSH** 和 **Demo**。协议层可扩展，Telnet、RDP、Serial、VNC 等尚未实现。
 
-The app is deliberately **protocol agnostic**: the shell only talks to `IProtocolSession`
-capabilities, so adding Telnet/RDP/Serial/VNC later means adding one project and one
-registration line. See [docs/ADDING-A-PROTOCOL.md](docs/ADDING-A-PROTOCOL.md).
+## 界面预览
 
-## Requirements
+截图来自当前源码构建的中文界面，使用离线 Demo 会话；其中主机、文件和监控指标均为演示数据。
 
-- Packaged release: Windows 11 22H2 (build 22621) or later, x64
-- .NET 10 SDK
-- The packaged release includes .NET and Windows App SDK; development builds require the matching Windows App Runtime.
+### 远程文件管理
 
-## Build and run
+![远程文件管理](docs/images/files-view.png)
+
+剪切和复制支持多选，粘贴目标为当前远程目录。文件夹支持递归复制；同名目标会提示冲突，复制时不跟随符号链接。Ctrl+X、Ctrl+C、Ctrl+V 可在当前文件视图中使用。
+
+### 系统监控
+
+![远程系统监控](docs/images/monitor-view.png)
+
+### 新建会话
+
+![新建会话表单](docs/images/new-session.png)
+
+连接信息、身份验证和会话整理分别分组；表单内容可滚动，底部保留“保存并连接”“保存”和“取消”。
+
+## 开始使用
+
+### 系统要求
+
+- Windows 11 22H2（内部版本 22621）或更新版本。
+- 提供 **x64**、**ARM64** 两种安装包，请按设备架构选择。
+- 分发包包含 .NET 与 Windows App SDK 运行库，无需安装 .NET SDK。
+
+### 获取安装包
+
+在 [GitHub Actions](https://github.com/AviderMin/SurgeLink/actions/workflows/package.yml) 中选择一次成功的 **Package Windows** 运行，从 Artifacts 下载对应架构的 `SurgeLink_<版本>_<架构>.zip`。下载 Actions 产物通常需要登录 GitHub，且产物有保留期限。
+
+完整解压一次后，目录中包含：
+
+```text
+SurgeLink_<包版本>_<架构>.appx
+SurgeLink-Development.cer
+Install.ps1
+```
+
+在解压目录执行：
 
 ```powershell
+powershell -NoProfile -File .\Install.ps1
+```
+
+这是开发证书签名的侧载包。安装脚本校验文件与证书，必要时通过 UAC 请求将配套公开证书加入 TrustedPeople，再安装 APPX。它不是 Microsoft Store 的安装流程。只检查文件而不安装可使用：
+
+```powershell
+powershell -NoProfile -File .\Install.ps1 -ValidateOnly
+```
+
+详细说明见 [打包与 Microsoft Store 提交](packaging/README.md)。
+
+### 创建连接
+
+1. 点击“新建会话”，选择协议，填写主机、端口和用户名。
+2. 选择密码、私钥或键盘交互认证方式；名称与分组可选。
+3. 点击“保存并连接”，核对远程主机指纹后继续。
+4. 在标签页内切换“终端”“文件”“监控”。
+
+第一次成功获取系统信息后，会话侧栏显示对应图标，并在重启后保留。尚未识别的系统使用通用图标；修改主机、端口或协议会清除旧的识别信息。
+
+没有可连接的服务器时，点击“打开演示会话”即可体验。
+
+## 从源码构建
+
+开发需要 Windows、**.NET 10 SDK** 和匹配的 Windows App SDK 开发依赖；普通开发构建还需要相应的 Windows App Runtime。依赖版本由 `Directory.Packages.props` 统一管理。
+
+```powershell
+git clone https://github.com/AviderMin/SurgeLink.git
+cd SurgeLink
+
 dotnet build SurgeLink.slnx -c Debug -p:Platform=x64
 .\src\SurgeLink.App\bin\x64\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe
 ```
 
-No SSH server needed to explore the app: click **Open demo session** and use the fake shell
-(`help`, `ls`, `colors`), the in-memory SFTP browser and the synthetic monitor.
-
-## Verify
+执行单元测试与协议契约测试：
 
 ```powershell
-dotnet test                                        # 703 tests across 4 suites
-& ".\tools\verify-app.ps1"                        # build + tests + headless UI end-to-end check
+dotnet test SurgeLink.slnx -c Release -p:Platform=x64
 ```
 
-`verify-app.ps1` launches the app, drives it through Windows UI Automation (demo session →
-terminal → files → monitor → session editor) and asserts on the accessibility tree, so it also
-guards accessibility names. Current status: **25/25 checks pass**.
+测试覆盖终端解析、会话与存储、凭据保护、SSH 解析及协议能力契约。测试数量以实际运行结果为准。
 
-## Repository layout
+## 打包与 GitHub Actions
 
+本地生成包含运行库的安装包：
+
+```powershell
+pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2 -Architecture x64
+pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2 -Architecture arm64
 ```
+
+| 架构 | 输出目录 |
+| --- | --- |
+| x64 | `artifacts/appx/` |
+| ARM64 | `artifacts/appx/arm64/` |
+
+[打包工作流](.github/workflows/package.yml) 支持手动运行或推送 `v1.0.2` 形式的数字版本标签。它先运行测试，再分别构建两个架构，每个架构只上传一个分发 ZIP，保留 14 天，不进行二次压缩，也不自动创建 GitHub Release 或提交 Microsoft Store。
+
+打包使用临时生成的开发签名密钥，完成后删除临时 PFX；不需要向仓库提交私钥或配置签名 Secrets。ARM64 包在 x64 runner 上交叉编译，实际启动与功能仍需在 ARM64 设备验证。
+
+## 数据与隐私
+
+连接资料、设置、主机指纹和日志存放于 `%LOCALAPPDATA%\SurgeLink`；打包安装后 Windows 可能重定向此路径。
+
+- 记住的密码和私钥口令通过当前 Windows 用户的 DPAPI 加密保存。
+- 会话资料保存主机、用户名和私钥路径；私钥文件仍保留在用户选择的位置。
+- 日志和崩溃记录保存在本地，可能包含主机名、用户名、路径及错误详情；分享前请检查并脱敏。
+- 应用未内置广告、分析或自动诊断上传服务。
+
+完整说明见 [隐私政策](PRIVACY.md) 和 [安全说明](SECURITY.md)。
+
+## 项目结构
+
+```text
 src/
-  SurgeLink.Core/              protocol-agnostic contracts: sessions, terminal/files/monitor
-                               capabilities, profiles, credential + host key stores, session manager
-  SurgeLink.Terminal/          VT/xterm emulation engine (parser, screen buffer, scrollback, input)
-  SurgeLink.Protocols.Ssh/     SSH implementation (shell channel, SFTP with SCP fallback, Linux + Windows monitor probes)
-  SurgeLink.Protocols.Demo/    offline reference protocol (fake shell, in-memory files, synthetic metrics)
-  SurgeLink.App/               WinUI 3 + Reactor application shell and views
-tests/
-  SurgeLink.Terminal.Tests/          273 engine tests
-  SurgeLink.Protocols.Ssh.Tests/     305 parser/probe/option tests
-  SurgeLink.Core.Tests/               95 store/catalog/session-manager tests
-  SurgeLink.Protocols.Conformance/    30-test protocol conformance kit (Demo fixture)
-tools/                         build, run, UI-automation and image-analysis helpers
-docs/                          architecture, protocol guide, UI guidelines, verification
+  SurgeLink.App/                   WinUI 3 + Reactor 界面与应用服务
+  SurgeLink.Core/                  会话、存储、安全及协议能力接口
+  SurgeLink.Terminal/              VT/xterm 终端模拟引擎
+  SurgeLink.Protocols.Ssh/         SSH、SFTP、SCP 与系统监控
+  SurgeLink.Protocols.Demo/        离线演示协议
+tests/                            单元测试与协议契约测试
+tools/                            构建、打包和开发辅助脚本
+packaging/                        APPX 清单与安装模板
+docs/                             架构、开发指南与界面截图
+.github/workflows/                GitHub Actions 工作流
 ```
 
-## Documentation
+UI 使用 C# 元素树与 Reactor hooks 描述，底层仍是原生 WinUI 控件。协议通过能力接口向界面提供终端、文件和监控功能，新增协议不必重写应用外壳。
 
-- [Architecture](docs/ARCHITECTURE.md) — layers, dependency rules, data flow, threading model
-- [Adding a protocol](docs/ADDING-A-PROTOCOL.md) — step-by-step guide, worked example, conformance enrollment
-- [UI guidelines](docs/UI-GUIDELINES.md) — WinUI 3 + Reactor rules used across the app
-- [Verification](docs/VERIFICATION.md) — how the app is built, run and verified (including headless UI checks)
+## 开发文档
 
-## Development conventions
+- [架构与线程模型](docs/ARCHITECTURE.md)
+- [新增协议与契约测试](docs/ADDING-A-PROTOCOL.md)
+- [WinUI 3／Reactor 界面规范](docs/UI-GUIDELINES.md)
+- [开发验证说明](docs/VERIFICATION.md)
+- [打包与商店提交](packaging/README.md)
 
-- `Directory.Packages.props` centralises package versions; `Directory.Build.props` centralises analyzers and nullability.
-- No XAML, no MVVM frameworks, no third-party UI toolkits: React components + hooks only.
-- Every project builds standalone; `dotnet test` covers the protocol-independent logic.
-- Multi-agent build isolation: `tools/agent-build.ps1 -Agent <name>` writes to `artifacts/agent-build/<name>`.
+欢迎通过 [Issues](https://github.com/AviderMin/SurgeLink/issues) 提交问题或功能建议。报告问题时请附上版本、系统架构、复现步骤和经过脱敏的诊断信息。
 
-## License
+## 许可证
 
-See [LICENSE](LICENSE).
-
-## Release and security
-
-- [Packaging and Microsoft Store submission](packaging/README.md)
-- [Privacy policy](PRIVACY.md)
-- [Security and repository hygiene](SECURITY.md)
-- [Pre-release source review](docs/RELEASE-REVIEW.md)
+项目采用 [GNU GPL v2](LICENSE)。内置系统图标的来源、署名与独立许可见 [图标声明](src/SurgeLink.App/Assets/SystemIcons/NOTICE.md)，其他依赖遵循各自的许可条款。
