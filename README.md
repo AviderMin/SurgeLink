@@ -30,9 +30,9 @@ registration line. See [docs/ADDING-A-PROTOCOL.md](docs/ADDING-A-PROTOCOL.md).
 
 ## Requirements
 
-- Windows 10 1809+ (Windows 11 recommended — Mica backdrop, WinUI 3 controls)
+- Packaged release: Windows 11 22H2 (build 22621) or later, x64
 - .NET 10 SDK
-- Windows App Runtime 2.x (installed with the app by the SDK bootstrapper)
+- The packaged release includes .NET and Windows App SDK; development builds require the matching Windows App Runtime.
 
 ## Build and run
 
@@ -99,3 +99,10 @@ docs/                          architecture, protocol guide, UI guidelines, veri
 ## License
 
 See [LICENSE](LICENSE).
+
+## Release and security
+
+- [Packaging and Microsoft Store submission](packaging/README.md)
+- [Privacy policy](PRIVACY.md)
+- [Security and repository hygiene](SECURITY.md)
+- [Pre-release source review](docs/RELEASE-REVIEW.md)

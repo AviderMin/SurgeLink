@@ -17,10 +17,30 @@ if (!$SkipPublish) {
     & dotnet publish (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') `
         -c Release -r win-x64 --self-contained true -p:Platform=x64 `
         -p:WindowsAppSDKSelfContained=true -p:UseSharedCompilation=false `
-        -p:PublishTrimmed=false "-p:Version=$Version" -o $payload -m:1 -v:minimal
+        -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false "-p:Version=$Version" -o $payload -m:1 -v:minimal
     if ($LASTEXITCODE -ne 0) { throw 'Self-contained publish failed.' }
 }
 if (!(Test-Path (Join-Path $payload 'SurgeLink.exe'))) { throw 'Publish output is missing.' }
+
+# Include the project license, privacy policy and source location in binary releases.
+Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $payload 'LICENSE.txt') -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot 'PRIVACY.md') -Destination (Join-Path $payload 'PRIVACY.md') -Force
+$sourceRevision = & git -C $repoRoot rev-parse HEAD
+if ($LASTEXITCODE -ne 0) { throw 'Cannot determine source revision.' }
+@"
+SurgeLink source: https://github.com/AviderMin/SurgeLink
+Build base revision: $sourceRevision
+License: GNU GPL version 2; see LICENSE.txt.
+Publish the complete corresponding release source, including any local changes.
+"@ | Set-Content -LiteralPath (Join-Path $payload 'SOURCE.txt') -Encoding utf8
+# SkipPublish may reuse a payload from an earlier build containing source-path symbols.
+$resolvedPayload = [IO.Path]::GetFullPath($payload).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+Get-ChildItem -LiteralPath $payload -Filter '*.pdb' -Recurse -File | ForEach-Object {
+    if (!$_.FullName.StartsWith($resolvedPayload, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Symbol path is outside the publish payload.'
+    }
+    Remove-Item -LiteralPath $_.FullName -Force
+}
 
 $sdkRoot = Join-Path $env:USERPROFILE '.nuget/packages/microsoft.windows.sdk.buildtools'
 $sdk = Get-ChildItem $sdkRoot -Filter makeappx.exe -Recurse |
