@@ -20,7 +20,10 @@ internal static class AppDialog
         ElementTheme theme = ElementTheme.Default)
     {
         var dialog = ContentDialog(title,
-            ScrollView(content).MaxHeight(420).HorizontalScrollMode(ScrollingScrollMode.Disabled),
+            // ContentDialog's template already owns a ScrollViewer whose height
+            // excludes the title and command area. A nested fixed-height scroll
+            // surface can be clipped when the native dialog constrains its height.
+            Border(content).Padding(0, 0, 0, 24),
             primaryButtonText: primaryText) with
         {
             IsOpen = true,
@@ -53,9 +56,32 @@ internal static class AppDialog
             // template is realized, including the first render of an About dialog.
             if (nativeDialog is { } control)
             {
+                ConfigureNativeScroll(control);
                 DialogAutomation.Tag(automationPrefix)(control);
-                control.DispatcherQueue?.TryEnqueue(() => DialogAutomation.Tag(automationPrefix)(control));
+                control.DispatcherQueue?.TryEnqueue(() =>
+                {
+                    ConfigureNativeScroll(control);
+                    DialogAutomation.Tag(automationPrefix)(control);
+                });
             }
         });
     }
+
+    private static void ConfigureNativeScroll(DependencyObject root)
+    {
+        if (root is ScrollViewer { Name: "ContentScrollViewer" } viewer)
+        {
+            // WinUI disables this template part's scrollbar by default. Let it
+            // scroll the complete settings body above the separate command row.
+            viewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            viewer.VerticalScrollMode = ScrollMode.Enabled;
+            viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            return;
+        }
+        for (var index = 0; index < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            ConfigureNativeScroll(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, index));
+        }
+    }
+
 }

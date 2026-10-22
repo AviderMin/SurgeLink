@@ -35,15 +35,26 @@ if (!$PublishOnly) {
 }
 $outputRoot = Join-Path $repoRoot "artifacts/installer/$Architecture"
 # A fresh staging directory prevents files from earlier releases leaking into the installer.
-$payload = Join-Path $outputRoot ('payload-' + [guid]::NewGuid().ToString('N'))
+$payload = Join-Path ([IO.Path]::GetTempPath()) ('SurgeLink-payload-' + [guid]::NewGuid().ToString('N'))
+$null = New-Item -ItemType Directory -Path $outputRoot -Force
 $null = New-Item -ItemType Directory -Path $payload -Force
+# WinUI self-contained native assets must be regenerated for each staging directory.
+& dotnet clean (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') -c Release -r "win-$Architecture" "-p:Platform=$Architecture" -v:quiet
+if ($LASTEXITCODE -ne 0) { throw 'Release clean failed.' }
 & dotnet publish (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') `
     -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
     -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true `
     -p:PublishTrimmed=false -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false `
     "-p:Version=$Version" -o $payload -m:1 -v:minimal
 if ($LASTEXITCODE -ne 0) { throw 'Self-contained publish failed.' }
-foreach ($required in @('SurgeLink.exe', 'SurgeLink.dll', 'Reactor.pri', 'Microsoft.UI.Xaml.Controls.pri', 'coreclr.dll', 'Assets/AppIcon.ico')) {
+# Some WinUI native framework files reach TargetDir but are omitted from PublishDir.
+# Copy the freshly cleaned/built runtime layout as well as the .NET publish assets.
+$targetDir = & dotnet msbuild (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') -nologo -getProperty:TargetDir -p:Configuration=Release "-p:Platform=$Architecture" "-p:RuntimeIdentifier=win-$Architecture"
+if ($LASTEXITCODE -ne 0) { throw 'Cannot locate the runtime build directory.' }
+Get-ChildItem -LiteralPath ($targetDir | Out-String).Trim() | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $payload -Recurse -Force
+}
+foreach ($required in @('SurgeLink.exe', 'SurgeLink.dll', 'SurgeLink.pri', 'Reactor.pri', 'Microsoft.UI.Xaml.Controls.pri', 'coreclr.dll', 'Microsoft.UI.Xaml.dll', 'Assets/AppIcon.ico')) {
     if (!(Test-Path -LiteralPath (Join-Path $payload $required))) { throw "Publish output is missing $required" }
 }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $payload 'LICENSE.txt')

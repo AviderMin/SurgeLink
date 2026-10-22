@@ -90,3 +90,5 @@ pwsh -NoProfile -File tools/package-exe.ps1 -Architecture arm64
 创建开始菜单入口、可选桌面快捷方式以及卸载入口；卸载保留 `%LOCALAPPDATA%\SurgeLink` 中的用户数据。
 EXE 安装器和 APPX 是独立的安装渠道，不会自动迁移 APPX 数据或卸载 APPX。
 此脚本不执行安装，也不自动签名；ARM64 包仍需在对应设备验证。
+
+EXE 发布检查包含应用自身的 `SurgeLink.pri`，缺失时直接停止打包；仅包含依赖库的 PRI 无法保证 WinUI 正常启动。

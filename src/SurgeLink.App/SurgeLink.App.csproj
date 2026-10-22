@@ -40,4 +40,15 @@
     <ProjectReference Include="..\SurgeLink.Protocols.Ssh\SurgeLink.Protocols.Ssh.csproj" />
   </ItemGroup>
 
+  <!-- The unpackaged WinUI publish pipeline can omit the app's own PRI.
+       It is required at startup even when all referenced-library PRIs exist. -->
+  <Target Name="IncludeApplicationPriInPublish" AfterTargets="ComputeFilesToPublish">
+    <Error Condition="!Exists('$(TargetDir)$(AssemblyName).pri')"
+           Text="The application resource index is missing: $(TargetDir)$(AssemblyName).pri" />
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(TargetDir)$(AssemblyName).pri"
+                             RelativePath="$(AssemblyName).pri"
+                             CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
 </Project>
