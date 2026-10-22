@@ -19,11 +19,28 @@ internal static class AppDialog
         string? closeText = null,
         ElementTheme theme = ElementTheme.Default)
     {
-        var dialog = ContentDialog(title,
-            // ContentDialog's template already owns a ScrollViewer whose height
-            // excludes the title and command area. A nested fixed-height scroll
-            // surface can be clipped when the native dialog constrains its height.
-            Border(content).Padding(0, 0, 0, 24),
+        ScrollViewer? scroll = null;
+        ContentDialog? nativeDialog = null;
+        XamlRoot? sizingRoot = null;
+        Windows.Foundation.TypedEventHandler<XamlRoot, XamlRootChangedEventArgs>? sizingHandler = null;
+        void Resize()
+        {
+            if (nativeDialog?.XamlRoot is not { } root || scroll is null) { return; }
+            // Leave space for the native title, padding, command row and window margins.
+            nativeDialog.Resources["ContentDialogMaxHeight"] = Math.Max(200, root.Size.Height - 48);
+            scroll.MaxHeight = Math.Max(80, Math.Min(480, root.Size.Height - 280));
+        }
+        var body = ScrollViewer(Border(content).Padding(0, 0, 16, 24))
+            .MaxHeight(320)
+            .Set(viewer =>
+            {
+                scroll = viewer;
+                viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+                viewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+                viewer.VerticalScrollMode = ScrollMode.Enabled;
+                Resize();
+            });
+        var dialog = ContentDialog(title, body,
             primaryButtonText: primaryText) with
         {
             IsOpen = true,
@@ -31,6 +48,8 @@ internal static class AppDialog
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result =>
             {
+                if (sizingRoot is not null && sizingHandler is not null) { sizingRoot.Changed -= sizingHandler; }
+                nativeDialog?.Resources.Remove("ContentDialogMaxHeight");
                 // Native dialog teardown must finish before a callback removes its component.
                 var dispatcher = DispatcherQueue.GetForCurrentThread();
                 if (dispatcher is null)
@@ -44,7 +63,6 @@ internal static class AppDialog
             },
         };
 
-        ContentDialog? nativeDialog = null;
         return dialog.Set(control =>
         {
             nativeDialog = control;
@@ -56,32 +74,23 @@ internal static class AppDialog
             // template is realized, including the first render of an About dialog.
             if (nativeDialog is { } control)
             {
-                ConfigureNativeScroll(control);
+                control.RequestedTheme = theme;
+                Resize();
+                if (control.XamlRoot is { } root)
+                {
+                    sizingRoot = root;
+                    sizingHandler = (_, _) => Resize();
+                    root.Changed += sizingHandler;
+                }
                 DialogAutomation.Tag(automationPrefix)(control);
                 control.DispatcherQueue?.TryEnqueue(() =>
                 {
-                    ConfigureNativeScroll(control);
+                    control.RequestedTheme = theme;
+                    Resize();
                     DialogAutomation.Tag(automationPrefix)(control);
                 });
             }
         });
-    }
-
-    private static void ConfigureNativeScroll(DependencyObject root)
-    {
-        if (root is ScrollViewer { Name: "ContentScrollViewer" } viewer)
-        {
-            // WinUI disables this template part's scrollbar by default. Let it
-            // scroll the complete settings body above the separate command row.
-            viewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-            viewer.VerticalScrollMode = ScrollMode.Enabled;
-            viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
-            return;
-        }
-        for (var index = 0; index < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root); index++)
-        {
-            ConfigureNativeScroll(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, index));
-        }
     }
 
 }
