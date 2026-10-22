@@ -53,6 +53,8 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
     {
         var services = UseContext(AppServices.ReactorContext)
             ?? throw new InvalidOperationException("The component must be inside the shell service context.");
+        var pickers = UseContext(WindowStoragePicker.Context)
+            ?? throw new InvalidOperationException("The session editor requires its owning window's storage picker.");
         var props = Props;
         var template = props.Existing;
         var plugins = services.Protocols.Plugins;
@@ -327,16 +329,9 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             return problems;
         }
 
-        // Preview.15's picker helper registers no hook state: it resolves the
-        // owning window and shows the native dialog on the UI thread. The hooks
-        // analyzer cannot see through this local function, so suppress only the
-        // documented picker pattern (docs/guide/hooks.md "Pick files from a
-        // click handler") instead of moving the picker into Render.
-#pragma warning disable REACTOR_HOOKS_001
-        Task<StorageFile?> PickKeyFileAsync() => this.UseFilePickerAsync(new FilePickerOptions(
-            FileTypeFilter: new[] { ".pem", ".key", ".ppk", "*" },
-            CommitButtonText: Str.T("shell.editor.useKey", "Use key")));
-#pragma warning restore REACTOR_HOOKS_001
+        Task<StorageFile?> PickKeyFileAsync() => pickers.PickFileAsync(
+            [".pem", ".key", ".ppk", "*"],
+            Str.T("shell.editor.useKey", "Use key"));
 
         async void BrowseKey()
         {

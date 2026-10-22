@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using SurgeLink.App.Components;
 using SurgeLink.App.Localization;
+using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Files;
 using Windows.System;
@@ -27,6 +28,8 @@ internal sealed class SftpView : Component<SftpViewProps>
         var fileSystem = Props.FileSystem;
         var settingsStore = Props.Settings;
         var queue = Props.Transfers;
+        var pickers = UseContext(WindowStoragePicker.Context)
+            ?? throw new InvalidOperationException("The file manager requires its owning window's storage picker.");
 
         // Hooks: constant order and count on every render.
         var settings = UseExternalStore(settingsStore.Subscribe, () => settingsStore.Current);
@@ -340,25 +343,18 @@ internal sealed class SftpView : Component<SftpViewProps>
                 (fs, token) => SftpOperations.ApplyAsync(current, text, mode, directory, fs, token));
         }
 
-        // The commands are only reachable while the toolbar is rendered, which
-        // happens after the null check below, so the file system exists.
-        // The picker "hooks" only open a dialog and return a task (no hook state
-        // is registered), which is the documented Reactor usage for pickers, so
-        // the hook ordering analyzer is silenced for these two call sites.
+        // The service captures the owning native window once; event callbacks
+        // must not resolve a picker owner from Reactor's transient ActiveHost.
         void Upload()
         {
-#pragma warning disable REACTOR_HOOKS_001
             _ = SftpViewCommands.UploadAsync(
-                fileSystem!, cwd, queue, () => UseFilePickerAsync(new FilePickerOptions()), setBanner);
-#pragma warning restore REACTOR_HOOKS_001
+                fileSystem!, cwd, queue, () => pickers.PickFileAsync(), setBanner);
         }
 
         void Download()
         {
-#pragma warning disable REACTOR_HOOKS_001
             _ = SftpViewCommands.DownloadAsync(
-                fileSystem!, selected, queue, () => UseFolderPickerAsync(new FolderPickerOptions()), setBanner);
-#pragma warning restore REACTOR_HOOKS_001
+                fileSystem!, selected, queue, pickers.PickFolderAsync, setBanner);
         }
 
         void HandleListKey(object sender, KeyRoutedEventArgs args)

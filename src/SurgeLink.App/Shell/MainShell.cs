@@ -33,6 +33,14 @@ internal sealed class MainShell : Component
 
     public override Element Render()
     {
+        // Keep the root window across store-triggered renders, when Reactor's
+        // ambient ActiveHost can be absent or refer to another nested host.
+        var ownerWindow = UseWindow();
+        var pickers = UseRef<WindowStoragePicker?>(null);
+        if (pickers.Current is null && ownerWindow is not null)
+        {
+            pickers.Current = new WindowStoragePicker(ownerWindow.NativeWindow);
+        }
         var services = AppServices.Current
             ?? throw new InvalidOperationException("AppServices must be initialized before the shell mounts.");
         var workspace = services.Workspace;
@@ -354,7 +362,8 @@ internal sealed class MainShell : Component
                 Component<DialogHost>().Grid(row: 0, rowSpan: 3))
             // Provide on the visual root, not on the CommandHost decorator:
             // TabView content and dialog overlays must all see the same graph.
-            .Provide(AppServices.ReactorContext, services);
+            .Provide(AppServices.ReactorContext, services)
+            .Provide(WindowStoragePicker.Context, pickers.Current);
 
         var commands = ShellCommands.Build(
             () => OpenEditor(SessionEditorMode.Create, null),

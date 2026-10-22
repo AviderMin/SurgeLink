@@ -94,7 +94,7 @@ $certificate = $null
 $temporaryPfx = Join-Path $outputRoot "signing-$([Guid]::NewGuid().ToString('N')).pfx"
 try {
     $request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
-        'CN=SurgeLink Development', $rsa,
+        $manifest.Package.Identity.Publisher, $rsa,
         [System.Security.Cryptography.HashAlgorithmName]::SHA256,
         [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
     $request.CertificateExtensions.Add([System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]::new($false, $false, 0, $true))
