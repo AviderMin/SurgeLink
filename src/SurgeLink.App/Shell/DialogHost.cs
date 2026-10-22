@@ -24,6 +24,7 @@ namespace SurgeLink.App.Shell;
 /// </remarks>
 internal sealed class DialogHost : Component
 {
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<PendingInteraction, object> CancellationBindings = new();
     public override Element Render()
     {
         var services = UseContext(AppServices.ReactorContext)
@@ -60,9 +61,43 @@ internal sealed class DialogHost : Component
         // ContentDialog is hosted in a popup and does not inherit the shell's
         // RequestedTheme. Apply the current preference to every queued prompt.
         lastDialog.Current = dialog
+            .Set(control => BindCancellation(control, pending))
             .Set(control => control.RequestedTheme = ThemeController.ToElementTheme(settings.Theme))
             .WithKey(pending.Id.ToString("n"));
         return lastDialog.Current;
+    }
+
+    private static async void BindCancellation(ContentDialog dialog, PendingInteraction pending)
+    {
+        if (!pending.CancellationToken.CanBeCanceled || !CancellationBindings.TryAdd(pending, new object())) return;
+        var isOpen = false;
+        void HideIfOpen()
+        {
+            if (!isOpen || pending.Result.IsCompleted) return;
+            isOpen = false;
+            dialog.Hide();
+        }
+        Windows.Foundation.TypedEventHandler<ContentDialog, ContentDialogOpenedEventArgs> opened = (_, _) =>
+        {
+            isOpen = true;
+            if (pending.CancellationToken.IsCancellationRequested) HideIfOpen();
+        };
+        Windows.Foundation.TypedEventHandler<ContentDialog, ContentDialogClosedEventArgs> closed = (_, _) => isOpen = false;
+        dialog.Opened += opened;
+        dialog.Closed += closed;
+        try
+        {
+            using var registration = pending.CancellationToken.Register(() =>
+                dialog.DispatcherQueue.TryEnqueue(HideIfOpen));
+            await pending.Result;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { CrashLog.Write("DialogCancellation", ex); }
+        finally
+        {
+            dialog.Opened -= opened;
+            dialog.Closed -= closed;
+        }
     }
 
     private static string SeedAnswer(PendingInteraction? pending) => pending?.Request switch

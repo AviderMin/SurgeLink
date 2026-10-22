@@ -11,6 +11,35 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class WorkspaceFailureTests
 {
+    [Fact]
+    public async Task CancellationDuringUnresponsiveHostProbeReleasesSessionAndBusyState()
+    {
+        var plugin = new FakeProtocolPlugin();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probe = new TaskCompletionSource<RemoteHostInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeProtocolSession(plugin.Descriptor)
+        {
+            HostInfoLoader = _ => { started.TrySetResult(); return probe.Task; },
+        };
+        plugin.SessionFactory = _ => session;
+        var catalog = new ProtocolCatalog(); catalog.Register(plugin);
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new FailingStore(), credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        using var cancellation = new CancellationTokenSource();
+        var opening = workspace.OpenAsync(SessionProfile.New("fake", "example.test", 22, "alice"), null, cancellation.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(workspace.Snapshot.IsConnecting);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => opening.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.False(workspace.Snapshot.IsConnecting);
+        Assert.Empty(workspace.Snapshot.Tabs);
+        Assert.Empty(manager.Sessions);
+        Assert.Equal(1, session.DisposeCount);
+        probe.SetResult(session.HostInfo);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

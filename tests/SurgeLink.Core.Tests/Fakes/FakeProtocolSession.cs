@@ -49,7 +49,10 @@ internal sealed class FakeProtocolSession : IProtocolSession
     public event EventHandler<string>? Faulted;
 
     /// <inheritdoc />
-    public Task<RemoteHostInfo> LoadHostInfoAsync(CancellationToken cancellationToken) => Task.FromResult(HostInfo);
+    public Func<CancellationToken, Task<RemoteHostInfo>>? HostInfoLoader { get; set; }
+
+    public Task<RemoteHostInfo> LoadHostInfoAsync(CancellationToken cancellationToken) =>
+        HostInfoLoader?.Invoke(cancellationToken) ?? Task.FromResult(HostInfo);
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()

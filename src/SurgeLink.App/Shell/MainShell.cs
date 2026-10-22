@@ -70,6 +70,17 @@ internal sealed class MainShell : Component
         var (aboutOpen, setAboutOpen) = UseState(false);
         var (aboutRequest, setAboutRequest) = UseState(0);
         var connectPending = UseRef(false);
+        var connectionCancellation = UseRef<CancellationTokenSource?>(null);
+
+        async void CancelConnection()
+        {
+            try
+            {
+                if (connectionCancellation.Current is { } cancellation)
+                    await cancellation.CancelAsync();
+            }
+            catch (Exception ex) { CrashLog.Write("CancelConnection", ex); }
+        }
 
         void OpenEditor(SessionEditorMode mode, SessionProfile? profile)
         {
@@ -88,6 +99,14 @@ internal sealed class MainShell : Component
         }
         void Connect(SessionProfile profile) => _ = ConnectAsync(profile);
 
+        async Task ShowConnectionErrorAsync(string title, Exception error)
+        {
+            // The connect command is fire-and-forget; dialog failures must not
+            // escape it or replace the original failure without a diagnostic.
+            try { await services.Interaction.ShowErrorAsync(title, error.Message); }
+            catch (Exception ex) { CrashLog.Write("ConnectionErrorDialog", ex); }
+        }
+
         async Task ConnectAsync(SessionProfile profile, ConnectOptions? suppliedOptions = null)
         {
             if (connectPending.Current || workspace.Snapshot.IsConnecting)
@@ -97,6 +116,8 @@ internal sealed class MainShell : Component
 
             // Include the password prompt in the guard, before the store starts connecting.
             connectPending.Current = true;
+            using var cancellation = new CancellationTokenSource();
+            connectionCancellation.Current = cancellation;
             try
             {
                 var options = suppliedOptions is { Password: not null } ||
@@ -108,24 +129,27 @@ internal sealed class MainShell : Component
                     return;
                 }
 
-                await workspace.OpenAsync(profile, options, CancellationToken.None);
+                await Task.Run(() => workspace.OpenAsync(profile, options, cancellation.Token));
             }
+            catch (ProtocolException) when (cancellation.IsCancellationRequested) { }
             catch (ProtocolException ex)
             {
-                await services.Interaction.ShowErrorAsync(
-                    Str.T("shell.error.connectionFailed", "Connection failed"), ex.Message);
+                await ShowConnectionErrorAsync(
+                    Str.T("shell.error.connectionFailed", "Connection failed"), ex);
             }
             catch (OperationCanceledException)
             {
             }
             catch (Exception ex)
             {
-                await services.Interaction.ShowErrorAsync(
-                    Str.T("shell.error.unexpected", "Unexpected error"), ex.Message);
+                CrashLog.Write("Connect", ex);
+                await ShowConnectionErrorAsync(
+                    Str.T("shell.error.unexpected", "Unexpected error"), ex);
             }
             finally
             {
                 connectPending.Current = false;
+                connectionCancellation.Current = null;
             }
         }
 
@@ -260,6 +284,7 @@ internal sealed class MainShell : Component
         var titleBar = TitleBarView.Render(new TitleBarProps(
             subtitle,
             snapshot.IsConnecting,
+            CancelConnection,
             () => setPaneOpen(!paneOpen),
             () => OpenEditor(SessionEditorMode.Create, null),
             OpenSettings,
