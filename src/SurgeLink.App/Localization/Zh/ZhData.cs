@@ -7,6 +7,23 @@ public static class ZhData
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         // ---- SFTP: toolbar -------------------------------------------------
+        ["sftp.menu.cut"] = "剪切",
+        ["sftp.menu.copy"] = "复制",
+        ["sftp.menu.paste"] = "粘贴",
+        ["sftp.menu.properties"] = "属性",
+        ["sftp.clipboard.ready"] = "已选取 {0} 个项目，请打开目标文件夹后粘贴。",
+        ["sftp.clipboard.working"] = "正在粘贴…",
+        ["sftp.clipboard.complete"] = "粘贴完成。",
+        ["sftp.clipboard.self"] = "无法将项目粘贴到自身或其子文件夹中。",
+        ["sftp.clipboard.exists"] = "目标已存在：{0}",
+        ["sftp.properties.path"] = "路径",
+        ["sftp.properties.type"] = "类型",
+        ["sftp.properties.folder"] = "文件夹",
+        ["sftp.properties.file"] = "文件",
+        ["sftp.properties.link"] = "符号链接",
+        ["sftp.properties.other"] = "其他",
+        ["sftp.properties.group"] = "所属组",
+        ["sftp.properties.target"] = "链接目标",
         ["sftp.nav.up"] = "上一级",
         ["sftp.nav.home"] = "主目录",
         ["sftp.nav.refresh"] = "刷新",

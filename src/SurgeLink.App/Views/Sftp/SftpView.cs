@@ -3,6 +3,7 @@ using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using SurgeLink.App.Components;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
@@ -47,6 +48,12 @@ internal sealed class SftpView : Component<SftpViewProps>
         var (dialogText, setDialogText) = UseState(string.Empty);
         var (dialogMode, setDialogMode) = UseState(0);
         var (banner, setBanner) = UseState<SftpBanner?>(null, threadSafe: true);
+        var clipboard = UseRef<(IRemoteFileSystem? FileSystem, IReadOnlyList<RemoteFileEntry> Entries, bool Cut)>((fileSystem, Array.Empty<RemoteFileEntry>(), false));
+        var pasteRunning = UseRef(false);
+        if (!ReferenceEquals(clipboard.Current.FileSystem, fileSystem))
+        {
+            clipboard.Current = (fileSystem, Array.Empty<RemoteFileEntry>(), false);
+        }
 
         // The queue belongs to the session tab, not to this component: switching
         // to Monitor/Terminal (or rebuilding the tree for a language change)
@@ -361,6 +368,18 @@ internal sealed class SftpView : Component<SftpViewProps>
         {
             var list = sender as ListView;
             var current = list?.SelectedItems.Count == 1 ? list.SelectedItem as RemoteFileEntry : null;
+            var control = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)
+                & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+            if (control && args.Key is VirtualKey.C or VirtualKey.X or VirtualKey.V)
+            {
+                if (!loading && error is null)
+                {
+                    if (args.Key == VirtualKey.V) { _ = PasteAsync(); }
+                    else { Capture(list?.SelectedItems.OfType<RemoteFileEntry>().ToArray() ?? Array.Empty<RemoteFileEntry>(), args.Key == VirtualKey.X); }
+                }
+                args.Handled = true;
+                return;
+            }
             switch (args.Key)
             {
                 case VirtualKey.Enter:
@@ -388,6 +407,103 @@ internal sealed class SftpView : Component<SftpViewProps>
                     args.Handled = true;
                     break;
             }
+        }
+
+        void Capture(IReadOnlyList<RemoteFileEntry> items, bool cut)
+        {
+            if (pasteRunning.Current || items.Count == 0) { return; }
+            clipboard.Current = (fileSystem, items.ToArray(), cut);
+            ShowBanner(InfoBarSeverity.Informational,
+                cut ? Str.T("sftp.menu.cut", "Cut") : Str.T("sftp.menu.copy", "Copy"),
+                Str.F("sftp.clipboard.ready", "{0} item(s) ready. Open the destination folder and paste.", items.Count));
+        }
+
+        async Task PasteAsync()
+        {
+            var snapshot = clipboard.Current;
+            if (pasteRunning.Current || snapshot.Entries.Count == 0 || loading || error is not null) { return; }
+            pasteRunning.Current = true;
+            var destinationDirectory = cwd;
+            ShowBanner(InfoBarSeverity.Informational, Str.T("sftp.menu.paste", "Paste"),
+                Str.T("sftp.clipboard.working", "Pasting items…"));
+            try
+            {
+                await ExecuteAsync(Str.T("sftp.menu.paste", "Paste"), async (fs, token) =>
+                {
+                    foreach (var item in snapshot.Entries)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (!SftpOperations.IsValidName(item.Name)) { throw new IOException("Invalid file name."); }
+                        var destination = SftpPath.Combine(destinationDirectory, item.Name);
+                        var source = SftpPath.Normalize(item.FullPath);
+                        if (destination == source || destination.StartsWith(source.TrimEnd('/') + "/", StringComparison.Ordinal))
+                        {
+                            throw new IOException(Str.T("sftp.clipboard.self", "Cannot paste an item into itself or its own subfolder."));
+                        }
+                        if (snapshot.Cut)
+                        {
+                            var listing = await fs.ListAsync(destinationDirectory, token).ConfigureAwait(true);
+                            if (listing.Any(entry => string.Equals(entry.Name, item.Name, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                throw new IOException(Str.F("sftp.clipboard.exists", "Destination already exists: {0}", destination));
+                            }
+                            await fs.RenameAsync(source, destination, token).ConfigureAwait(true);
+                            clipboard.Current = (fs, clipboard.Current.Entries.Where(entry => entry.FullPath != item.FullPath).ToArray(), true);
+                        }
+                        else
+                        {
+                            await RemoteFileCopy.CopyAsync(fs, source, destination, token).ConfigureAwait(true);
+                        }
+                    }
+                    token.ThrowIfCancellationRequested();
+                    setBanner(new SftpBanner(InfoBarSeverity.Success, Str.T("sftp.menu.paste", "Paste"),
+                        Str.T("sftp.clipboard.complete", "Paste complete.")));
+                }).ConfigureAwait(true);
+            }
+            finally
+            {
+                pasteRunning.Current = false;
+                if (operationLifetime.Current is not null) { Refresh(); }
+            }
+        }
+
+        void ShowContextMenu(FrameworkElement sender, ContextRequestedEventArgs args)
+        {
+            if (loading || error is not null) { return; }
+            var list = sender as ListView;
+            var items = Array.Empty<RemoteFileEntry>();
+            if (list is not null)
+            {
+                var node = args.OriginalSource as DependencyObject;
+                while (node is not null && node is not ListViewItem && !ReferenceEquals(node, list))
+                {
+                    node = VisualTreeHelper.GetParent(node);
+                }
+                if (node is ListViewItem container && list.ItemFromContainer(container) is RemoteFileEntry entry)
+                {
+                    if (!list.SelectedItems.Contains(entry))
+                    {
+                        list.SelectedItems.Clear();
+                        list.SelectedItems.Add(entry);
+                    }
+                    items = list.SelectedItems.OfType<RemoteFileEntry>().ToArray();
+                }
+                else if (!args.TryGetPosition(sender, out _))
+                {
+                    items = list.SelectedItems.OfType<RemoteFileEntry>().ToArray();
+                }
+            }
+            var menu = new MenuFlyout();
+            var available = !pasteRunning.Current;
+            SftpContextMenu.Add(menu, Str.T("sftp.menu.cut", "Cut"), "\uE8C6", () => Capture(items, true), available && items.Length > 0);
+            SftpContextMenu.Add(menu, Str.T("sftp.menu.copy", "Copy"), "\uE8C8", () => Capture(items, false), available && items.Length > 0);
+            SftpContextMenu.Add(menu, Str.T("sftp.menu.paste", "Paste"), "\uE77F", () => _ = PasteAsync(), available && clipboard.Current.Entries.Count > 0);
+            menu.Items.Add(new MenuFlyoutSeparator());
+            SftpContextMenu.Add(menu, Str.T("sftp.menu.properties", "Properties"), "\uE946",
+                () => setDialog(new SftpDialogState(SftpDialogKind.Properties, items[0])), items.Length == 1);
+            if (args.TryGetPosition(sender, out var position)) { menu.ShowAt(sender, position); }
+            else { menu.ShowAt(sender); }
+            args.Handled = true;
         }
 
         if (fileSystem is null)
@@ -431,7 +547,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 .IsClosable(true)
                 .Closed(() => setBanner(null));
 
-        var content = SftpContent.Build(rows, loading, error, setSelected, HandleItemClick, HandleListKey, Refresh, setDialogText, setDialog);
+        var content = SftpContent.Build(rows, loading, error, setSelected, HandleItemClick, HandleListKey, Refresh, setDialogText, setDialog, ShowContextMenu);
 
         var transferPanel = SftpTransferPanel.Render(transfers, id => queue.Cancel(id), queue.ClearFinished);
 
@@ -451,6 +567,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 SftpDialogKind.Rename => SftpDialogs.Rename(true, target, dialogText, setDialogText, CommitDialog, CloseDialog),
                 SftpDialogKind.Delete => SftpDialogs.Delete(true, target, CommitDialog, CloseDialog),
                 SftpDialogKind.Permissions => SftpDialogs.Permissions(true, target, dialogMode, setDialogMode, CommitDialog, CloseDialog),
+                SftpDialogKind.Properties => SftpDialogs.Properties(target, CloseDialog),
                 _ => Empty(),
             });
         }

@@ -20,6 +20,36 @@ internal static class SftpDialogs
 {
     private static readonly GridSize[] PermissionRowColumns = [GridSize.Px(64), GridSize.Auto, GridSize.Auto, GridSize.Auto];
 
+    public static Element Properties(RemoteFileEntry target, Action close)
+    {
+        Element Field(string label, string value) => VStack(AppTheme.SpacingXs,
+            Caption(label).Foreground(Theme.SecondaryText),
+            TextBlock(value).TextWrapping(TextWrapping.Wrap).Set(text => text.IsTextSelectionEnabled = true));
+        return ContentDialog(Str.T("sftp.menu.properties", "Properties"),
+            ScrollViewer(VStack(AppTheme.SpacingM,
+                Field(Str.T("sftp.column.name", "Name"), target.Name),
+                Field(Str.T("sftp.properties.path", "Path"), target.FullPath),
+                Field(Str.T("sftp.properties.type", "Type"), target.Kind switch
+                {
+                    RemoteEntryKind.Directory => Str.T("sftp.properties.folder", "Folder"),
+                    RemoteEntryKind.File => Str.T("sftp.properties.file", "File"),
+                    RemoteEntryKind.SymbolicLink => Str.T("sftp.properties.link", "Symbolic link"),
+                    _ => Str.T("sftp.properties.other", "Other"),
+                }),
+                Field(Str.T("sftp.column.size", "Size"), target.IsDirectory ? "—" : $"{DataFormat.Bytes(target.Size)} ({target.Size:N0} B)"),
+                Field(Str.T("sftp.column.modified", "Modified"), target.ModifiedUtc == default ? "—" : target.ModifiedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss zzz")),
+                Field(Str.T("sftp.column.permissions", "Permissions"), string.IsNullOrEmpty(target.PermissionText) ? "—" : target.PermissionText),
+                Field(Str.T("sftp.column.owner", "Owner"), target.Owner ?? "—"),
+                Field(Str.T("sftp.properties.group", "Group"), target.Group ?? "—"),
+                target.LinkTarget is null ? null : Field(Str.T("sftp.properties.target", "Link target"), target.LinkTarget))).MaxHeight(520)) with
+        {
+            IsOpen = true,
+            CloseButtonText = Str.T("common.close", "Close"),
+            DefaultButton = ContentDialogButton.Close,
+            OnClosed = _ => close(),
+        };
+    }
+
     /// <summary>Create file dialog.</summary>
     public static Element NewFile(bool open, string name, Action<string> setName, Action commit, Action close) =>
         ContentDialog(

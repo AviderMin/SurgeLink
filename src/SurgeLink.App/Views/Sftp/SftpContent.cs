@@ -28,7 +28,8 @@ internal static class SftpContent
         Action<object, KeyRoutedEventArgs> keyDown,
         Action refresh,
         Action<string> setDialogText,
-        Action<SftpDialogState> setDialog)
+        Action<SftpDialogState> setDialog,
+        Action<FrameworkElement, ContextRequestedEventArgs> contextRequested)
     {
         if (loading)
         {
@@ -73,10 +74,13 @@ internal static class SftpContent
                             .Margin(0, AppTheme.SpacingS, 0, 0))
                     .HAlign(HorizontalAlignment.Center)
                     .VAlign(VerticalAlignment.Center)
-                    .Grid(row: 0, column: 0));
+                    .Grid(row: 0, column: 0))
+                .Background(Theme.LayerFill)
+                .OnKeyDown(keyDown)
+                .Set(grid => SftpContextMenu.Attach(grid, contextRequested));
         }
 
-        return SftpEntryList.Body(rows, setSelected, openEntry, keyDown);
+        return SftpEntryList.Body(rows, setSelected, openEntry, keyDown, contextRequested);
     }
 
     /// <summary>Shown when the protocol has no file system at all.</summary>

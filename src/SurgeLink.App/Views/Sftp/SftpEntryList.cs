@@ -52,7 +52,8 @@ internal static class SftpEntryList
         IReadOnlyList<RemoteFileEntry> entries,
         Action<IReadOnlyList<RemoteFileEntry>> selectionChanged,
         Action<RemoteFileEntry> itemClick,
-        Action<object, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs> keyDown) =>
+        Action<object, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs> keyDown,
+        Action<FrameworkElement, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs> contextRequested) =>
         (ListView<RemoteFileEntry>(entries, entry => entry.FullPath, (entry, _) => Row(entry)) with
         {
             // Declare multi-select on the element itself. Setting SelectionMode
@@ -66,6 +67,7 @@ internal static class SftpEntryList
             .OnKeyDown(keyDown)
             .Set(list =>
             {
+                SftpContextMenu.Attach(list, contextRequested);
                 list.HorizontalAlignment = HorizontalAlignment.Stretch;
                 if (RowStyle.Value is { } style)
                 {

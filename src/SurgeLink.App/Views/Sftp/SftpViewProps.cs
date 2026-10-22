@@ -39,6 +39,7 @@ internal enum SftpDialogKind
     Rename,
     Delete,
     Permissions,
+    Properties,
 }
 
 /// <summary>State of the one dialog that can be open at a time.</summary>
