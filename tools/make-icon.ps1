@@ -1,5 +1,5 @@
 param(
-    [string]$SourceFile = (Join-Path $PSScriptRoot '../docs/ICON.jpg'),
+    [string]$SourceFile = (Join-Path $PSScriptRoot '../docs/LOGO.png'),
     [string]$OutFile = (Join-Path $PSScriptRoot '../src/SurgeLink.App/Assets/AppIcon.ico')
 )
 $ErrorActionPreference = 'Stop'

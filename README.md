@@ -1,5 +1,7 @@
 # SurgeLink
 
+<img src="docs/LOGO.png" width="128" height="128" alt="SurgeLink Logo" />
+
 **把远程终端、文件管理和系统监控放进同一个 Windows 工作区。**
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH 客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。

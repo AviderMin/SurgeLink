@@ -39,6 +39,11 @@ internal static class TitleBarView
             .Margin(0, 0, AppTheme.SpacingS, 0);
 
         return TitleBar("SurgeLink")
+            .Set(titleBar => titleBar.IconSource = new Microsoft.UI.Xaml.Controls.BitmapIconSource
+            {
+                UriSource = new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "AppLogo.png")),
+                ShowAsMonochrome = false,
+            })
             .Subtitle(props.Subtitle)
             .RightHeader(right);
     }

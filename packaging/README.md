@@ -65,7 +65,7 @@ x64 保持输出到 `artifacts/appx`；ARM64 输出到 `artifacts/appx/arm64`。
 
 打包参数支持 `-Version 1.0.2` 或四段版本号；已完成发布时 `-SkipPublish` 可仅重打包。版本覆盖参数同时传递给 .NET 发布，避免应用内版本和包版本不一致。
 
-默认 x64 Release，面向 Windows 11 22H2（10.0.22621）及以上，包含 .NET 和 Windows App SDK 运行库。图标从 `docs/ICON.jpg` 生成。MakePRI 合并资源到 `resources.pri`，并检查 Reactor 启动资源；MakeAppx 执行包校验，SignTool 使用开发证书签名。
+默认 x64 Release，面向 Windows 11 22H2（10.0.22621）及以上，包含 .NET 和 Windows App SDK 运行库。应用 ICO、标题栏及关于页、安装包图标统一使用 `docs/LOGO.png`；ICO 由 `tools/make-icon.ps1` 生成。MakePRI 合并资源到 `resources.pri`，并检查 Reactor 启动资源；MakeAppx 执行包校验，SignTool 使用开发证书签名。
 
 开发私钥仅用于此次签名，临时 PFX 完成后删除。每次重打包生成新证书，安装脚本会绑定本次证书指纹与 APPX 哈希；请分发同一个 ZIP 内的配套文件。此签名适合开发测试，公开发行应使用正式签名渠道。
 

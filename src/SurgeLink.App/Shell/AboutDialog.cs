@@ -21,6 +21,10 @@ internal sealed class AboutDialog : Component<AboutDialogProps>
         return AppDialog.Render(
         Str.T("app.aboutTitle", "About SurgeLink"),
         VStack(AppTheme.SpacingXl,
+            Image(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "AppLogo.png")).AbsoluteUri)
+                .Width(80).Height(80)
+                .HAlign(HorizontalAlignment.Left)
+                .AutomationName("SurgeLink"),
             VStack(AppTheme.SpacingS,
                 Subtitle("SurgeLink"),
                 Caption(Str.F("app.aboutVersion", "Version {0}",

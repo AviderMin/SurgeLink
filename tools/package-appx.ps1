@@ -59,7 +59,7 @@ $manifest.Save((Join-Path $payload 'AppxManifest.xml'))
 
 # Reuse the application's existing icon for Windows package assets.
 Add-Type -AssemblyName System.Drawing
-$source = [System.Drawing.Image]::FromFile((Join-Path $repoRoot 'docs/ICON.jpg'))
+$source = [System.Drawing.Image]::FromFile((Join-Path $repoRoot 'docs/LOGO.png'))
 try {
     foreach ($asset in @(
         @{ Name = 'StoreLogo.png'; Size = 50 },
@@ -71,7 +71,11 @@ try {
         try {
             $graphics.Clear([System.Drawing.Color]::Transparent)
             $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-            $graphics.DrawImage($source, 0, 0, $asset.Size, $asset.Size)
+            $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+            $scale = [Math]::Min($asset.Size / $source.Width, $asset.Size / $source.Height)
+            $width = [int][Math]::Round($source.Width * $scale)
+            $height = [int][Math]::Round($source.Height * $scale)
+            $graphics.DrawImage($source, [int](($asset.Size - $width) / 2), [int](($asset.Size - $height) / 2), $width, $height)
             $bitmap.Save((Join-Path $payload "Assets/$($asset.Name)"), [System.Drawing.Imaging.ImageFormat]::Png)
         }
         finally { $graphics.Dispose(); $bitmap.Dispose() }

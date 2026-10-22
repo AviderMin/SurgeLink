@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\docs\LOGO.png" Link="Assets\AppLogo.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\SystemIcons\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
