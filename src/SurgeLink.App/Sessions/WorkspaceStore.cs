@@ -157,6 +157,7 @@ public sealed class WorkspaceStore
         try
         {
             session = await _sessions.OpenAsync(profile, options, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (session.Terminal is { } remoteTerminal)
             {
                 terminal = new TerminalBridge(remoteTerminal, _dispatcher, _logger);
@@ -166,7 +167,8 @@ public sealed class WorkspaceStore
             var tab = new WorkspaceTab(Guid.NewGuid(), profile, session, terminal, new FileTransferQueue(_logger));
             openingTab = tab;
             session.StateChanged += OnSessionStateChanged;
-            await ProbeHostInfoAsync(tab, session);
+            await ProbeHostInfoAsync(tab, session, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (terminal is not null)
             {
@@ -343,12 +345,13 @@ public sealed class WorkspaceStore
 
     private IReadOnlyList<SessionProfile> LoadProfilesFromDisk() => _profiles.Load();
 
-    private async Task ProbeHostInfoAsync(WorkspaceTab tab, IProtocolSession session)
+    private async Task ProbeHostInfoAsync(WorkspaceTab tab, IProtocolSession session, CancellationToken cancellationToken)
     {
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-            var info = await session.LoadHostInfoAsync(cts.Token);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(8));
+            var info = await session.LoadHostInfoAsync(cts.Token).WaitAsync(cts.Token);
             _logger.LogInformation("Host info for {Name}: {Summary}", tab.Profile.Name, info.Summary);
         }
         catch (Exception ex)

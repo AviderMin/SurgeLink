@@ -9,6 +9,29 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 
 public sealed class SshProtocolPluginTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SilentServerCanBeCancelledOrTimesOut(bool cancel)
+    {
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var request = new ConnectionRequest
+        {
+            Host = "127.0.0.1",
+            Port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port,
+            Username = "alice",
+            Password = "test-only",
+            ConnectTimeout = cancel ? TimeSpan.FromSeconds(10) : TimeSpan.FromMilliseconds(300),
+        };
+        using var cancellation = new CancellationTokenSource();
+        var connecting = new SshProtocolPlugin().ConnectAsync(request, CreateContext(), cancellation.Token);
+        using var peer = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancel) cancellation.Cancel();
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => connecting.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(cancel ? ProtocolFailureKind.Cancelled : ProtocolFailureKind.Timeout, error.Kind);
+    }
+
     [Fact]
     public void DescriptorDescribesTheSshProtocol()
     {

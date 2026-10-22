@@ -42,13 +42,15 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
         var logger = context.CreateLogger<SshSession>();
         var options = new SshProtocolOptions(request);
         var factory = new SshConnectionFactory(request, options, context, logger);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(options.ConnectTimeout);
 
         ConnectionInfo connectionInfo;
         HostKeyVerifier verifier;
         try
         {
-            connectionInfo = factory.CreateConnectionInfo(cancellationToken);
-            verifier = factory.CreateVerifier(cancellationToken);
+            connectionInfo = factory.CreateConnectionInfo(timeout.Token);
+            verifier = factory.CreateVerifier(timeout.Token);
         }
         catch (ProtocolException)
         {
@@ -61,9 +63,6 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
 
         var client = new SshClient(connectionInfo);
         client.HostKeyReceived += verifier.Handle;
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(options.ConnectTimeout);
 
         try
         {
@@ -105,6 +104,8 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
 
             if (verifier.RejectionReason is { Length: > 0 } reason)
             {
+                if (timeout.IsCancellationRequested)
+                    throw new ProtocolException($"Connecting to {factory.Endpoint} timed out.", ProtocolFailureKind.Timeout, exception);
                 throw new ProtocolException(reason, ProtocolFailureKind.HostKey, exception);
             }
 

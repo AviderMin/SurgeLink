@@ -97,11 +97,21 @@ public sealed class SshTerminal : IRemoteTerminal
         }
 
         ShellStream stream;
+        var opening = Task.Run(
+            () => _client.CreateShellStream(terminalType, (uint)columns, (uint)rows, 0, 0, _options.ShellBufferSize),
+            CancellationToken.None);
         try
         {
-            stream = await Task.Run(
-                () => _client.CreateShellStream(terminalType, (uint)columns, (uint)rows, 0, 0, _options.ShellBufferSize),
-                CancellationToken.None).ConfigureAwait(false);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(_options.ConnectTimeout);
+            stream = await opening.WaitAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            _ = DisposeLateShellAsync(opening);
+            ResetStarted();
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new ProtocolException("Opening the remote shell timed out.", ProtocolFailureKind.Timeout);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -143,6 +153,12 @@ public sealed class SshTerminal : IRemoteTerminal
         }
 
         reader.Start();
+    }
+
+    private async Task DisposeLateShellAsync(Task<ShellStream> opening)
+    {
+        try { (await opening.ConfigureAwait(false)).Dispose(); }
+        catch (Exception ex) { _logger.LogDebug(ex, "Cancelled shell opening finished."); }
     }
 
     /// <inheritdoc />

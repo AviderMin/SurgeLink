@@ -11,6 +11,7 @@ namespace SurgeLink.App.Shell;
 internal sealed record TitleBarProps(
     string Subtitle,
     bool IsBusy,
+    Action CancelConnection,
     Action ToggleSidebar,
     Action NewSession,
     Action OpenSettings,
@@ -27,6 +28,11 @@ internal static class TitleBarView
     {
         var right = HStack(
                 AppTheme.SpacingS,
+                props.IsBusy
+                    ? Button(Str.T("common.cancel", "Cancel"), props.CancelConnection)
+                        .AutomationName(Str.T("common.cancel", "Cancel"))
+                        .IsDragRegion(false)
+                    : Empty(),
                 props.IsBusy
                     ? ProgressRing().Width(16).Height(16)
                         .AutomationName(Str.T("shell.titleBar.busy", "Working"))
