@@ -98,3 +98,5 @@ known-hosts.json
 !/packaging/AppxManifest.xml
 !/packaging/Install.ps1.template
 !/packaging/README.md
+
+!/packaging/SurgeLink.iss

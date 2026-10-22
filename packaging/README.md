@@ -70,3 +70,23 @@ x64 保持输出到 `artifacts/appx`；ARM64 输出到 `artifacts/appx/arm64`。
 开发私钥仅用于此次签名，临时 PFX 完成后删除。每次重打包生成新证书，安装脚本会绑定本次证书指纹与 APPX 哈希；请分发同一个 ZIP 内的配套文件。此签名适合开发测试，公开发行应使用正式签名渠道。
 
 1.0.2 验证：Release 发布成功；APPX 清单 1.0.2.0、程序集文件版本 1.0.2.0、产品版本 1.0.2；合并资源存在；密码学签名有效且签名证书与 CER 一致；Windows PowerShell 5.1 执行 Install.ps1 -ValidateOnly 成功；ZIP 包含指定三个文件。此次没有导入新证书或安装 1.0.2。
+
+## 普通 EXE 安装程序
+
+先安装 [Inno Setup 6.3 或更高版本](https://jrsoftware.org/isinfo.php)，然后在仓库根目录执行：
+
+```powershell
+pwsh -NoProfile -File tools/package-exe.ps1
+pwsh -NoProfile -File tools/package-exe.ps1 -Architecture arm64
+```
+
+默认读取 `Directory.Build.props` 中的版本，也可传入 `-Version 1.0.2.5`。
+安装包输出到 `artifacts/installer/<架构>/SurgeLink-Setup-<版本>-<架构>.exe`，附带 SHA256 文件。
+如编译器安装在其他位置，可使用 `-IsccPath "D:\Tools\Inno Setup 6\ISCC.exe"`。
+使用 `-PublishOnly` 可仅发布完整运行目录，不需要 Inno Setup。
+
+脚本每次使用新的 staging 目录发布 Release，将 .NET、Windows App SDK、资源及许可说明一起打包。
+安装器面向 Windows 11 22H2 及以上，默认按当前用户安装到 `%LOCALAPPDATA%\Programs\SurgeLink`，
+创建开始菜单入口、可选桌面快捷方式以及卸载入口；卸载保留 `%LOCALAPPDATA%\SurgeLink` 中的用户数据。
+EXE 安装器和 APPX 是独立的安装渠道，不会自动迁移 APPX 数据或卸载 APPX。
+此脚本不执行安装，也不自动签名；ARM64 包仍需在对应设备验证。
