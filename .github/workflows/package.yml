@@ -1,0 +1,93 @@
+name: Package Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 1.0.2); empty uses Directory.Build.props'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  test:
+    name: Test
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Run unit and conformance tests
+        run: dotnet test SurgeLink.slnx -c Release -p:Platform=x64 --nologo
+
+  package:
+    name: Package ${{ matrix.architecture }}
+    needs: test
+    runs-on: windows-2025
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [x64, arm64]
+    env:
+      ARCHITECTURE: ${{ matrix.architecture }}
+      REQUESTED_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Resolve and validate version
+        run: |
+          $version = $env:REQUESTED_VERSION
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            [xml]$props = Get-Content Directory.Build.props -Raw
+            $version = [string]($props.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+            throw 'Use a numeric version such as 1.0.2 or tag v1.0.2.'
+          }
+          $parsed = [version]$version
+          $packageVersion = if ($parsed.Revision -lt 0) { "$version.0" } else { $version }
+          if ($parsed.Major -eq 0 -and $parsed.Minor -eq 0 -and $parsed.Build -eq 0 -and $parsed.Revision -le 0) {
+            throw 'Package version must be greater than zero.'
+          }
+          if (@($parsed.Major, $parsed.Minor, $parsed.Build, [Math]::Max(0, $parsed.Revision) | Where-Object { $_ -gt 65535 }).Count) {
+            throw 'Package version components must be <= 65535.'
+          }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          "PACKAGE_VERSION=$packageVersion" >> $env:GITHUB_ENV
+          $output = if ($env:ARCHITECTURE -eq 'x64') { 'artifacts/appx' } else { 'artifacts/appx/arm64' }
+          "PACKAGE_OUTPUT=$output" >> $env:GITHUB_ENV
+      - name: Publish and package
+        run: ./tools/package-appx.ps1 -Version $env:RELEASE_VERSION -Architecture $env:ARCHITECTURE
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: SurgeLink-${{ env.RELEASE_VERSION }}-win-${{ matrix.architecture }}
+          path: |
+            ${{ env.PACKAGE_OUTPUT }}/*.appx
+            ${{ env.PACKAGE_OUTPUT }}/*.zip
+            ${{ env.PACKAGE_OUTPUT }}/*.cer
+            ${{ env.PACKAGE_OUTPUT }}/SHA256.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

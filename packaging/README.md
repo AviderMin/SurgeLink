@@ -1,5 +1,33 @@
 # APPX 与 ZIP 发布
 
+## GitHub Actions 多架构打包
+
+工作流为 `.github/workflows/package.yml`，当前项目基于 WinUI，仅支持 Windows。
+矩阵在 Windows x64 runner 上分别构建 x64、ARM64；ARM64 使用交叉编译。
+
+- 在 GitHub 的 Actions → Package Windows → Run workflow 手动触发；版本留空时读取
+  `Directory.Build.props`，也可输入 `1.0.2` 或四段数字版本。
+- 推送 `v1.0.2` 形式的标签也会触发，版本从标签读取。预发行后缀不支持。
+- 先运行 .NET 测试，成功后分别生成两个架构的 APPX 和侧载 ZIP。
+- 在运行详情的 Artifacts 下载对应架构产物，保留 14 天。工作流不创建 GitHub Release，
+  也不自动提交 Microsoft Store。无需配置签名 Secrets：使用每次临时生成的开发证书。
+- ARM64 启动和实际功能仍需在 ARM64 Windows 设备验证。
+  上传仅允许安装包、公钥证书和哈希，
+  不上传整个构建目录或私钥。
+
+本地构建：
+
+```powershell
+pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2 -Architecture x64
+pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2 -Architecture arm64
+```
+
+x64 保持输出到 `artifacts/appx`；ARM64 输出到 `artifacts/appx/arm64`。
+两个清单分别写入对应的 ProcessorArchitecture，文件名也带架构。
+
+参考：[setup-dotnet](https://github.com/actions/setup-dotnet)、
+[upload-artifact](https://github.com/actions/upload-artifact)。
+
 ## Microsoft Store 提交
 
 `PublisherDisplayName` 必须与 Partner Center 的发布者显示名称完全一致，本项目使用 `AviderMin`。修改清单后必须重新打包并上传新的 APPX；旧文件不会自动更新。
