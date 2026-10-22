@@ -108,7 +108,8 @@ jobs:
           $existing = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect existing releases.' }
           if ($existing.tagName -contains $env:RELEASE_TAG) { throw 'This release already exists; refusing to replace it.' }
-          $assets = @(Get-ChildItem -LiteralPath artifacts/release -File | ForEach-Object FullName)
+          $assets = @(Get-ChildItem -LiteralPath artifacts/release -File |
+            Where-Object { $_.Extension -ne '.sha256' } | ForEach-Object FullName)
           # Upload every asset to a draft before making the release public.
           gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --target $env:RELEASE_SHA --title "SurgeLink $env:RELEASE_VERSION" --notes-file artifacts/release-notes.md --draft
           if ($LASTEXITCODE -ne 0) { throw 'Release upload failed. Inspect the draft before retrying.' }
