@@ -66,10 +66,15 @@ internal static class WorkspaceView
             {
                 view.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                 view.VerticalContentAlignment = VerticalAlignment.Stretch;
-                foreach (var item in view.TabItems.OfType<Microsoft.UI.Xaml.Controls.TabViewItem>())
+                var items = view.TabItems.OfType<Microsoft.UI.Xaml.Controls.TabViewItem>().ToArray();
+                for (var index = 0; index < items.Length && index < snapshot.Tabs.Count; index++)
                 {
+                    var item = items[index];
+                    var tab = snapshot.Tabs[index];
                     item.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                     item.VerticalContentAlignment = VerticalAlignment.Stretch;
+                    SessionTabHeader.Apply(item, tab.Title,
+                        tab.Session.HostInfo?.OperatingSystem ?? tab.Profile.DetectedOperatingSystem);
                 }
             })
             // TabViewItem content is left/top aligned by default, which sizes every
