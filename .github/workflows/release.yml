@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version/tag (e.g. 1.0.2.5); empty uses Directory.Build.props'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  prepare:
+    name: Version
+    runs-on: windows-2025
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve version and target
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          $tag = ([string]$env:REQUESTED_VERSION).Trim()
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $tag = $env:GITHUB_REF_NAME }
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            [xml]$props = Get-Content Directory.Build.props -Raw
+            $tag = [string]($props.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
+          }
+          $version = $tag -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw 'Use a numeric version, optionally prefixed with v.' }
+          $parsed = [version]$version
+          if (@($parsed.Major, $parsed.Minor, $parsed.Build, [Math]::Max(0, $parsed.Revision) | Where-Object { $_ -gt 65535 }).Count) { throw 'Version components must be <= 65535.' }
+          if ($parsed.Major -eq 0 -and $parsed.Minor -eq 0 -and $parsed.Build -eq 0 -and $parsed.Revision -le 0) { throw 'Version must be greater than zero.' }
+          $sha = git rev-parse HEAD
+          $existing = git rev-parse --verify "refs/tags/$tag^{commit}" 2>$null
+          if ($LASTEXITCODE -eq 0 -and $existing -ne $sha) { throw 'The tag points to another commit. Run this workflow on that tag, or choose a new version.' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "sha=$sha" >> $env:GITHUB_OUTPUT
+          exit 0
+
+  installer:
+    name: Installer
+    needs: prepare
+    uses: ./.github/workflows/package-exe.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+
+  appx:
+    name: APPX
+    needs: prepare
+    uses: ./.github/workflows/package-appx.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+
+  publish:
+    name: Publish
+    needs: [prepare, installer, appx]
+    runs-on: windows-2025
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: SurgeLink*
+          path: artifacts/release
+          merge-multiple: true
+      - name: Validate assets and write release notes
+        run: python tools/release-notes.py --version $env:RELEASE_VERSION --tag $env:RELEASE_TAG --sha $env:RELEASE_SHA --repository $env:GITHUB_REPOSITORY --assets artifacts/release --output artifacts/release-notes.md
+      - name: Publish release
+        run: |
+          $existing = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect existing releases.' }
+          if ($existing.tagName -contains $env:RELEASE_TAG) { throw 'This release already exists; refusing to replace it.' }
+          $assets = @(Get-ChildItem -LiteralPath artifacts/release -File | ForEach-Object FullName)
+          # Upload every asset to a draft before making the release public.
+          gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --target $env:RELEASE_SHA --title "SurgeLink $env:RELEASE_VERSION" --notes-file artifacts/release-notes.md --draft
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed. Inspect the draft before retrying.' }
+          gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed; assets remain in the draft.' }
+          Get-Content artifacts/release-notes.md >> $env:GITHUB_STEP_SUMMARY

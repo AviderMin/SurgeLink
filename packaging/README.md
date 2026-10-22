@@ -2,12 +2,12 @@
 
 ## GitHub Actions 多架构打包
 
-工作流为 `.github/workflows/package.yml`，当前项目基于 WinUI，仅支持 Windows。
+工作流为 `.github/workflows/package-appx.yml`，当前项目基于 WinUI，仅支持 Windows。
 矩阵在 Windows x64 runner 上分别构建 x64、ARM64；ARM64 使用交叉编译。
 
 - 在 GitHub 的 Actions → Package Windows → Run workflow 手动触发；版本留空时读取
   `Directory.Build.props`，也可输入 `1.0.2` 或四段数字版本。
-- 推送 `v1.0.2` 形式的标签也会触发，版本从标签读取。预发行后缀不支持。
+- 可由统一 Release 工作流调用，版本从输入或标签读取。预发行后缀不支持。
 - 先运行 .NET 测试，成功后分别生成两个架构的 APPX 和侧载 ZIP。
 - 在运行详情的 Artifacts 下载对应架构产物，保留 14 天。工作流不创建 GitHub Release，
   也不自动提交 Microsoft Store。无需配置签名 Secrets：使用每次临时生成的开发证书。
@@ -96,9 +96,23 @@ EXE 发布检查包含应用自身的 `SurgeLink.pri`，缺失时直接停止打
 ### GitHub Actions EXE 打包
 
 工作流 `.github/workflows/package-exe.yml` 在 Actions 中显示为 **Package Installer**。
-支持手动 Run workflow（版本留空读取 `Directory.Build.props`）及推送 `v1.0.2.5` 形式标签触发。
+支持手动 Run workflow（版本留空读取 `Directory.Build.props`）及统一 Release 工作流调用。
 先执行测试，再在 Windows runner 上分别生成 x64、ARM64 安装包；沿用 `tools/package-exe.ps1`，
 优先使用 runner 自带 Inno Setup，缺失时通过 Chocolatey 安装。
 x64 会实际静默安装并检查程序启动后持续运行十秒，ARM64 为交叉编译，仍需真机验证。
 每个架构的 EXE 和 SHA256 分别作为原始文件上传，保存 14 天；不上传发布目录或创建 GitHub Release。
-此工作流与现有 APPX 工作流独立，推送版本标签时两个工作流都会运行。安装包暂未签名。
+APPX 与 Installer 工作流可单独手动运行；版本标签统一交给 Release 工作流，避免重复打包。安装包暂未签名。
+
+## 统一发布 GitHub Release
+
+在 **Actions → Release → Run workflow** 输入版本号，例如 `1.0.2.5`（也支持 `v1.0.2.5`），
+留空读取 `Directory.Build.props`。也可推送对应版本标签触发；裸版本号及 `v` 前缀标签均支持。
+手动运行会在所选分支的当前提交创建相应标签；如果标签已指向其他提交则拒绝发布，请改选该标签运行。
+
+工作流复用 `package-exe.yml` 和 `package-appx.yml`，收集 x64、ARM64 的 EXE、校验文件及 APPX 侧载 ZIP。
+产物完整性及 EXE 哈希检查通过后生成 `SHA256SUMS.txt` 和发布说明：包括各架构下载表、安装说明，
+以及发布目标提交及其之前最近 8 次提交的标题与提交链接。历史不足 8 次时展示全部。
+
+只有发布 job 具备 `contents: write` 权限，使用内置 `GITHUB_TOKEN`，不需要额外 Secrets。
+先将所有文件上传至草稿，再公开为正式 Release 并标记 Latest；已经存在的 Release 不会被覆盖。
+若上传或公开失败，先检查遗留草稿再处理重跑。ARM64 仍需真机验证；EXE 暂未签名。

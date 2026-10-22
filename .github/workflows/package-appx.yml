@@ -7,9 +7,11 @@ on:
         description: 'Version (e.g. 1.0.2); empty uses Directory.Build.props'
         required: false
         type: string
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
 
 permissions:
   contents: read
