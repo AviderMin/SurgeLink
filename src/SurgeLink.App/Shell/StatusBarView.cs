@@ -64,7 +64,7 @@ internal static class StatusBarView
                 columns: [GridSize.Auto, GridSize.Star(), GridSize.Auto],
                 rows: [GridSize.Star()],
                 status.Grid(column: 0),
-                Caption(detail).Foreground(Theme.SecondaryText)
+                Caption(detail).Private(detail).Foreground(Theme.SecondaryText)
                     .TextTrimming(TextTrimming.CharacterEllipsis).ToolTip(detail)
                     .VAlign(VerticalAlignment.Center).Margin(AppTheme.SpacingM, 0)
                     .Grid(column: 1),

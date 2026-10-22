@@ -6,6 +6,8 @@ public static class ZhShell
     /// <summary>Key -> 中文 mapping. Keep keys prefixed with <c>shell.</c>.</summary>
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["shell.settings.privacy"] = "隐私模式",
+        ["shell.settings.privacy.description"] = "使用 *** 隐藏服务器 IP 和域名，鼠标悬停时显示原文。终端输出和远程文件内容保持原样。",
         ["shell.command.newSession"] = "新建会话",
         ["shell.command.newSession.description"] = "打开新建会话对话框",
         ["shell.command.closeTab"] = "关闭标签页",
@@ -191,6 +193,8 @@ public static class ZhShell
         ["shell.status.reconnect"] = "重新连接",
         ["shell.status.sessionsOne"] = "{0} 个会话",
         ["shell.status.sessionsMany"] = "{0} 个会话",
+        ["shell.subtitle.connectedOne"] = "已连接 {0} 台服务器",
+        ["shell.subtitle.connectedMany"] = "已连接 {0} 台服务器",
         ["shell.subtitle.settings"] = "设置",
         ["shell.subtitle.connecting"] = "正在连接…",
         ["shell.subtitle.noSession"] = "未打开会话",

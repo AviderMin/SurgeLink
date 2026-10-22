@@ -36,6 +36,7 @@ internal sealed class SidebarView : Component<SidebarProps>
     {
         var services = UseContext(AppServices.ReactorContext)
             ?? throw new InvalidOperationException("The sidebar must be inside the shell service context.");
+        var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
         var props = Props;
         var (search, setSearch) = UseState(props.Snapshot.SearchText);
 
@@ -163,22 +164,26 @@ internal sealed class SidebarView : Component<SidebarProps>
                         .VAlign(VerticalAlignment.Center)
                         .Grid(row: 0, rowSpan: 2, column: 0)
                         .WithKey("session-system-icon"),
-                    TextBlock(profile.Name)
+                    TextBlock(profile.Name).Private(profile.Name)
                         .SemiBold()
                         .TextTrimming(TextTrimming.CharacterEllipsis)
                         .Grid(row: 0, column: 1),
-                    Caption(subtitle)
+                    Caption(subtitle).Private(subtitle)
                         .Foreground(Theme.SecondaryText)
                         .TextTrimming(TextTrimming.CharacterEllipsis)
                         .Grid(row: 1, column: 1)),
                 () => props.Connect(profile))
             .SubtleButton()
             .HAlign(HorizontalAlignment.Stretch)
-            .Set(button => button.HorizontalContentAlignment = HorizontalAlignment.Stretch)
+            .Set(button =>
+            {
+                button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+                PrivacyDisplay.ApplyGroup(button, profile.Name);
+            })
             .MinHeight(AppTheme.RowMinHeight)
             .ToolTip($"{profile.Name}\n{subtitle}" +
                 (string.IsNullOrWhiteSpace(profile.DetectedOperatingSystem) ? string.Empty : "\n" + profile.DetectedOperatingSystem))
-            .AutomationName(profile.Name)
+            .AutomationName(PrivacyDisplay.Mask(profile.Name))
             .AutomationId("Session-" + profile.Id)
             .PositionInSet(position, total)
             .WithContextFlyout(MenuItems(

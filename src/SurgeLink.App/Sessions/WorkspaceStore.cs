@@ -77,6 +77,21 @@ public sealed record WorkspaceSnapshot(
         string.Empty,
         false);
 
+    /// <summary>Distinct connected hosts, independent of users, ports and tab count.</summary>
+    public int ConnectedServerCount => Tabs
+        .Where(tab => tab.State == ConnectionState.Connected
+            && !string.Equals(tab.Profile.ProtocolId, "demo", StringComparison.OrdinalIgnoreCase))
+        .Select(tab => NormalizeHost(tab.Profile.Host))
+        .Where(host => host.Length > 0)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+
+    private static string NormalizeHost(string host)
+    {
+        var value = host.Trim().TrimEnd('.').Trim('[', ']');
+        return System.Net.IPAddress.TryParse(value, out var address) ? address.ToString() : value;
+    }
+
     public WorkspaceTab? ActiveTab =>
         ActiveTabId is Guid id ? Tabs.FirstOrDefault(t => t.Id == id) : null;
 

@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Sessions;
 using SurgeLink.App.Styling;
+using SurgeLink.App.Services;
 using SurgeLink.Core.Sessions;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -34,7 +35,7 @@ internal static class WorkspaceView
 
         var tabs = snapshot.Tabs
             .Select(tab => new TabViewItemData(
-                tab.Title,
+                PrivacyDisplay.Mask(tab.Title),
                 Component<SessionWorkspaceView, SessionViewProps>(SessionWorkspaceView.PropsFor(tab))
                     .WithKey(tab.Id.ToString("n")))
             {

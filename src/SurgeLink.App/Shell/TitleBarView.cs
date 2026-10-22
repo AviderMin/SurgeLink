@@ -18,7 +18,7 @@ internal sealed record TitleBarProps(
     Action ShowAbout);
 
 /// <summary>
-/// The Windows title bar: app name, a live subtitle (active session + host) and
+/// The Windows title bar: app name, connected server count and
 /// the global actions. Kept declarative so the caption buttons and drag regions
 /// stay native.
 /// </summary>
@@ -49,6 +49,7 @@ internal static class TitleBarView
             // on every shell refresh and compete with its default window icon.
             .Icon(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "AppLogo.png")).AbsoluteUri)
             .Subtitle(props.Subtitle)
+            .ToolTip(props.Subtitle)
             .RightHeader(right);
     }
 

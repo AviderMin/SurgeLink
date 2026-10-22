@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Markup;
 using SurgeLink.App.Components;
+using SurgeLink.App.Services;
 using SurgeLink.Core.Sessions;
 
 namespace SurgeLink.App.Shell;
@@ -45,7 +46,7 @@ internal static class SessionTabHeader
     public static void Apply(TabViewItem item, string title, string? operatingSystem)
     {
         var header = Headers.GetValue(item, _ => new Header());
-        header.Title.Text = title;
+        PrivacyDisplay.Apply(header.Title, title);
         var key = RemoteSystemIcon.Resolve(operatingSystem);
         if (header.IconKey != key)
         {
@@ -60,7 +61,7 @@ internal static class SessionTabHeader
             header.IconKey = key;
         }
         if (!ReferenceEquals(item.Header, header.Layout)) { item.Header = header.Layout; }
-        AutomationProperties.SetName(item, title);
+        AutomationProperties.SetName(item, PrivacyDisplay.Mask(title));
         ToolTipService.SetToolTip(item, title);
     }
 }

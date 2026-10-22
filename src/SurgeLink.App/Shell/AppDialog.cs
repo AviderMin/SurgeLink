@@ -17,7 +17,8 @@ internal static class AppDialog
         Action<ContentDialogResult> onClosed,
         string primaryText,
         string? closeText = null,
-        ElementTheme theme = ElementTheme.Default)
+        ElementTheme theme = ElementTheme.Default,
+        bool isOpen = true)
     {
         ScrollViewer? scroll = null;
         ContentDialog? nativeDialog = null;
@@ -43,7 +44,7 @@ internal static class AppDialog
         var dialog = ContentDialog(title, body,
             primaryButtonText: primaryText) with
         {
-            IsOpen = true,
+            IsOpen = isOpen,
             CloseButtonText = closeText ?? string.Empty,
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result =>

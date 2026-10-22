@@ -82,6 +82,9 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         var validationRef = UseRef<string?>(null);
         var clickHandler = UseRef<TypedEventHandler<ContentDialog, ContentDialogButtonClickEventArgs>?>(null);
         var dialogControl = UseRef<ContentDialog?>(null);
+        // The shell retains this component after close. Settings notifications can
+        // render it again, so its declarative open state must also stay closed.
+        var closed = UseRef(false);
         var sizingRoot = UseRef<XamlRoot?>(null);
         var sizingHandler = UseRef<TypedEventHandler<XamlRoot, XamlRootChangedEventArgs>?>(null);
         UseEffect(() => DetachDialogEvents, Array.Empty<object>());
@@ -128,12 +131,14 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                     .HorizontalScrollMode(ScrollingScrollMode.Disabled),
                 primaryButtonText: Str.T("shell.editor.saveAndConnect", "Save & connect")) with
         {
-            IsOpen = true,
+            IsOpen = !closed.Current,
             SecondaryButtonText = Str.T("shell.editor.save", "Save"),
             CloseButtonText = Str.T("common.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result =>
             {
+                if (closed.Current) return;
+                closed.Current = true;
                 DetachDialogEvents();
                 SubmitOrCancel(result);
             },
@@ -251,9 +256,15 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                     .AutomationName(Str.T("shell.editor.protocol", "Protocol"))
                     .AutomationId("SessionEditorProtocol"),
                 SessionEditorLayout.Pair(
-                    TextBox(Optional<string>.Of(host), setHost, header: hostLabel,
-                            placeholderText: Str.T("shell.editor.hostPlaceholder", "host name or IP address"))
-                        .AutomationName(hostLabel).AutomationId("SessionEditorHost").Grid(column: 0),
+                    (settings.PrivacyMode
+                        ? (Element)PasswordBox(Optional<string>.Of(host), setHost,
+                                placeholderText: Str.T("shell.editor.hostPlaceholder", "host name or IP address"))
+                            .Set(control => { control.Header = hostLabel; PrivacyDisplay.HideInput(control); })
+                            .AutomationName(hostLabel).AutomationId("SessionEditorHost")
+                        : TextBox(Optional<string>.Of(host), setHost, header: hostLabel,
+                                placeholderText: Str.T("shell.editor.hostPlaceholder", "host name or IP address"))
+                            .AutomationName(hostLabel).AutomationId("SessionEditorHost"))
+                        .Grid(column: 0),
                     TextBox(Optional<string>.Of(port), setPort, header: portLabel,
                             placeholderText: (protocol?.DefaultPort ?? 22).ToString(CultureInfo.InvariantCulture))
                         .AutomationName(portLabel).AutomationId("SessionEditorPort").Grid(column: 1),
@@ -311,9 +322,14 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             var organization = SessionEditorLayout.Section(
                 Str.T("shell.editor.section.organization", "Session details"),
                 Str.T("shell.editor.section.organizationHint", "Add an optional name and group to keep your sessions organized."),
-                TextBox(Optional<string>.Of(name), setName, header: nameLabel,
-                        placeholderText: Str.T("shell.editor.namePlaceholder", "Defaults to user@host"))
-                    .AutomationName(nameLabel).AutomationId("SessionEditorName"),
+                settings.PrivacyMode && template is not null && PrivacyDisplay.Mask(template.Name) != template.Name
+                    ? (Element)PasswordBox(Optional<string>.Of(name), setName,
+                            placeholderText: Str.T("shell.editor.namePlaceholder", "Defaults to user@host"))
+                        .Set(control => { control.Header = nameLabel; PrivacyDisplay.HideInput(control); })
+                        .AutomationName(nameLabel).AutomationId("SessionEditorName")
+                    : TextBox(Optional<string>.Of(name), setName, header: nameLabel,
+                            placeholderText: Str.T("shell.editor.namePlaceholder", "Defaults to user@host"))
+                        .AutomationName(nameLabel).AutomationId("SessionEditorName"),
                 TextBox(Optional<string>.Of(group), setGroup, header: groupLabel,
                         placeholderText: Str.T("shell.editor.groupPlaceholder", "e.g. Production"))
                     .AutomationName(groupLabel).AutomationId("SessionEditorGroup"));

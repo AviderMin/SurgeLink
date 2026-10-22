@@ -30,6 +30,7 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
         var store = services.Settings;
         var settings = UseExternalStore(store.Subscribe, () => store.Current);
         var (draft, setDraft) = UseState(store.Current);
+        var closed = UseRef(false);
 
         var fontChoices = new List<string> { Str.T("shell.settings.fontFamily.auto", "(auto detect)") };
         fontChoices.AddRange(AppTheme.MonospaceCandidates);
@@ -38,6 +39,15 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
             AppTheme.SpacingXl,
             Section(
                 Str.T("shell.settings.general", "General"),
+                SettingRow(
+                    Str.T("shell.settings.privacy", "Privacy mode"),
+                    Str.T("shell.settings.privacy.description", "Hide server IP addresses and domains with ***. Hover to reveal. Terminal output and remote file contents are unchanged."),
+                    ToggleSwitch(Optional<bool>.Of(draft.PrivacyMode),
+                            value => setDraft(draft with { PrivacyMode = value }),
+                            onContent: Str.T("shell.settings.on", "On"),
+                            offContent: Str.T("shell.settings.off", "Off"))
+                        .AutomationName(Str.T("shell.settings.privacy", "Privacy mode"))
+                        .AutomationId("SettingsPrivacyMode")),
                 SettingRow(
                     Str.T("shell.settings.language", "Interface language"),
                     Str.T("shell.settings.language.description", "Language used by menus, dialogs and this page."),
@@ -163,6 +173,8 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
             "Settings",
             result =>
             {
+                if (closed.Current) return;
+                closed.Current = true;
                 if (result == ContentDialogResult.Primary)
                 {
                     store.Update(_ => draft);
@@ -172,7 +184,8 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
             },
             Str.T("common.save", "Save"),
             Str.T("common.cancel", "Cancel"),
-            theme: ThemeController.ToElementTheme(settings.Theme));
+            theme: ThemeController.ToElementTheme(settings.Theme),
+            isOpen: !closed.Current);
     }
 
     private static Element Section(string title, params Element[] rows) =>

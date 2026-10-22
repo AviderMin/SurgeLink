@@ -62,6 +62,23 @@ internal sealed class DialogHost : Component
         // RequestedTheme. Apply the current preference to every queued prompt.
         lastDialog.Current = dialog
             .Set(control => BindCancellation(control, pending))
+            .Set(control =>
+            {
+                var title = pending.Request switch
+                {
+                    SecretRequest request => request.Title,
+                    ConfirmationRequest request => request.Title,
+                    TextRequest request => request.Title,
+                    MessageRequest request => request.Title,
+                    _ => null,
+                };
+                if (title is not null)
+                {
+                    var label = control.Title as TextBlock ?? new TextBlock();
+                    PrivacyDisplay.Apply(label, title);
+                    control.Title = label;
+                }
+            })
             .Set(control => control.RequestedTheme = ThemeController.ToElementTheme(settings.Theme))
             .WithKey(pending.Id.ToString("n"));
         return lastDialog.Current;
@@ -126,7 +143,7 @@ internal sealed class DialogHost : Component
                         "The key presented by {0} does not match the fingerprint trusted before. This can mean the server " +
                         "was reinstalled — or that the connection is being intercepted. Only trust it when you can " +
                         "explain the change.",
-                        challenge.Endpoint))
+                        PrivacyDisplay.Mask(challenge.Endpoint))).ToolTip(challenge.Endpoint)
                 .Error()
             : InfoBar(
                     Str.T("shell.dialog.hostKey.unknownTitle", "Unknown host"),
@@ -169,15 +186,15 @@ internal sealed class DialogHost : Component
                 .AutomationName(passwordLabel)
             : TextBox(Optional<string>.Of(answer), setAnswer,
                     placeholderText: Str.T("shell.dialog.secret.value", "Value"))
-                .AutomationName(request.Title);
+                .AutomationName(PrivacyDisplay.Mask(request.Title));
 
         var content = VStack(
             AppTheme.SpacingM,
-            TextBlock(request.Description).TextWrapping(TextWrapping.Wrap).Foreground(Theme.SecondaryText),
+            TextBlock(request.Description).Private(request.Description).TextWrapping(TextWrapping.Wrap).Foreground(Theme.SecondaryText),
             input);
 
         var dialog = ContentDialog(
-                request.Title,
+                PrivacyDisplay.Mask(request.Title),
                 content,
                 primaryButtonText: Str.T("shell.dialog.secret.continue", "Continue")) with
         {
@@ -199,8 +216,8 @@ internal sealed class DialogHost : Component
         InteractionService interaction)
     {
         var dialog = ContentDialog(
-                request.Title,
-                TextBlock(request.Message).TextWrapping(TextWrapping.Wrap),
+                PrivacyDisplay.Mask(request.Title),
+                TextBlock(request.Message).Private(request.Message).TextWrapping(TextWrapping.Wrap),
                 primaryButtonText: request.PrimaryText) with
         {
             IsOpen = true,
@@ -223,10 +240,10 @@ internal sealed class DialogHost : Component
             AppTheme.SpacingM,
             TextBox(Optional<string>.Of(answer), setAnswer, header: request.Label)
                 .AutomationName(request.Label),
-            Caption(request.Title).Foreground(Theme.SecondaryText));
+            Caption(request.Title).Private(request.Title).Foreground(Theme.SecondaryText));
 
         var dialog = ContentDialog(
-                request.Title,
+                PrivacyDisplay.Mask(request.Title),
                 content,
                 primaryButtonText: Str.T("common.ok", "OK")) with
         {
@@ -248,13 +265,13 @@ internal sealed class DialogHost : Component
         PendingInteraction pending,
         InteractionService interaction)
     {
-        var bar = InfoBar(message: request.Message).IsClosable(false);
+        var bar = InfoBar(message: PrivacyDisplay.Mask(request.Message)).ToolTip(request.Message).IsClosable(false);
         var content = isError ? bar.Error() : bar.Informational();
 
         // An explicit positive button keeps the dialog's command space non-empty;
         // an empty primary label made WinUI tear down the dialog incorrectly.
         var dialog = ContentDialog(
-                request.Title,
+                PrivacyDisplay.Mask(request.Title),
                 content,
                 primaryButtonText: Str.T("common.ok", "OK")) with
         {
@@ -269,7 +286,7 @@ internal sealed class DialogHost : Component
 
     private static Element FactRow(string label, string value, bool monospace)
     {
-        var text = TextBlock(value)
+        var text = TextBlock(value).Private(value)
             .TextWrapping(TextWrapping.Wrap)
             .IsTextSelectionEnabled(true);
 

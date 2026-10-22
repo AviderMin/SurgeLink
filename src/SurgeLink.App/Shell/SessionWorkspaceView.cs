@@ -25,6 +25,8 @@ internal sealed record SessionViewProps(WorkspaceTab Tab, ConnectionState State,
 /// </summary>
 internal sealed class SessionWorkspaceView : Component<SessionViewProps>
 {
+    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush HoverSurface = new(Microsoft.UI.Colors.Transparent);
+
     /// <summary>Snapshots the tab into immutable props.</summary>
     public static SessionViewProps PropsFor(WorkspaceTab tab) =>
         new(tab, tab.State, tab.View, tab.Message);
@@ -33,6 +35,7 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
     {
         var services = UseContext(AppServices.ReactorContext)
             ?? throw new InvalidOperationException("The session workspace must be inside the shell service context.");
+        var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
         var props = Props;
         var tab = props.Tab;
         var capabilities = tab.Session.Protocol.Capabilities;
@@ -74,10 +77,14 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
                 columns: [GridSize.Star(), GridSize.Auto],
                 rows: [GridSize.Auto],
                 VStack(AppTheme.SpacingXs,
-                    BodyStrong(tab.Title).TextTrimming(TextTrimming.CharacterEllipsis),
+                    BodyStrong(tab.Title).Private(tab.Title).TextTrimming(TextTrimming.CharacterEllipsis),
                     Caption(tab.Profile.Username + "@" + tab.Profile.Host)
+                        .Private(tab.Profile.Username + "@" + tab.Profile.Host)
                         .Foreground(Theme.SecondaryText).TextTrimming(TextTrimming.CharacterEllipsis))
                     .VAlign(VerticalAlignment.Center)
+                    // Include the space between both labels in the hover target.
+                    .Background(HoverSurface)
+                    .Set(panel => PrivacyDisplay.ApplyGroup(panel, tab.Title))
                     .ToolTip(string.IsNullOrEmpty(props.Message) ? tab.Title : props.Message)
                     .Margin(0, 0, AppTheme.SpacingM, 0).Grid(column: 0),
                 selector.VAlign(VerticalAlignment.Center).Grid(column: 1))

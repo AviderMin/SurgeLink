@@ -46,6 +46,9 @@ public sealed record AppSettings
 
     /// <summary>Show dot files in the SFTP browser.</summary>
     public bool ShowHiddenFiles { get; init; } = true;
+
+    /// <summary>Mask server addresses in the UI; hover reveals the original.</summary>
+    public bool PrivacyMode { get; init; }
 }
 
 /// <summary>Reads and updates <see cref="AppSettings"/>; notifies the UI on change.</summary>

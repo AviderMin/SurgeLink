@@ -274,12 +274,12 @@ internal sealed class MainShell : Component
             OpenEditor(profile is null ? SessionEditorMode.Create : SessionEditorMode.Edit, profile);
 
         // Title bar -----------------------------------------------------------
-        var activeTab = snapshot.ActiveTab;
-        var subtitle = snapshot.IsConnecting
-            ? Str.T("shell.subtitle.connecting", "Connecting\u2026")
-            : activeTab is null
-                ? Str.T("shell.subtitle.noSession", "No session open")
-                : $"{activeTab.Title}  \u00b7  {AppTheme.StatusText(activeTab.State)}  \u00b7  {activeTab.Session.HostInfo.Summary}";
+        var connectedCount = snapshot.ConnectedServerCount;
+        var subtitle = connectedCount == 0
+            ? string.Empty
+            : connectedCount == 1
+                ? Str.F("shell.subtitle.connectedOne", "Connected to {0} server", connectedCount)
+                : Str.F("shell.subtitle.connectedMany", "Connected to {0} servers", connectedCount);
 
         var titleBar = TitleBarView.Render(new TitleBarProps(
             subtitle,
