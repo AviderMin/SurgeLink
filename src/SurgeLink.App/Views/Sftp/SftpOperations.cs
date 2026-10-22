@@ -88,9 +88,10 @@ internal static class SftpOperations
     {
         Id = Guid.NewGuid().ToString("n"),
         Direction = TransferDirection.Download,
-        Name = entry.Name,
+        Name = entry.IsDirectory ? entry.Name + ".zip" : entry.Name,
         RemotePath = entry.FullPath,
-        LocalPath = LocalDownloadPath.Resolve(localFolder, entry.Name),
+        LocalPath = LocalDownloadPath.Resolve(localFolder, entry.IsDirectory ? entry.Name + ".zip" : entry.Name),
+        IsDirectory = entry.IsDirectory,
         TotalBytes = entry.Size,
     };
 }

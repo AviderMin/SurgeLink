@@ -11,7 +11,7 @@ namespace SurgeLink.App.Views.Sftp;
 /// <summary>Everything the SFTP toolbar displays and invokes.</summary>
 /// <param name="CurrentPath">Path shown in the breadcrumb.</param>
 /// <param name="CanGoUp">Enables the Up button (never at the root).</param>
-/// <param name="CanDownload">At least one file is selected.</param>
+/// <param name="CanDownload">At least one file or folder is selected.</param>
 /// <param name="CanModify">A current folder listing is available.</param>
 /// <param name="SingleSelection">Exactly one entry is selected.</param>
 /// <param name="SupportsPermissions">The protocol can read and write POSIX modes.</param>
@@ -31,6 +31,7 @@ internal sealed record SftpToolbarProps(
     Action NewFile,
     Action NewFolder,
     Action Upload,
+    Action UploadFolder,
     Action Download,
     Action Rename,
     Action Delete,
@@ -77,6 +78,10 @@ internal static class SftpToolbar
                         IsEnabled = props.CanModify,
                     },
                     AppBarButton(Str.T("sftp.command.upload", "Upload"), props.Upload, "\uE898") with
+                    {
+                        IsEnabled = props.CanModify,
+                    },
+                    AppBarButton(Str.T("sftp.command.uploadFolder", "Upload folder"), props.UploadFolder, "\uE8B7") with
                     {
                         IsEnabled = props.CanModify,
                     },

@@ -451,6 +451,28 @@ internal sealed class SftpView : Component<SftpViewProps>
             }
         }
 
+        async Task ShowFolderPropertiesAsync(string path)
+        {
+            if (fileSystem is null) { return; }
+            var token = operationLifetime.Current?.Token ?? CancellationToken.None;
+            try
+            {
+                var folder = await fileSystem.StatAsync(path, token).ConfigureAwait(true);
+                if (!token.IsCancellationRequested)
+                {
+                    setDialog(new SftpDialogState(SftpDialogKind.Properties, folder));
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                if (!token.IsCancellationRequested)
+                {
+                    ShowBanner(InfoBarSeverity.Error, Str.T("sftp.menu.properties", "Properties"), ex.Message);
+                }
+            }
+        }
+
         /// <summary>
         /// The single context-menu handler of the table area. Rows, the blank tail
         /// below the last row and the empty-folder message all raise the bubbling
@@ -491,8 +513,15 @@ internal sealed class SftpView : Component<SftpViewProps>
                 ? Str.T("sftp.menu.pasteHere", "Paste into this folder")
                 : Str.T("sftp.menu.paste", "Paste"), "\uE77F", () => _ = PasteAsync(), available && !loading && clipboard.Current.Entries.Count > 0);
             menu.Items.Add(new MenuFlyoutSeparator());
+            // Pointer requests on blank space target the current folder even
+            // when rows remain selected. Keyboard requests still use selection.
+            var folderPath = cwd;
             SftpContextMenu.Add(menu, Str.T("sftp.menu.properties", "Properties"), "\uE946",
-                () => setDialog(new SftpDialogState(SftpDialogKind.Properties, items[0])), items.Length == 1);
+                () =>
+                {
+                    if (items.Length == 0) { _ = ShowFolderPropertiesAsync(folderPath); }
+                    else { setDialog(new SftpDialogState(SftpDialogKind.Properties, items[0])); }
+                }, items.Length == 1 || (items.Length == 0 && !loading && fileSystem is not null));
             if (args.TryGetPosition(sender, out var position)) { menu.ShowAt(sender, position); }
             else { menu.ShowAt(sender); }
             args.Handled = true;
@@ -543,7 +572,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         var toolbar = SftpToolbar.Render(new SftpToolbarProps(
             cwd,
             cwd != "/",
-            !loading && error is null && selected.Any(entry => !entry.IsDirectory),
+            !loading && error is null && selected.Count > 0,
             !loading && error is null,
             !loading && error is null && selected.Count == 1,
             fileSystem.SupportsPermissions,
@@ -563,6 +592,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 setDialog(new SftpDialogState(SftpDialogKind.NewFolder));
             },
             Upload,
+            () => _ = SftpViewCommands.UploadFolderAsync(fileSystem, cwd, queue, pickers.PickFolderAsync, setBanner),
             Download,
             () => OpenRename(selected.Count == 1 ? selected[0] : null),
             () => OpenDelete(selected.Count == 1 ? selected[0] : null),
@@ -616,7 +646,17 @@ internal sealed class SftpView : Component<SftpViewProps>
         tableCells.Add(content.Grid(row: 1));
         var table = Grid(columns: [GridSize.Star()], rows: [GridSize.Auto, GridSize.Star()], tableCells.ToArray())
             .Background(TransparentSurface)
-            .Set(grid => SftpContextMenu.Attach(grid, ShowContextMenu));
+            .Set(grid =>
+            {
+                SftpContextMenu.Attach(grid, ShowContextMenu);
+                SftpListInput.AttachBlankArea(grid, () =>
+                {
+                    if (loading || error is not null) { return; }
+                    FindList(grid)?.SelectedItems.Clear();
+                    selections.Current[cwd] = Array.Empty<string>();
+                    setSelected(Array.Empty<RemoteFileEntry>());
+                });
+            });
 
         var transferPanel = Component<SftpTransferPanel, FileTransferQueue>(queue);
 

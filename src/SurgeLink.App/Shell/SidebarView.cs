@@ -151,12 +151,18 @@ internal sealed class SidebarView : Component<SidebarProps>
 
         return Button(
                 Grid(
-                    columns: [GridSize.Auto, GridSize.Star()],
+                    columns: [GridSize.Px(24 + AppTheme.SpacingS), GridSize.Star()],
                     rows: [GridSize.Auto, GridSize.Auto],
-                    SessionSystemIcon.Render(profile.DetectedOperatingSystem)
+                    // OS detection replaces the icon after connecting. Keep layout
+                    // on a stable native host so that replacement cannot reset
+                    // the row span or the gap before the text column.
+                    Border(SessionSystemIcon.Render(profile.DetectedOperatingSystem))
+                        .Width(24)
+                        .Height(24)
+                        .HAlign(HorizontalAlignment.Left)
                         .VAlign(VerticalAlignment.Center)
                         .Grid(row: 0, rowSpan: 2, column: 0)
-                        .Margin(0, 0, AppTheme.SpacingS, 0),
+                        .WithKey("session-system-icon"),
                     TextBlock(profile.Name)
                         .SemiBold()
                         .TextTrimming(TextTrimming.CharacterEllipsis)

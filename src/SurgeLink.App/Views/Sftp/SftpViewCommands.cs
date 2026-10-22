@@ -41,7 +41,33 @@ internal static class SftpViewCommands
         }
     }
 
-    /// <summary>Picks a local folder and queues every selected file for download into it.</summary>
+    /// <summary>Queues the selected folder, including nested and empty directories.</summary>
+    public static async Task UploadFolderAsync(
+        IRemoteFileSystem fileSystem, string workingDirectory, FileTransferQueue queue,
+        Func<Task<StorageFolder?>> pickFolder, Action<SftpBanner?> setBanner)
+    {
+        try
+        {
+            var folder = await pickFolder().ConfigureAwait(true);
+            if (folder is null) { return; }
+            queue.Enqueue(new TransferItem
+            {
+                Id = Guid.NewGuid().ToString("n"),
+                Direction = TransferDirection.Upload,
+                Name = folder.Name,
+                LocalPath = folder.Path,
+                RemotePath = SftpPath.Combine(workingDirectory, folder.Name),
+                IsDirectory = true,
+            }, fileSystem);
+            setBanner(null);
+        }
+        catch (Exception ex)
+        {
+            setBanner(new SftpBanner(InfoBarSeverity.Error, Str.T("sftp.command.uploadFolder", "Upload folder"), ex.Message));
+        }
+    }
+
+    /// <summary>Picks a local destination; folders download as ZIP archives.</summary>
     public static async Task DownloadAsync(
         IRemoteFileSystem fileSystem,
         IReadOnlyList<RemoteFileEntry> selected,
@@ -49,13 +75,13 @@ internal static class SftpViewCommands
         Func<Task<StorageFolder?>> pickFolder,
         Action<SftpBanner?> setBanner)
     {
-        var files = selected.Where(entry => !entry.IsDirectory).ToList();
+        var files = selected.ToList();
         if (files.Count == 0)
         {
             setBanner(new SftpBanner(
                 InfoBarSeverity.Warning,
                 Str.T("sftp.command.download", "Download"),
-                Str.T("sftp.warning.selectFiles", "Select at least one file to download.")));
+                Str.T("sftp.warning.selectEntries", "Select at least one file or folder to download.")));
             return;
         }
 

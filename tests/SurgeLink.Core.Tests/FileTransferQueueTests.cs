@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Collections.Concurrent;
 using System.Text;
 using SurgeLink.Core.Files;
@@ -6,6 +7,104 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class FileTransferQueueTests
 {
+    [Fact]
+    public async Task FolderDownloadCreatesZipWithNestedFilesAndEmptyFolders()
+    {
+        using var temp = new TempDirectory();
+        var fs = new FakeFileSystem();
+        fs.Listings["/remote/folder"] = [
+            new() { Name = "nested", FullPath = "/remote/folder/nested", Kind = RemoteEntryKind.Directory },
+            new() { Name = "empty", FullPath = "/remote/folder/empty", Kind = RemoteEntryKind.Directory },
+        ];
+        fs.Listings["/remote/folder/nested"] = [
+            new() { Name = "hello.txt", FullPath = "/ignored-metadata", Kind = RemoteEntryKind.File, Size = 5 },
+        ];
+        fs.Files["/remote/folder/nested/hello.txt"] = Encoding.UTF8.GetBytes("hello");
+        var item = FolderDownload(temp.File("folder.zip"));
+        await using var queue = new FileTransferQueue();
+        queue.Enqueue(item, fs);
+        Assert.True(await WaitAsync(() => !item.IsActive));
+        Assert.Equal(TransferStatus.Completed, item.Status);
+        using var zip = ZipFile.OpenRead(item.LocalPath!);
+        Assert.NotNull(zip.GetEntry("folder/empty/"));
+        Assert.NotNull(zip.GetEntry("folder/nested/"));
+        using var reader = new StreamReader(zip.GetEntry("folder/nested/hello.txt")!.Open());
+        Assert.Equal("hello", await reader.ReadToEndAsync());
+        Assert.Equal(5, item.DoneBytes);
+        Assert.Equal(5, item.TotalBytes);
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(item.LocalPath!)!, ".surge-*.tmp"));
+    }
+
+    [Theory]
+    [InlineData("cancel")]
+    [InlineData("failure")]
+    [InlineData("existing")]
+    [InlineData("unsafe")]
+    public async Task FolderZipDoesNotPublishPartialArchivesOrOverwriteExistingFiles(string mode)
+    {
+        using var temp = new TempDirectory();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fs = new FakeFileSystem
+        {
+            OpenReadOverride = async (_, token) =>
+            {
+                entered.TrySetResult();
+                if (mode == "cancel") { await Task.Delay(Timeout.Infinite, token); }
+                if (mode == "failure") { throw new IOException("read failed"); }
+                return new MemoryStream(Encoding.UTF8.GetBytes("data"));
+            },
+        };
+        fs.Listings["/remote/folder"] = [
+            new() { Name = mode == "unsafe" ? "../escape" : "file.txt", FullPath = "/remote/folder/file.txt", Kind = RemoteEntryKind.File, Size = 4 },
+        ];
+        var item = FolderDownload(temp.File("folder.zip"));
+        if (mode == "existing") { await File.WriteAllTextAsync(item.LocalPath!, "keep"); }
+        await using var queue = new FileTransferQueue();
+        queue.Enqueue(item, fs);
+        if (mode == "cancel")
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            queue.Cancel(item.Id);
+        }
+        Assert.True(await WaitAsync(() => !item.IsActive));
+        Assert.Equal(mode == "cancel" ? TransferStatus.Cancelled : TransferStatus.Failed, item.Status);
+        if (mode == "existing") { Assert.Equal("keep", await File.ReadAllTextAsync(item.LocalPath!)); }
+        else { Assert.False(File.Exists(item.LocalPath)); }
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(item.LocalPath!)!, ".surge-*.tmp"));
+    }
+
+    private static TransferItem FolderDownload(string localPath) => new()
+    {
+        Id = Guid.NewGuid().ToString("n"), Direction = TransferDirection.Download,
+        Name = "folder.zip", RemotePath = "/remote/folder", LocalPath = localPath, IsDirectory = true,
+    };
+
+    [Fact]
+    public async Task FolderUploadPreservesNestedFilesAndEmptyDirectories()
+    {
+        using var temp = new TempDirectory();
+        var root = temp.File("folder");
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        Directory.CreateDirectory(Path.Combine(root, "empty"));
+        await File.WriteAllTextAsync(Path.Combine(root, "first.txt"), "abc");
+        await File.WriteAllTextAsync(Path.Combine(root, "nested", "second.txt"), "hello");
+        var fileSystem = new FakeFileSystem();
+        await using var queue = new FileTransferQueue();
+        var item = new TransferItem
+        {
+            Id = Guid.NewGuid().ToString("n"), Direction = TransferDirection.Upload,
+            Name = "folder", LocalPath = root, RemotePath = "/remote/folder", IsDirectory = true,
+        };
+        queue.Enqueue(item, fileSystem);
+        Assert.True(await WaitAsync(() => !item.IsActive), "upload did not finish");
+        Assert.Equal(TransferStatus.Completed, item.Status);
+        Assert.Contains("/remote/folder/empty", fileSystem.Directories.Keys);
+        Assert.Equal("abc", Encoding.UTF8.GetString(fileSystem.Files["/remote/folder/first.txt"]));
+        Assert.Equal("hello", Encoding.UTF8.GetString(fileSystem.Files["/remote/folder/nested/second.txt"]));
+        Assert.Equal(8, item.TotalBytes);
+        Assert.Equal(8, item.DoneBytes);
+    }
+
     [Fact]
     public async Task DownloadRunsToCompletionAndSnapshotIsAvailableWithoutASubscriber()
     {
@@ -248,6 +347,10 @@ public sealed class FileTransferQueueTests
         private int _activeReads;
         private int _maxConcurrentReads;
 
+        public ConcurrentDictionary<string, IReadOnlyList<RemoteFileEntry>> Listings { get; } = new(StringComparer.Ordinal);
+
+        public ConcurrentDictionary<string, bool> Directories { get; } = new(StringComparer.Ordinal);
+
         public ConcurrentDictionary<string, byte[]> Files { get; } = new(StringComparer.Ordinal);
 
         public Func<string, CancellationToken, Task<Stream>>? OpenReadOverride { get; init; }
@@ -265,7 +368,7 @@ public sealed class FileTransferQueueTests
         public Task<string> GetCurrentDirectoryAsync(CancellationToken cancellationToken) => Task.FromResult("/");
 
         public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>());
+            Task.FromResult(Listings.TryGetValue(path, out var entries) ? entries : (IReadOnlyList<RemoteFileEntry>)Array.Empty<RemoteFileEntry>());
 
         public Task<RemoteFileEntry> StatAsync(string path, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -295,15 +398,35 @@ public sealed class FileTransferQueueTests
             long? expectedSize,
             IProgress<TransferProgress>? progress,
             CancellationToken cancellationToken) =>
-            Task.FromResult<Stream>(new MemoryStream());
+            Task.FromResult<Stream>(new UploadStream(bytes => Files[path] = bytes));
 
-        public Task CreateDirectoryAsync(string path, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task CreateDirectoryAsync(string path, CancellationToken cancellationToken)
+        {
+            Directories[path] = true;
+            return Task.CompletedTask;
+        }
+
+        public Task CommitWriteAsync(string temporaryPath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
+        {
+            Files[destinationPath] = Files[temporaryPath];
+            Files.TryRemove(temporaryPath, out _);
+            return Task.CompletedTask;
+        }
 
         public Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task SetPermissionsAsync(string path, int unixMode, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class UploadStream(Action<byte[]> save) : MemoryStream
+    {
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { save(ToArray()); }
+            base.Dispose(disposing);
+        }
     }
 
     private static class InterlockedExtensions

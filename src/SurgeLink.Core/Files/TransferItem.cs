@@ -38,6 +38,9 @@ public sealed class TransferItem
     /// <summary>Local path, for uploads the source and for downloads the destination.</summary>
     public string? LocalPath { get; init; }
 
+    /// <summary>Transfers a directory recursively; downloads produce a ZIP archive.</summary>
+    public bool IsDirectory { get; init; }
+
     /// <summary>Total bytes when known, otherwise 0.</summary>
     public long TotalBytes { get; set; }
 

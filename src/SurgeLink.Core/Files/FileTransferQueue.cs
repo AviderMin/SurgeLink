@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using Microsoft.Extensions.Logging;
 
 namespace SurgeLink.Core.Files;
@@ -223,7 +224,8 @@ public sealed class FileTransferQueue : IAsyncDisposable
             var token = item.Cancellation.Token;
             if (item.Direction == TransferDirection.Upload)
             {
-                await UploadAsync(item, fileSystem, token).ConfigureAwait(false);
+                if (item.IsDirectory) { await UploadDirectoryAsync(item, fileSystem, token).ConfigureAwait(false); }
+                else { await UploadAsync(item, fileSystem, token).ConfigureAwait(false); }
             }
             else
             {
@@ -252,21 +254,18 @@ public sealed class FileTransferQueue : IAsyncDisposable
         }
     }
 
-    private async Task UploadAsync(TransferItem item, IRemoteFileSystem fileSystem, CancellationToken token)
+    private async Task UploadAsync(TransferItem item, IRemoteFileSystem fileSystem, CancellationToken token,
+        string? localPath = null, string? remotePath = null, long offset = 0)
     {
         if (item.LocalPath is null)
         {
             throw new InvalidOperationException("Upload has no local source.");
         }
 
-        await using var source = new FileStream(item.LocalPath, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, useAsync: true);
+        await using var source = new FileStream(localPath ?? item.LocalPath, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, useAsync: true);
 
-        // The protocol reports progress as data flows; mirror it into the row so
-        // protocols that never report still show movement.
-        var protocolProgress = new Progress<TransferProgress>(progress => SetDone(item, progress.BytesTransferred));
-
-        await RemoteFileWrite.WriteAsync(fileSystem, item.RemotePath, item.TotalBytes > 0 ? item.TotalBytes : null,
-            protocolProgress, true, async (target, writeToken) =>
+        await RemoteFileWrite.WriteAsync(fileSystem, remotePath ?? item.RemotePath, source.Length,
+            null, true, async (target, writeToken) =>
             {
                 var buffer = new byte[BufferSize];
                 long done = 0;
@@ -275,9 +274,63 @@ public sealed class FileTransferQueue : IAsyncDisposable
                 {
                     await target.WriteAsync(buffer.AsMemory(0, read), writeToken).ConfigureAwait(false);
                     done += read;
-                    SetDone(item, done);
+                    SetDone(item, offset + done);
                 }
             }, token).ConfigureAwait(false);
+    }
+
+    private async Task UploadDirectoryAsync(TransferItem item, IRemoteFileSystem fileSystem, CancellationToken token)
+    {
+        if (item.LocalPath is null) { throw new InvalidOperationException("Upload has no local source."); }
+        var directories = new List<(string Local, string Remote)>();
+        var files = new List<(string Local, string Remote, long Size)>();
+        var pending = new Stack<(string Local, string Remote)>();
+        pending.Push((item.LocalPath, item.RemotePath));
+        long total = 0;
+        while (pending.TryPop(out var directory))
+        {
+            token.ThrowIfCancellationRequested();
+            if ((File.GetAttributes(directory.Local) & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new IOException("Folder uploads cannot include symbolic links or junctions.");
+            }
+            directories.Add(directory);
+            foreach (var entry in new DirectoryInfo(directory.Local).EnumerateFileSystemInfos())
+            {
+                token.ThrowIfCancellationRequested();
+                if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new IOException("Folder uploads cannot include symbolic links or junctions: " + entry.FullName);
+                }
+                var remote = directory.Remote.TrimEnd('/') + "/" + entry.Name;
+                if (entry is DirectoryInfo) { pending.Push((entry.FullName, remote)); }
+                else if (entry is FileInfo file)
+                {
+                    files.Add((file.FullName, remote, file.Length));
+                    total += file.Length;
+                }
+            }
+        }
+        item.TotalBytes = total;
+        Publish(force: true);
+        foreach (var directory in directories)
+        {
+            token.ThrowIfCancellationRequested();
+            var split = directory.Remote.LastIndexOf('/');
+            var parent = split <= 0 ? "/" : directory.Remote[..split];
+            var name = directory.Remote[(split + 1)..];
+            var listing = await fileSystem.ListAsync(parent, token).ConfigureAwait(false);
+            var existing = listing.FirstOrDefault(entry => string.Equals(entry.Name, name, StringComparison.Ordinal));
+            if (existing is null) { await fileSystem.CreateDirectoryAsync(directory.Remote, token).ConfigureAwait(false); }
+            else if (!existing.IsDirectory) { throw new IOException("Destination is not a directory: " + directory.Remote); }
+        }
+        long offset = 0;
+        foreach (var file in files)
+        {
+            token.ThrowIfCancellationRequested();
+            await UploadAsync(item, fileSystem, token, file.Local, file.Remote, offset).ConfigureAwait(false);
+            offset = item.DoneBytes;
+        }
     }
 
     private async Task DownloadAsync(TransferItem item, IRemoteFileSystem fileSystem, CancellationToken token)
@@ -294,19 +347,26 @@ public sealed class FileTransferQueue : IAsyncDisposable
         var temporary = Path.Combine(directory, ".surge-" + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
-            await using var source = await fileSystem.OpenReadAsync(item.RemotePath, token).ConfigureAwait(false);
-            await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, BufferSize, useAsync: true))
+            if (item.IsDirectory)
             {
-                var buffer = new byte[BufferSize];
-                long done = 0;
-                int read;
-                while ((read = await source.ReadAsync(buffer, token).ConfigureAwait(false)) > 0)
+                await DownloadDirectoryZipAsync(item, fileSystem, temporary, token).ConfigureAwait(false);
+            }
+            else
+            {
+                await using var source = await fileSystem.OpenReadAsync(item.RemotePath, token).ConfigureAwait(false);
+                await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, BufferSize, useAsync: true))
                 {
-                    await target.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
-                    done += read;
-                    SetDone(item, done);
+                    var buffer = new byte[BufferSize];
+                    long done = 0;
+                    int read;
+                    while ((read = await source.ReadAsync(buffer, token).ConfigureAwait(false)) > 0)
+                    {
+                        await target.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
+                        done += read;
+                        SetDone(item, done);
+                    }
+                    await target.FlushAsync(token).ConfigureAwait(false);
                 }
-                await target.FlushAsync(token).ConfigureAwait(false);
             }
             token.ThrowIfCancellationRequested();
             // Refuse concurrent target creation instead of silently overwriting user data.
@@ -316,6 +376,69 @@ public sealed class FileTransferQueue : IAsyncDisposable
         {
             try { File.Delete(temporary); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private async Task DownloadDirectoryZipAsync(TransferItem item, IRemoteFileSystem fileSystem,
+        string temporary, CancellationToken token)
+    {
+        var rootName = item.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? item.Name[..^4] : item.Name;
+        _ = LocalDownloadPath.Resolve(Path.GetTempPath(), rootName);
+        var directories = new List<string> { rootName + "/" };
+        var files = new List<(string Remote, string Archive, long Size)>();
+        var pending = new Stack<(string Remote, string Archive)>();
+        pending.Push((item.RemotePath, rootName));
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { rootName };
+        long total = 0;
+        while (pending.TryPop(out var directory))
+        {
+            token.ThrowIfCancellationRequested();
+            var listing = await fileSystem.ListAsync(directory.Remote, token).ConfigureAwait(false);
+            foreach (var entry in listing)
+            {
+                token.ThrowIfCancellationRequested();
+                _ = LocalDownloadPath.Resolve(Path.GetTempPath(), entry.Name);
+                var archivePath = directory.Archive + "/" + entry.Name;
+                if (!names.Add(archivePath)) { throw new IOException("Duplicate archive path: " + archivePath); }
+                // Construct child paths ourselves; listing metadata must not redirect traversal.
+                var remote = directory.Remote.TrimEnd('/') + "/" + entry.Name;
+                if (entry.IsDirectory)
+                {
+                    directories.Add(archivePath + "/");
+                    pending.Push((remote, archivePath));
+                }
+                else if (entry.Kind == RemoteEntryKind.File)
+                {
+                    files.Add((remote, archivePath, entry.Size));
+                    total = checked(total + Math.Max(0, entry.Size));
+                }
+                else { throw new IOException("ZIP downloads cannot include symbolic links or special files: " + remote); }
+            }
+        }
+        item.TotalBytes = total;
+        Publish(force: true);
+        await using var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, BufferSize, useAsync: true);
+        using var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
+        foreach (var directory in directories)
+        {
+            token.ThrowIfCancellationRequested();
+            archive.CreateEntry(directory);
+        }
+        var buffer = new byte[BufferSize];
+        long done = 0;
+        foreach (var file in files)
+        {
+            token.ThrowIfCancellationRequested();
+            var entry = archive.CreateEntry(file.Archive, CompressionLevel.Optimal);
+            await using var source = await fileSystem.OpenReadAsync(file.Remote, token).ConfigureAwait(false);
+            await using var target = entry.Open();
+            int read;
+            while ((read = await source.ReadAsync(buffer, token).ConfigureAwait(false)) > 0)
+            {
+                await target.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
+                done += read;
+                SetDone(item, done);
+            }
         }
     }
 
