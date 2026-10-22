@@ -96,6 +96,11 @@ jobs:
           pattern: SurgeLink*
           path: artifacts/release
           merge-multiple: true
+          # All artifacts are uploaded with archive:false. Preserve distribution
+          # ZIPs as files instead of extracting their APPX/certificate contents.
+          skip-decompress: true
+      - name: List downloaded assets
+        run: Get-ChildItem -LiteralPath artifacts/release -Recurse -File | Select-Object FullName, Length
       - name: Validate assets and write release notes
         run: python tools/release-notes.py --version $env:RELEASE_VERSION --tag $env:RELEASE_TAG --sha $env:RELEASE_SHA --repository $env:GITHUB_REPOSITORY --assets artifacts/release --output artifacts/release-notes.md
       - name: Publish release

@@ -25,7 +25,8 @@ def generate(version, tag, sha, repository, assets, output):
     for name in required:
         path = assets / name
         if not path.is_file() or path.stat().st_size == 0:
-            raise ValueError(f"Missing or empty release asset: {name}")
+            downloaded = sorted(str(p.relative_to(assets)) for p in assets.rglob("*") if p.is_file())
+            raise ValueError(f"Missing or empty release asset: {name}. Downloaded files: {downloaded}")
     unexpected = {p.name for p in assets.iterdir() if p.is_file()} - set(required) - {"SHA256SUMS.txt"}
     if unexpected:
         raise ValueError(f"Unexpected release assets: {sorted(unexpected)}")

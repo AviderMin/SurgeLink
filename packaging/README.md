@@ -116,3 +116,5 @@ APPX 与 Installer 工作流可单独手动运行；版本标签统一交给 Rel
 只有发布 job 具备 `contents: write` 权限，使用内置 `GITHUB_TOKEN`，不需要额外 Secrets。
 先将所有文件上传至草稿，再公开为正式 Release 并标记 Latest；已经存在的 Release 不会被覆盖。
 若上传或公开失败，先检查遗留草稿再处理重跑。ARM64 仍需真机验证；EXE 暂未签名。
+
+Release 下载产物使用 `skip-decompress: true` 保留原始 APPX 分发 ZIP，与打包工作流的 `archive: false` 配套。
