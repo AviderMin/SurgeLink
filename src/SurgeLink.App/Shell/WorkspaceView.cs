@@ -36,8 +36,7 @@ internal static class WorkspaceView
         var tabs = snapshot.Tabs
             .Select(tab => new TabViewItemData(
                 PrivacyDisplay.Mask(tab.Title),
-                Component<SessionWorkspaceView, SessionViewProps>(SessionWorkspaceView.PropsFor(tab))
-                    .WithKey(tab.Id.ToString("n")))
+                Empty())
             {
                 IsClosable = true,
             })
@@ -53,7 +52,7 @@ internal static class WorkspaceView
             }
         }
 
-        return TabView(
+        var tabStrip = TabView(
                 Optional<int>.Of(activeIndex),
                 index =>
                 {
@@ -78,9 +77,6 @@ internal static class WorkspaceView
                         tab.Session.HostInfo?.OperatingSystem ?? tab.Profile.DetectedOperatingSystem);
                 }
             })
-            // TabViewItem content is left/top aligned by default, which sizes every
-            // session view to its own content and leaves the rest of the pane empty.
-            .FillContentArea()
             .IsAddTabButtonVisible(true)
             .AddTabButtonClick(() => props.NewSession(null))
             // Keep visual order aligned with the store used by selection and close callbacks.
@@ -91,7 +87,26 @@ internal static class WorkspaceView
                 {
                     props.CloseTab(snapshot.Tabs[index]);
                 }
-            });
+            })
+            .AutomationId("WorkspaceTabStrip");
+
+        // Reactor's TabView items reconcile content by position. Removing a middle
+        // tab can pair its old content with the next tab's header. Own the session
+        // surfaces in a keyed Grid instead, retaining each surviving session's
+        // terminal, file browser and monitor independently of its tab-strip index.
+        var sessionViews = snapshot.Tabs.Select(tab =>
+            Border(Component<SessionWorkspaceView, SessionViewProps>(SessionWorkspaceView.PropsFor(tab)))
+                .IsVisible(tab.Id == snapshot.ActiveTabId)
+                .AutomationId("SessionContent-" + tab.Id.ToString("n"))
+                .WithKey(tab.Id.ToString("n")))
+            .ToArray();
+
+        return Grid(
+            columns: [GridSize.Star()],
+            rows: [GridSize.Auto, GridSize.Star()],
+            tabStrip.Grid(row: 0),
+            Grid(columns: [GridSize.Star()], rows: [GridSize.Star()], sessionViews)
+                .Grid(row: 1));
     }
 
     private static Element BuildEmptyWorkspace(WorkspaceProps props)

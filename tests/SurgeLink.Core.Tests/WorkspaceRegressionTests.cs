@@ -11,6 +11,50 @@ namespace SurgeLink.Core.Tests;
 public sealed class WorkspaceRegressionTests
 {
     [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task ClosingMiddleTabKeepsSurvivingSessionIdentityAndView(int activeIndex)
+    {
+        using var temp = new TempDirectory();
+        var plugin = new FakeProtocolPlugin();
+        var catalog = new ProtocolCatalog(); catalog.Register(plugin);
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
+            new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var tabs = new WorkspaceTab[3];
+        for (var index = 0; index < tabs.Length; index++)
+        {
+            // Equal titles must not make distinct session instances interchangeable.
+            tabs[index] = await workspace.OpenAsync(
+                SessionProfile.New("fake", $"host-{index}.test", 22, "alice", "Same title"),
+                null, CancellationToken.None);
+        }
+        workspace.SetView(tabs[2].Id, SessionViewKind.Files);
+        workspace.SetFileBrowserPath(tabs[2].Id, "/third-session");
+        workspace.Activate(tabs[activeIndex].Id);
+
+        await workspace.CloseAsync(tabs[1].Id);
+
+        Assert.Collection(workspace.Snapshot.Tabs,
+            first => Assert.Same(tabs[0], first),
+            third => Assert.Same(tabs[2], third));
+        var expectedActive = activeIndex == 0 ? tabs[0] : tabs[2];
+        Assert.Same(expectedActive, workspace.Snapshot.ActiveTab);
+        Assert.Equal(SessionViewKind.Files, tabs[2].View);
+        Assert.Equal("/third-session", tabs[2].FileBrowserPath);
+        Assert.DoesNotContain(manager.Sessions, session => session.SessionId == tabs[1].Session.SessionId);
+        workspace.Activate(tabs[2].Id);
+        Assert.Same(tabs[2], workspace.Snapshot.ActiveTab);
+        await workspace.CloseAsync(tabs[0].Id);
+        await workspace.CloseAsync(tabs[2].Id);
+        Assert.Empty(workspace.Snapshot.Tabs);
+        Assert.Null(workspace.Snapshot.ActiveTab);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]
