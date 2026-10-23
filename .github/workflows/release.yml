@@ -36,6 +36,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Test release tooling
+        run: |
+          python -m unittest discover -s tools/tests -p test_release_notes.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Release notes regression tests failed.' }
+          ./tools/tests/test-release-tag.ps1
       - name: Resolve version and target
         id: version
         env:
@@ -113,6 +118,10 @@ jobs:
           # Upload every asset to a draft before making the release public.
           gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --target $env:RELEASE_SHA --title "SurgeLink $env:RELEASE_VERSION" --notes-file artifacts/release-notes.md --draft
           if ($LASTEXITCODE -ne 0) { throw 'Release upload failed. Inspect the draft before retrying.' }
+          # Draft creation does not guarantee that the Git tag exists. Create or
+          # verify the exact remote tag before making the uploaded release public.
+          ./tools/ensure-release-tag.ps1 -Repository $env:GITHUB_REPOSITORY -Tag $env:RELEASE_TAG -Sha $env:RELEASE_SHA
           gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw 'Release publication failed; assets remain in the draft.' }
+          ./tools/ensure-release-tag.ps1 -Repository $env:GITHUB_REPOSITORY -Tag $env:RELEASE_TAG -Sha $env:RELEASE_SHA
           Get-Content artifacts/release-notes.md >> $env:GITHUB_STEP_SUMMARY

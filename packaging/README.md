@@ -114,7 +114,9 @@ APPX 与 Installer 工作流可单独手动运行；版本标签统一交给 Rel
 以及发布目标提交及其之前最近 8 次提交的标题与提交链接。历史不足 8 次时展示全部。
 
 只有发布 job 具备 `contents: write` 权限，使用内置 `GITHUB_TOKEN`，不需要额外 Secrets。
-先将所有文件上传至草稿，再公开为正式 Release 并标记 Latest；已经存在的 Release 不会被覆盖。
-若上传或公开失败，先检查遗留草稿再处理重跑。ARM64 仍需真机验证；EXE 暂未签名。
+先将所有文件上传至草稿，再显式创建或核对远程 Tag（支持轻量及附注标签），确认指向本次构建提交后，
+公开为正式 Release 并标记 Latest，最后再次核对 Tag。标签冲突或创建失败时保留草稿，不覆盖既有标签；
+已经存在的 Release 不会被覆盖。GitHub 的 Tag 和 Release 是独立操作，失败时先检查遗留草稿和标签再处理重跑。
+发布正文只展示提交列表，不展示“最近 8 次提交”的规则说明。ARM64 仍需真机验证；EXE 暂未签名。
 
 Release 下载产物使用 `skip-decompress: true` 保留原始 APPX 分发 ZIP，与打包工作流的 `archive: false` 配套。
