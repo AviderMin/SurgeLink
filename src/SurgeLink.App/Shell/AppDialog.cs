@@ -7,8 +7,21 @@ using static Microsoft.UI.Reactor.Factories;
 
 namespace SurgeLink.App.Shell;
 
-/// <summary>Shared native dialog presentation for app preferences and information.</summary>
-internal static class AppDialog
+internal sealed record AppDialogProps(
+    string Title,
+    Element Content,
+    string AutomationPrefix,
+    Action<ContentDialogResult> OnClosed,
+    string PrimaryText,
+    string? CloseText,
+    ElementTheme Theme,
+    bool IsOpen,
+    double? ContentWidth,
+    string? SecondaryText,
+    Action<ContentDialog>? OnOpened);
+
+/// <summary>Shared modal layout, scrolling and sizing for session, settings and about dialogs.</summary>
+internal sealed class AppDialog : Component<AppDialogProps>
 {
     // Match the session editor, including its margins in narrow windows.
     public const double ContentWidth = 640;
@@ -26,76 +39,101 @@ internal static class AppDialog
         string? closeText = null,
         ElementTheme theme = ElementTheme.Default,
         bool isOpen = true,
-        double? contentWidth = null)
+        double? contentWidth = null,
+        string? secondaryText = null,
+        Action<ContentDialog>? onOpened = null) =>
+        Component<AppDialog, AppDialogProps>(new(title, content, automationPrefix, onClosed,
+            primaryText, closeText, theme, isOpen, contentWidth, secondaryText, onOpened));
+
+    public override Element Render()
     {
-        ScrollViewer? scroll = null;
-        ContentDialog? nativeDialog = null;
-        XamlRoot? sizingRoot = null;
-        Windows.Foundation.TypedEventHandler<XamlRoot, XamlRootChangedEventArgs>? sizingHandler = null;
+        var scroll = UseRef<ScrollViewer?>(null);
+        var nativeDialog = UseRef<ContentDialog?>(null);
+        var sizingRoot = UseRef<XamlRoot?>(null);
+        var sizingHandler = UseRef<Windows.Foundation.TypedEventHandler<XamlRoot, XamlRootChangedEventArgs>?>(null);
+        var closed = UseRef(false);
+        UseEffect(() => Cleanup, Array.Empty<object>());
+
         void Resize()
         {
-            if (nativeDialog?.XamlRoot is not { } root || scroll is null) { return; }
+            if (nativeDialog.Current?.XamlRoot is not { } root || scroll.Current is not { } viewer) { return; }
             // Leave space for the native title, padding, command row and window margins.
-            nativeDialog.Resources["ContentDialogMaxHeight"] = Math.Max(200, root.Size.Height - 48);
-            scroll.MaxHeight = Math.Max(80, Math.Min(480, root.Size.Height - 280));
-            if (contentWidth is { } width) { scroll.Width = FitContentWidth(width, root.Size.Width); }
+            nativeDialog.Current.Resources["ContentDialogMaxHeight"] = Math.Max(200, root.Size.Height - 48);
+            viewer.MaxHeight = Math.Max(0, Math.Min(600, root.Size.Height - 240));
+            if (Props.ContentWidth is { } width) { viewer.Width = FitContentWidth(width, root.Size.Width); }
         }
-        var body = ScrollViewer(Border(content).Padding(0, 0, 16, 24))
-            .MaxHeight(320)
+
+        void Cleanup()
+        {
+            if (sizingRoot.Current is { } root && sizingHandler.Current is { } handler) { root.Changed -= handler; }
+            sizingRoot.Current = null;
+            sizingHandler.Current = null;
+            // Native dialogs are pooled; keep sizing overrides scoped to this modal.
+            nativeDialog.Current?.Resources.Remove("ContentDialogMaxHeight");
+            if (Props.ContentWidth.HasValue) { nativeDialog.Current?.Resources.Remove("ContentDialogMaxWidth"); }
+        }
+
+        var body = ScrollViewer(Border(Props.Content).Padding(0, 0, 16, 24))
+            .Width(Props.ContentWidth ?? double.NaN)
+            .MaxHeight(520)
             .Set(viewer =>
             {
-                scroll = viewer;
+                scroll.Current = viewer;
+                viewer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                 viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+                viewer.HorizontalScrollMode = ScrollMode.Disabled;
                 viewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
                 viewer.VerticalScrollMode = ScrollMode.Enabled;
                 Resize();
             });
-        var dialog = ContentDialog(title, body,
-            primaryButtonText: primaryText) with
+        var dialog = ContentDialog(Props.Title, body,
+            primaryButtonText: Props.PrimaryText) with
         {
-            IsOpen = isOpen,
-            CloseButtonText = closeText ?? string.Empty,
+            IsOpen = Props.IsOpen && !closed.Current,
+            SecondaryButtonText = Props.SecondaryText ?? string.Empty,
+            CloseButtonText = Props.CloseText ?? string.Empty,
             DefaultButton = ContentDialogButton.Primary,
             OnClosed = result =>
             {
-                if (sizingRoot is not null && sizingHandler is not null) { sizingRoot.Changed -= sizingHandler; }
-                nativeDialog?.Resources.Remove("ContentDialogMaxHeight");
-                if (contentWidth.HasValue) { nativeDialog?.Resources.Remove("ContentDialogMaxWidth"); }
-                onClosed(result);
+                if (closed.Current) return;
+                closed.Current = true;
+                Cleanup();
+                Props.OnClosed(result);
             },
         };
 
         return QueuedDialog.Wrap(dialog.Set(control =>
         {
-            nativeDialog = control;
-            if (contentWidth.HasValue)
+            nativeDialog.Current = control;
+            if (Props.ContentWidth.HasValue)
             {
                 control.Resources["ContentDialogMaxWidth"] = MaxWidth;
-                if (scroll is not null) { scroll.Width = contentWidth.Value; }
             }
-            control.RequestedTheme = theme;
+            control.RequestedTheme = Props.Theme;
             Resize();
-            DialogAutomation.Tag(automationPrefix)(control);
+            DialogAutomation.Tag(Props.AutomationPrefix)(control);
         }).Opened(() =>
         {
             // Reactor owns the Opened subscription; tag again after its native
             // template is realized, including the first render of an About dialog.
-            if (nativeDialog is { } control)
+            if (nativeDialog.Current is { } control)
             {
-                control.RequestedTheme = theme;
+                control.RequestedTheme = Props.Theme;
                 Resize();
                 if (control.XamlRoot is { } root)
                 {
-                    sizingRoot = root;
-                    sizingHandler = (_, _) => Resize();
-                    root.Changed += sizingHandler;
+                    sizingRoot.Current = root;
+                    sizingHandler.Current = (_, _) => Resize();
+                    root.Changed += sizingHandler.Current;
                 }
-                DialogAutomation.Tag(automationPrefix)(control);
+                DialogAutomation.Tag(Props.AutomationPrefix)(control);
+                Props.OnOpened?.Invoke(control);
                 control.DispatcherQueue?.TryEnqueue(() =>
                 {
-                    control.RequestedTheme = theme;
+                    if (closed.Current) return;
+                    control.RequestedTheme = Props.Theme;
                     Resize();
-                    DialogAutomation.Tag(automationPrefix)(control);
+                    DialogAutomation.Tag(Props.AutomationPrefix)(control);
                 });
             }
         }));

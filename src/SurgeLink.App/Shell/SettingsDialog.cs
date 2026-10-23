@@ -159,9 +159,7 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
                             value => setDraft(draft with { ConfirmCloseConnectedTab = value }),
                             onContent: Str.T("shell.settings.on", "On"),
                             offContent: Str.T("shell.settings.off", "Off"))
-                        .AutomationName(Str.T("shell.settings.confirmClose", "Confirm closing connected tabs")))))
-            // Keep the native overlay scrollbar clear of the setting cards.
-            .Padding(0, 0, AppTheme.SpacingL, 0);
+                        .AutomationName(Str.T("shell.settings.confirmClose", "Confirm closing connected tabs")))));
 
         return AppDialog.Render(
             Str.T("shell.settings.title", "Settings"),

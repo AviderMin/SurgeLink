@@ -59,7 +59,6 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         var template = props.Existing;
         var plugins = services.Protocols.Plugins;
         var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
-        var (viewport, setViewport) = UseState((Width: AppDialog.ContentWidth, Height: 520d));
 
         var (name, setName) = UseState(template?.Name ?? string.Empty);
         var (group, setGroup) = UseState(template?.Group ?? string.Empty);
@@ -88,8 +87,6 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         // The shell retains this component after close. Settings notifications can
         // render it again, so its declarative open state must also stay closed.
         var closed = UseRef(false);
-        var sizingRoot = UseRef<XamlRoot?>(null);
-        var sizingHandler = UseRef<TypedEventHandler<XamlRoot, XamlRootChangedEventArgs>?>(null);
         UseEffect(() => DetachDialogEvents, Array.Empty<object>());
 
         var protocol = plugins.Count > 0 ? plugins[Math.Clamp(protocolIndex, 0, plugins.Count - 1)].Descriptor : null;
@@ -130,47 +127,35 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             }));
         }
 
-        var dialog = ContentDialog(
-                TitleFor(props.Mode),
-                ScrollView(VStack(AppTheme.SpacingXl, BuildFields()).Margin(0, 0, AppTheme.SpacingS, AppTheme.SpacingXs))
-                    .Width(viewport.Width).MaxHeight(viewport.Height)
-                    .HorizontalScrollMode(ScrollingScrollMode.Disabled),
-                primaryButtonText: Str.T("shell.editor.saveAndConnect", "Save & connect")) with
-        {
-            IsOpen = !closed.Current,
-            SecondaryButtonText = Str.T("shell.editor.save", "Save"),
-            CloseButtonText = Str.T("common.cancel", "Cancel"),
-            DefaultButton = ContentDialogButton.Primary,
-            OnClosed = result =>
+        // All shell modals share the same scroll viewport, padding and sizing.
+        // Keep validation on both save buttons so invalid forms remain open.
+        return AppDialog.Render(
+            TitleFor(props.Mode),
+            VStack(AppTheme.SpacingXl, BuildFields()),
+            "SessionEditor",
+            result =>
             {
                 if (closed.Current) return;
                 closed.Current = true;
                 DetachDialogEvents();
                 SubmitOrCancel(result);
             },
-        };
+            Str.T("shell.editor.saveAndConnect", "Save & connect"),
+            Str.T("common.cancel", "Cancel"),
+            theme: ThemeController.ToElementTheme(settings.Theme),
+            isOpen: !closed.Current,
+            contentWidth: AppDialog.ContentWidth,
+            secondaryText: Str.T("shell.editor.save", "Save"),
+            onOpened: AttachDialogEvents);
 
-        // Keep the buttons enabled: an invalid form cancels the click and shows the
-        // InfoBar instead of leaving the user with a dead button and no reason.
-        return QueuedDialog.Wrap(dialog
-            .Set(control =>
-            {
-                // Set runs against the live ContentDialog created by the overlay
-                // lifecycle (OnMountAdd receives only the hidden anchor).
-                dialogControl.Current = control;
-                control.Resources["ContentDialogMaxWidth"] = AppDialog.MaxWidth;
-                control.RequestedTheme = ThemeController.ToElementTheme(settings.Theme);
-                DialogAutomation.Tag("SessionEditor")(control);
-            })
-            .Opened(AttachDialogEvents));
-
-        void AttachDialogEvents()
+        void AttachDialogEvents(ContentDialog control)
         {
-            if (dialogControl.Current is not { } control || clickHandler.Current is not null)
+            if (clickHandler.Current is not null)
             {
                 return;
             }
 
+            dialogControl.Current = control;
             // The DSL has no click hook for the dialog's own command-space
             // buttons. Attach when the dialog opens; DetachDialogEvents runs in
             // OnClosed so the pair is balanced for every result path. The
@@ -181,16 +166,6 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             clickHandler.Current = handler;
             control.PrimaryButtonClick += handler;
             control.SecondaryButtonClick += handler;
-            if (control.XamlRoot is { } root)
-            {
-                void Resize() => setViewport((
-                    AppDialog.FitContentWidth(AppDialog.ContentWidth, root.Size.Width),
-                    Math.Max(0, Math.Min(600, root.Size.Height - 240))));
-                sizingRoot.Current = root;
-                sizingHandler.Current = (_, _) => Resize();
-                root.Changed += sizingHandler.Current;
-                Resize();
-            }
             DialogAutomation.Tag("SessionEditor")(control);
         }
 
@@ -203,14 +178,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             }
 
             clickHandler.Current = null;
-            if (sizingRoot.Current is { } root && sizingHandler.Current is { } resizeHandler)
-            {
-                root.Changed -= resizeHandler;
-            }
-            sizingRoot.Current = null;
-            sizingHandler.Current = null;
-            // ContentDialog instances are pooled; do not widen the next dialog.
-            dialogControl.Current?.Resources.Remove("ContentDialogMaxWidth");
+            dialogControl.Current = null;
         }
 
         void CancelIfInvalid(ContentDialogButtonClickEventArgs args)
