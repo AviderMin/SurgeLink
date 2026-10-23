@@ -34,6 +34,11 @@ internal sealed partial class TerminalSurface
             var brush = _resolver.Brush(_resolver.DefaultBackground);
             Background = brush;
             _root.Background = brush;
+            // Terminal colours can differ from the shell theme. Keep the native
+            // thumb legible on the terminal background in either colour scheme.
+            var rgb = _resolver.DefaultBackground;
+            var brightness = ((rgb >> 16) & 0xFF) * 299 + ((rgb >> 8) & 0xFF) * 587 + (rgb & 0xFF) * 114;
+            _scrollBar.RequestedTheme = brightness < 128000 ? ElementTheme.Dark : ElementTheme.Light;
         }
 
         if (fontChanged)

@@ -120,6 +120,23 @@ the user's original settings bytes, or removes the temporary settings file if no
 Use isolated build folders and avoid concurrent UI runs: `uia-action.ps1` targets the
 first running instance, and the localization smoke test changes local settings.
 
+## Terminal scrollbar parity
+
+The terminal ports Windows Terminal's scrollbar customizations onto the WinUI 3
+template matching `Microsoft.WindowsAppSDK.WinUI 2.1.0`: 16 DIP width, zero expansion
+delay, square track and the system's rounded thumb. The resource is embedded as
+`Styling/WindowsTerminalScrollBar.xaml`, with its MIT notice shipped under `Licenses/`.
+When upgrading WinUI, compare the template with the new SDK and Windows Terminal's
+`src/cascadia/TerminalControl/TermControl.xaml` before updating the fork.
+
+With enough terminal output to have scrollback, check the compact indicator, hover
+over the scrollbar while focus is elsewhere, move back into the terminal, drag the
+thumb, drag outside and release, and then re-enter. Expansion and contraction must
+be owned by the native ScrollBar, without terminal-wide opacity or visual-state
+overrides. Repeat with light and dark terminal palettes; the scrollbar theme follows
+the terminal background independently of the shell theme. Also check the OS's
+"Always show scrollbars" setting and high contrast on a suitable test machine.
+
 ## Verifying real SSH
 
 Offline tests do not establish real SSH transport compatibility. Verify with:

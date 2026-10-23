@@ -6,7 +6,9 @@ in review.
 ## Component model
 
 - A view is a Reactor `Component` (or `Component<TProps>`) whose `Render()` returns an element
-  tree. **No XAML, no bindings, no MVVM.**
+  tree. **No XAML views, no bindings, no MVVM.** The vendored native scrollbar
+  template in `Styling/WindowsTerminalScrollBar.xaml` is a control-template exception:
+  it ports Windows Terminal's WinUI styling while keeping interaction in the native control.
 - Props are immutable `record`s. A new state change produces new props; equality decides whether
   a subtree re-renders.
 - Hooks (`UseState`, `UseReducer`, `UseEffect`, `UseMemo`, `UseExternalStore`…) must be called

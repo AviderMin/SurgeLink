@@ -134,13 +134,12 @@ internal sealed partial class TerminalSurface : ContentControl
             SmallChange = 1,
             IsTabStop = false,
             Width = ScrollBarWidth,
+            Style = GetScrollBarStyle(),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             // Standalone ScrollBar has no ScrollViewer to activate its indicator.
             IndicatorMode = Microsoft.UI.Xaml.Controls.Primitives.ScrollingIndicatorMode.MouseIndicator,
-            Opacity = 0,
         };
-        HookScrollBarHover();
         Grid.SetColumn(_scrollBar, 1);
         _scrollBar.ValueChanged += (_, args) =>
         {
@@ -244,9 +243,6 @@ internal sealed partial class TerminalSurface : ContentControl
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _loaded = false;
-        _pointerOverTerminal = false;
-        _scrollBarInteracting = false;
-        UpdateScrollBarVisibility();
         _selecting = false;
         ReleasePointerCaptures();
         _paintQueued = false;
