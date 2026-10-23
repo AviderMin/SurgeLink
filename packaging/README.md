@@ -85,6 +85,11 @@ pwsh -NoProfile -File tools/package-exe.ps1 -Architecture arm64
 如编译器安装在其他位置，可使用 `-IsccPath "D:\Tools\Inno Setup 6\ISCC.exe"`。
 使用 `-PublishOnly` 可仅发布完整运行目录，不需要 Inno Setup。
 
+安装向导支持 English 和简体中文，首次启动默认匹配 Windows 界面语言，并显示语言选择框；
+再次安装时默认沿用上次选择。也可通过 `/LANG=english` 或 `/LANG=chinesesimplified` 指定语言。
+此选择仅影响安装及卸载向导，程序界面语言仍由程序内设置控制。
+中文翻译及其许可证随仓库保存在 `packaging/Languages`，本地和 CI 无需另外下载语言包。
+
 脚本每次使用新的 staging 目录发布 Release，将 .NET、Windows App SDK、资源及许可说明一起打包。
 安装器面向 Windows 10 21H2 及以上，默认按当前用户安装到 `%LOCALAPPDATA%\Programs\SurgeLink`，
 创建开始菜单入口、可选桌面快捷方式以及卸载入口；卸载保留 `%LOCALAPPDATA%\SurgeLink` 中的用户数据。

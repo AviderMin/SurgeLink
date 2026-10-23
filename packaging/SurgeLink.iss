@@ -21,6 +21,9 @@ AppPublisherURL=https://github.com/AviderMin/SurgeLink
 DefaultDirName={localappdata}\Programs\SurgeLink
 DefaultGroupName=SurgeLink
 DisableProgramGroupPage=yes
+LanguageDetectionMethod=uilanguage
+ShowLanguageDialog=yes
+UsePreviousLanguage=yes
 PrivilegesRequired=lowest
 MinVersion=10.0.19044
 #if AppArchitecture == "arm64"
@@ -41,11 +44,16 @@ WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
 
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimplified"; MessagesFile: "Languages\ChineseSimplified.isl"
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "Languages\LICENSE.txt"; DestDir: "{app}\Licenses"; DestName: "InnoSetup-ChineseSimplified.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\SurgeLink"; Filename: "{app}\SurgeLink.exe"

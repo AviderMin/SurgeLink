@@ -101,3 +101,4 @@ known-hosts.json
 !/packaging/README.md
 
 !/packaging/SurgeLink.iss
+!/packaging/Languages/
