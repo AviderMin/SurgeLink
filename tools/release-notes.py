@@ -64,7 +64,7 @@ SSH 终端 · SFTP 文件管理 · 远程性能监控
 | :--- | :--- | :--- |
 {chr(10).join(rows)}
 
-**系统要求：** Windows 10 22H2 或更高版本。安装包包含 .NET 和 Windows App SDK 运行库。
+**系统要求：** Windows 10 21H2 或更高版本。安装包包含 .NET 和 Windows App SDK 运行库。
 
 - **EXE：** 双击安装，支持开始菜单、可选桌面快捷方式和卸载；目前未进行代码签名。
 - **APPX ZIP：** 解压后按包内 `Install.ps1` 安装，包含配套开发证书。
