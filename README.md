@@ -4,7 +4,7 @@
 
 **把远程终端、文件管理和系统监控放进同一个 Windows 工作区。**
 
-SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH 客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
+SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet 客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
 [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [文档](#开发文档)
 
@@ -15,6 +15,7 @@ SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github
 | 功能 | 当前支持 |
 | --- | --- |
 | SSH 连接 | 密码、私钥及键盘交互认证；首次连接确认主机指纹，密钥变化时重新确认 |
+| Telnet 连接 | 默认端口 23，在终端内交互登录；支持选项协商、终端类型及窗口尺寸同步，连接不加密 |
 | 终端 | 自研 VT100/xterm 模拟器，支持 UTF-8、中日韩宽字符、16／256／真彩色、滚动历史、文本选择与复制粘贴 |
 | 远程文件 | SFTP 浏览与上传下载；服务器没有 SFTP 子系统时回退到 SSH 命令与 SCP |
 | 文件操作 | 新建文件与文件夹、编辑文本、重命名、删除、权限编辑；右键剪切、复制、粘贴及查看属性 |
@@ -25,7 +26,7 @@ SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github
 | 界面 | 简体中文／English／跟随系统，浅色、深色及高对比度主题 |
 | 离线演示 | 模拟终端、内存文件系统和合成监控指标，无需连接外部服务器 |
 
-当前实现的协议是 **SSH** 和 **Demo**。协议层可扩展，Telnet、RDP、Serial、VNC 等尚未实现。
+当前实现的协议是 **SSH**、**Telnet** 和 **Demo**。Telnet 仅提供终端；远程文件和系统监控需要 SSH。RDP、Serial、VNC 等尚未实现。
 
 ## 界面预览
 
@@ -100,6 +101,8 @@ powershell -NoProfile -File .\Install.ps1 -ValidateOnly
 
 没有可连接的服务器时，点击“打开演示会话”即可体验。
 
+连接 Telnet 时，在“新建会话”中选择 **Telnet**，填写主机，端口留空使用 23；用户名仅作会话标记，可留空。保存并连接后，在终端按服务器提示输入用户名和密码。Telnet 不加密，也不验证主机身份；应用不会自动发送保存的凭据。终端使用 UTF-8，支持 BINARY、ECHO、SUPPRESS-GO-AHEAD、TERMINAL-TYPE 和 NAWS 协商。
+
 ## 从源码构建
 
 开发需要 Windows、**.NET 10 SDK** 和匹配的 Windows App SDK 开发依赖；普通开发构建还需要相应的 Windows App Runtime。依赖版本由 `Directory.Packages.props` 统一管理。
@@ -160,6 +163,7 @@ src/
   SurgeLink.Core/                  会话、存储、安全及协议能力接口
   SurgeLink.Terminal/              VT/xterm 终端模拟引擎
   SurgeLink.Protocols.Ssh/         SSH、SFTP、SCP 与系统监控
+  SurgeLink.Protocols.Telnet/      Telnet 终端与协议协商
   SurgeLink.Protocols.Demo/        离线演示协议
 tests/                            单元测试与协议契约测试
 tools/                            构建、打包和开发辅助脚本

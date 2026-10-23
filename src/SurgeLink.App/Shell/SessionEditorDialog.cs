@@ -90,8 +90,9 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         UseEffect(() => DetachDialogEvents, Array.Empty<object>());
 
         var protocol = plugins.Count > 0 ? plugins[Math.Clamp(protocolIndex, 0, plugins.Count - 1)].Descriptor : null;
-        var isPassword = authIndex == (int)AuthenticationMethod.Password;
-        var isKey = authIndex == (int)AuthenticationMethod.PublicKey;
+        var terminalLogin = protocol?.AuthenticatesInTerminal == true;
+        var isPassword = !terminalLogin && authIndex == (int)AuthenticationMethod.Password;
+        var isKey = !terminalLogin && authIndex == (int)AuthenticationMethod.PublicKey;
         var authNames = new[]
         {
             Str.T("shell.editor.auth.password", "Password"),
@@ -240,7 +241,9 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             var nameLabel = Str.T("shell.editor.name", "Session name");
             var hostLabel = Str.T("shell.editor.host", "Host");
             var portLabel = Str.T("shell.editor.port", "Port");
-            var userLabel = Str.T("shell.editor.userName", "User name");
+            var userLabel = terminalLogin
+                ? Str.T("shell.editor.userNameOptional", "User name (optional label)")
+                : Str.T("shell.editor.userName", "User name");
             var groupLabel = Str.T("shell.editor.group", "Group (optional)");
             var authLabel = Str.T("shell.editor.auth", "Authentication");
             var passwordLabel = Str.T("shell.editor.password", "Password");
@@ -277,11 +280,21 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             {
                 TextBox(Optional<string>.Of(userName), setUserName, header: userLabel)
                     .AutomationName(userLabel).AutomationId("SessionEditorUserName"),
-                ComboBox(authNames, Optional<int>.Of(authIndex), setAuthIndex)
+            };
+            if (!terminalLogin)
+            {
+                authentication.Add(ComboBox(authNames, Optional<int>.Of(authIndex), setAuthIndex)
                     .Set(combo => combo.Header = authLabel)
                     .HAlign(HorizontalAlignment.Stretch)
-                    .AutomationName(authLabel).AutomationId("SessionEditorAuthentication"),
-            };
+                    .AutomationName(authLabel).AutomationId("SessionEditorAuthentication"));
+            }
+            else
+            {
+                authentication.Add(InfoBar(
+                    Str.T("shell.editor.terminalLoginTitle", "Login in the terminal"),
+                    Str.T("shell.editor.terminalLoginBody",
+                        "Enter your login details at the server's terminal prompts. Telnet sends all data, including passwords, without encryption.")).Warning());
+            }
             if (isPassword)
             {
                 authentication.Add(SessionEditorLayout.Labeled(passwordLabel,
@@ -311,7 +324,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                 authentication.Add(CheckBox(Optional<bool?>.Of(remember), setRemember, label: rememberLabel)
                     .AutomationName(rememberLabel));
             }
-            if (authIndex == (int)AuthenticationMethod.KeyboardInteractive)
+            if (!terminalLogin && authIndex == (int)AuthenticationMethod.KeyboardInteractive)
             {
                 authentication.Add(InfoBar(
                     Str.T("shell.editor.keyboardTitle", "Keyboard interactive"),
@@ -357,7 +370,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                 problems.Add(Str.T("shell.editor.hostRequired", "Host is required."));
             }
 
-            if (string.IsNullOrWhiteSpace(userName))
+            if (!terminalLogin && string.IsNullOrWhiteSpace(userName))
             {
                 problems.Add(Str.T("shell.editor.userRequired", "User name is required."));
             }
@@ -404,10 +417,10 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             var parsedPort = ParsePort(port);
             var protocolId = protocol?.Id ?? template?.ProtocolId ?? "ssh";
             var displayName = string.IsNullOrWhiteSpace(name)
-                ? $"{userName.Trim()}@{host.Trim()}"
+                ? (string.IsNullOrWhiteSpace(userName) ? host.Trim() : $"{userName.Trim()}@{host.Trim()}")
                 : name.Trim();
             var groupValue = string.IsNullOrWhiteSpace(group) ? null : group.Trim();
-            var auth = (AuthenticationMethod)authIndex;
+            var auth = terminalLogin ? AuthenticationMethod.KeyboardInteractive : (AuthenticationMethod)authIndex;
             var keyFile = isKey && !string.IsNullOrWhiteSpace(keyPath) ? keyPath.Trim() : null;
 
             if (props.Mode == SessionEditorMode.Edit && template is not null)
@@ -437,7 +450,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
         StoredCredential? BuildCredential()
         {
-            if (!remember)
+            if (terminalLogin || !remember)
             {
                 return null;
             }

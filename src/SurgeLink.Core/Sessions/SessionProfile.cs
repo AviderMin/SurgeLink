@@ -26,6 +26,10 @@ public sealed record SessionProfile
     /// <summary>User name.</summary>
     public required string Username { get; init; }
 
+    /// <summary>Display address; protocols with terminal login may omit the user name.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string UserHost => string.IsNullOrWhiteSpace(Username) ? Host : $"{Username}@{Host}";
+
     /// <summary>Preferred authentication mechanism.</summary>
     public AuthenticationMethod Authentication { get; init; } = AuthenticationMethod.Password;
 
@@ -51,7 +55,7 @@ public sealed record SessionProfile
     public static SessionProfile New(string protocolId, string host, int port, string username, string? name = null) => new()
     {
         Id = Guid.NewGuid().ToString("n"),
-        Name = string.IsNullOrWhiteSpace(name) ? $"{username}@{host}" : name!,
+        Name = string.IsNullOrWhiteSpace(name) ? (string.IsNullOrWhiteSpace(username) ? host : $"{username}@{host}") : name!,
         ProtocolId = protocolId,
         Host = host,
         Port = port,

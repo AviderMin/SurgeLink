@@ -409,6 +409,9 @@ internal sealed class MainShell : Component
 
     private static async Task<ConnectOptions?> BuildConnectOptionsAsync(AppServices services, SessionProfile profile, CancellationToken cancellationToken)
     {
+        if (services.Protocols.Get(profile.ProtocolId).Descriptor.AuthenticatesInTerminal)
+            return new ConnectOptions();
+
         var stored = services.Credentials.Get(profile.Id);
 
         switch (profile.Authentication)

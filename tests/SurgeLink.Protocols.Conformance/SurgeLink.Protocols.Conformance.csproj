@@ -15,5 +15,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SurgeLink.Core\SurgeLink.Core.csproj" />
     <ProjectReference Include="..\..\src\SurgeLink.Protocols.Demo\SurgeLink.Protocols.Demo.csproj" />
+    <ProjectReference Include="..\..\src\SurgeLink.Protocols.Telnet\SurgeLink.Protocols.Telnet.csproj" />
   </ItemGroup>
 </Project>

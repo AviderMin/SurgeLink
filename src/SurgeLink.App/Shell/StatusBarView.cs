@@ -80,6 +80,6 @@ internal static class StatusBarView
         new("Segoe Fluent Icons, Segoe MDL2 Assets");
 
     private static string Endpoint(WorkspaceTab tab) =>
-        $"{tab.Profile.Username}@{tab.Profile.Host}" +
+        tab.Profile.UserHost +
         (tab.Profile.Port > 0 ? ":" + tab.Profile.Port : string.Empty);
 }

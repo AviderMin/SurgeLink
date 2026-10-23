@@ -154,6 +154,20 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
 
     private ConnectionRequest BuildRequest(SessionProfile profile, ProtocolDescriptor descriptor, ConnectOptions? options)
     {
+        if (descriptor.AuthenticatesInTerminal)
+        {
+            return new ConnectionRequest
+            {
+                Host = profile.Host,
+                Port = profile.ResolvePort(descriptor.DefaultPort),
+                Username = profile.Username,
+                Authentication = AuthenticationMethod.KeyboardInteractive,
+                ProfileId = profile.Id,
+                DisplayName = profile.Name,
+                Options = profile.Options,
+            };
+        }
+
         var stored = options?.Password is null || options?.PrivateKeyPassphrase is null
             ? _credentials.Get(profile.Id)
             : null;

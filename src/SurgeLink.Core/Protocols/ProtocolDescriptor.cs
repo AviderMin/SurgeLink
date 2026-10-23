@@ -19,4 +19,7 @@ public sealed record ProtocolDescriptor(
 
     /// <summary>Short description rendered under the name in pickers.</summary>
     public string? Description { get; init; }
+
+    /// <summary>Login is entered in the terminal; the shell must not collect connection credentials.</summary>
+    public bool AuthenticatesInTerminal { get; init; }
 }

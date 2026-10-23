@@ -147,7 +147,7 @@ internal sealed class SidebarView : Component<SidebarProps>
 
     private static Element BuildRow(SidebarProps props, SessionProfile profile, int position, int total)
     {
-        var subtitle = $"{profile.Username}@{profile.Host}" +
+        var subtitle = profile.UserHost +
                        (profile.Port > 0 ? ":" + profile.Port.ToString() : string.Empty);
 
         return Button(

@@ -74,6 +74,30 @@ public sealed class SessionManagerTests
     private static FakeProtocolSession Fake(IProtocolSession session) => Assert.IsType<FakeProtocolSession>(session);
 
     [Fact]
+    public async Task TerminalLoginDoesNotResolveOrForwardSavedCredentials()
+    {
+        await using var harness = new Harness();
+        var plugin = new FakeProtocolPlugin("terminal-login", 23, authenticatesInTerminal: true);
+        harness.Catalog.Register(plugin);
+        harness.Credentials.Save("profile-1", new StoredCredential { Password = "stored-secret" });
+        var profile = Profile(authentication: AuthenticationMethod.PublicKey) with { ProtocolId = "terminal-login", Username = "" };
+
+        await harness.Manager.OpenAsync(profile, new ConnectOptions
+        {
+            Password = "one-time-secret", PrivateKeyPath = "unused-key", PrivateKeyPassphrase = "unused-passphrase",
+        }, CancellationToken.None);
+
+        var request = plugin.LastRequest!;
+        Assert.Equal(23, request.Port);
+        Assert.Equal(AuthenticationMethod.KeyboardInteractive, request.Authentication);
+        Assert.Null(request.Password);
+        Assert.Null(request.PrivateKeyPath);
+        Assert.Null(request.PrivateKeyPassphrase);
+        Assert.Empty(request.Username);
+        Assert.Equal(0, harness.Credentials.GetCalls);
+    }
+
+    [Fact]
     public async Task OpenBuildsRequestFromProfile()
     {
         await using var harness = new Harness(2222);

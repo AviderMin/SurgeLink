@@ -3,6 +3,17 @@
 SurgeLink is built so that a new protocol is **one project + one registration line**. The shell
 never learns about protocols; it only consumes capabilities.
 
+Telnet is now implemented in `src/SurgeLink.Protocols.Telnet`; the examples below
+describe that integration. For a new protocol, choose a new project name and id.
+Set `ProtocolDescriptor.AuthenticatesInTerminal` when login is entered in the
+terminal, so the session editor and connector skip connection credentials.
+
+The Telnet wire implementation follows [RFC 854](https://www.rfc-editor.org/rfc/rfc854),
+with [NAWS (RFC 1073)](https://www.rfc-editor.org/rfc/rfc1073) and
+[terminal type (RFC 1091)](https://www.rfc-editor.org/rfc/rfc1091). Initial option
+requests track pending acknowledgements; duplicate positive requests do not
+restart negotiation. There are no user-driven option toggles during a session.
+
 ## 1. Create the project
 
 ```powershell
@@ -27,13 +38,14 @@ version-less `PackageReference` in the project — versions are centrally manage
 public sealed class TelnetProtocolPlugin : IProtocolPlugin
 {
     public ProtocolDescriptor Descriptor { get; } = new(
-        id: "telnet",
-        displayName: "Telnet",
-        defaultPort: 23,
-        capabilities: SessionCapabilities.Terminal)
+        Id: "telnet",
+        DisplayName: "Telnet",
+        DefaultPort: 23,
+        Capabilities: SessionCapabilities.Terminal)
     {
         Glyph = "\uE774",
         Description = "Plain text terminal over TCP.",
+        AuthenticatesInTerminal = true,
     };
 
     public async Task<IProtocolSession> ConnectAsync(
@@ -41,8 +53,10 @@ public sealed class TelnetProtocolPlugin : IProtocolPlugin
         ProtocolHostContext context,
         CancellationToken cancellationToken)
     {
-        // build the transport, then return a session
-        return new TelnetSession(request, context.CreateLogger<TelnetSession>());
+        // See the real plugin for validation, timeout, cancellation and error mapping.
+        var client = new System.Net.Sockets.TcpClient();
+        await client.ConnectAsync(request.Host, request.Port == 0 ? 23 : request.Port, cancellationToken);
+        return new TelnetSession(client, request.Host, context.CreateLogger<TelnetSession>());
     }
 }
 ```
@@ -130,6 +144,11 @@ public sealed class TelnetProtocolFixture : ProtocolFixture
     public override IProtocolPlugin Plugin { get; } = new TelnetProtocolPlugin();
 }
 ```
+
+Network protocols must also override `CreateConnectionRequest` with a usable test
+endpoint. The actual `TelnetProtocolFixture` starts a loopback server, so CI does
+not require a remote Telnet service. Wire-format tests cover fragmented IAC
+commands, NVT/BINARY data, terminal type, NAWS and negotiation loop prevention.
 
 The fixture is discovered automatically. The suite verifies descriptor sanity, connect/dispose
 lifecycle, capability handles matching the descriptor, terminal read/write/resize/close semantics,

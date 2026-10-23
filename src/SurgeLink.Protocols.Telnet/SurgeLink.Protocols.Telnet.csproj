@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>SurgeLink.Protocols.Telnet</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SurgeLink.Core\SurgeLink.Core.csproj" />
+    <InternalsVisibleTo Include="SurgeLink.Protocols.Telnet.Tests" />
+  </ItemGroup>
+</Project>

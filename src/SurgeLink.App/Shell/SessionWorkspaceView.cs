@@ -78,8 +78,8 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
                 rows: [GridSize.Auto],
                 VStack(AppTheme.SpacingXs,
                     BodyStrong(tab.Title).Private(tab.Title).TextTrimming(TextTrimming.CharacterEllipsis),
-                    Caption(tab.Profile.Username + "@" + tab.Profile.Host)
-                        .Private(tab.Profile.Username + "@" + tab.Profile.Host)
+                    Caption(tab.Profile.UserHost)
+                        .Private(tab.Profile.UserHost)
                         .Foreground(Theme.SecondaryText).TextTrimming(TextTrimming.CharacterEllipsis))
                     .VAlign(VerticalAlignment.Center)
                     // Include the space between both labels in the hover target.

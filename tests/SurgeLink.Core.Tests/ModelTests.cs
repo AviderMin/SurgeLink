@@ -21,6 +21,15 @@ public sealed class ModelTests
     }
 
     [Fact]
+    public void TerminalLoginProfileWithoutUsernameDisplaysHost()
+    {
+        var profile = SessionProfile.New("telnet", "router.example", 23, "");
+
+        Assert.Equal("router.example", profile.Name);
+        Assert.Equal("router.example", profile.UserHost);
+    }
+
+    [Fact]
     public void NewProfileUsesExplicitName()
     {
         SessionProfile profile = SessionProfile.New("ssh", "example.test", 0, "alice", "Production box");
