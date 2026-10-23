@@ -33,5 +33,9 @@ internal static class CrashLog
         {
             return null;
         }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
     }
 }

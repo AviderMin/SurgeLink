@@ -78,6 +78,19 @@ public sealed class AtomicJsonFileTests
     }
 
     [Fact]
+    public void ReadUnsupportedTypeReturnsFallback()
+    {
+        using var temp = new TempDirectory();
+        string path = temp.File("unsupported.json");
+        File.WriteAllText(path, "\"System.String\"");
+        var fallback = typeof(string);
+
+        Type read = AtomicJsonFile.Read(path, fallback);
+
+        Assert.Same(fallback, read);
+    }
+
+    [Fact]
     public void WriteCreatesMissingDirectories()
     {
         using var temp = new TempDirectory();

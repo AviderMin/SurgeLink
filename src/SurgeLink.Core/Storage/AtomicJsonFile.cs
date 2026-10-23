@@ -25,7 +25,7 @@ public static class AtomicJsonFile
             using var stream = File.OpenRead(path);
             return JsonSerializer.Deserialize<T>(stream, SerializerOptions) ?? fallback;
         }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException)
         {
             return fallback;
         }

@@ -438,6 +438,7 @@ public sealed class WorkspaceStore
 
     private void OnTerminalClosed(WorkspaceTab tab)
     {
+        // TerminalBridge dispatches Closed to the UI thread, so state can be updated directly.
         tab.Message = "Remote shell exited.";
         Update(s => s, force: true);
     }

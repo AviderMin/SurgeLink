@@ -53,6 +53,7 @@ internal sealed class SidebarMonitor : Component<SidebarMonitorProps>
                 }
 
                 var cancellation = new CancellationTokenSource();
+                // Restart the history window when the monitor or sampling interval changes.
                 var history = new MonitorHistory();
                 historyRef.Current = history;
                 setSnapshot(null);
