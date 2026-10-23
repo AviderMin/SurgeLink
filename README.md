@@ -180,6 +180,7 @@ UI 使用 C# 元素树与 Reactor hooks 描述，底层仍是原生 WinUI 控件
 
 ## 开发文档
 
+- [外部 AI Agent / MCP 接入开发方案](docs/AI-AGENT-MCP-DEVELOPMENT.md)（设计提案）
 - [架构与线程模型](docs/ARCHITECTURE.md)
 - [新增协议与契约测试](docs/ADDING-A-PROTOCOL.md)
 - [WinUI 3／Reactor 界面规范](docs/UI-GUIDELINES.md)
