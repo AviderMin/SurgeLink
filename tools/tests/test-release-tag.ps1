@@ -48,3 +48,6 @@ foreach ($scenario in @('missing', 'existing', 'annotated', 'conflict', 'create-
 }
 
 Remove-Variable releaseTagTest -Scope Global
+# The last scenario intentionally simulates a failed native command. Actions
+# appends `exit $LASTEXITCODE` to its wrapper, so clear the expected test failure.
+$global:LASTEXITCODE = 0
