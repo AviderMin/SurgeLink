@@ -64,8 +64,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot read source revision.' }
 @"
 SurgeLink source: https://github.com/AviderMin/SurgeLink
 Build base revision: $revision
-License: GNU GPL version 2; see LICENSE.txt.
-Publish the complete corresponding release source, including any local changes.
+License: MIT; see LICENSE.txt.
+Third-party components retain their own licenses and notices.
 "@ | Set-Content -LiteralPath (Join-Path $payload 'SOURCE.txt') -Encoding utf8
 Write-Output "Published payload: $payload"
 if ($PublishOnly) { return }

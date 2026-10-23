@@ -190,4 +190,4 @@ UI 使用 C# 元素树与 Reactor hooks 描述，底层仍是原生 WinUI 控件
 
 ## 许可证
 
-项目采用 [GNU GPL v2](LICENSE)。内置系统图标的来源、署名与独立许可见 [图标声明](src/SurgeLink.App/Assets/SystemIcons/NOTICE.md)，其他依赖遵循各自的许可条款。
+项目采用 [MIT License](LICENSE)。内置系统图标的来源、署名与独立许可见 [图标声明](src/SurgeLink.App/Assets/SystemIcons/NOTICE.md)，其他依赖遵循各自的许可条款。

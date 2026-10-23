@@ -33,8 +33,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot determine source revision.' }
 @"
 SurgeLink source: https://github.com/AviderMin/SurgeLink
 Build base revision: $sourceRevision
-License: GNU GPL version 2; see LICENSE.txt.
-Publish the complete corresponding release source, including any local changes.
+License: MIT; see LICENSE.txt.
+Third-party components retain their own licenses and notices.
 "@ | Set-Content -LiteralPath (Join-Path $payload 'SOURCE.txt') -Encoding utf8
 # SkipPublish may reuse a payload from an earlier build containing source-path symbols.
 $resolvedPayload = [IO.Path]::GetFullPath($payload).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar

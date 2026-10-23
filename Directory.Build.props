@@ -8,6 +8,7 @@
     <Company>SurgeLink</Company>
     <Product>SurgeLink</Product>
     <Copyright>Copyright (c) SurgeLink contributors</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
   </PropertyGroup>
 
