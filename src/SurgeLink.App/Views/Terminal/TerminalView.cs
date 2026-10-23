@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using SurgeLink.App.Services;
 using SurgeLink.App.Sessions;
 using SurgeLink.App.Styling;
+using SurgeLink.App.Localization;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace SurgeLink.App.Views.Terminal;
@@ -33,7 +34,7 @@ internal sealed class TerminalView : Component<TerminalViewProps>
         TerminalBridge? bridge = Props.Bridge;
         if (bridge is null)
         {
-            return Placeholder("This session does not expose a terminal.");
+            return Placeholder(Str.T("terminal.unavailable", "This session does not expose a terminal."));
         }
 
         IAppSettingsStore settings = services.Settings;
@@ -60,7 +61,7 @@ internal sealed class TerminalView : Component<TerminalViewProps>
                 VStack(
                         AppTheme.SpacingS,
                         Icon(FontIcon("\uE756", fontSize: 32)),
-                        Body(message))
+                        Body(message).TextWrapping(TextWrapping.Wrap))
                     .HAlign(HorizontalAlignment.Center)
                     .VAlign(VerticalAlignment.Center))
             .Background(Theme.LayerFill)

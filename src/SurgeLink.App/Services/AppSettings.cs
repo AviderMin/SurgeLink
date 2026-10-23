@@ -1,5 +1,6 @@
 using SurgeLink.App.Localization;
 using SurgeLink.Core.Storage;
+using SurgeLink.Terminal;
 
 namespace SurgeLink.App.Services;
 
@@ -78,7 +79,7 @@ public sealed class AppSettingsStore : IAppSettingsStore
     public AppSettingsStore(string path)
     {
         _path = path;
-        _current = AtomicJsonFile.Read(path, AppSettings.Default);
+        _current = Normalize(AtomicJsonFile.Read(path, AppSettings.Default));
     }
 
     /// <inheritdoc />
@@ -110,16 +111,34 @@ public sealed class AppSettingsStore : IAppSettingsStore
         ArgumentNullException.ThrowIfNull(mutate);
         lock (_gate)
         {
-            var next = mutate(_current);
+            var next = Normalize(mutate(_current));
             if (next == _current)
             {
                 return;
             }
 
-            _current = next;
             AtomicJsonFile.Write(_path, next);
+            _current = next;
         }
 
         Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static AppSettings Normalize(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return settings with
+        {
+            Theme = Enum.IsDefined(settings.Theme) ? settings.Theme : ThemeMode.System,
+            Language = Enum.IsDefined(settings.Language) ? settings.Language : AppLanguage.System,
+            TerminalFontFamily = settings.TerminalFontFamily?.Trim() ?? string.Empty,
+            TerminalFontSize = double.IsFinite(settings.TerminalFontSize)
+                ? Math.Clamp(settings.TerminalFontSize, 9, 28) : AppSettings.Default.TerminalFontSize,
+            TerminalScrollbackLines = Math.Clamp(settings.TerminalScrollbackLines, 1000, 100000),
+            MonitorIntervalSeconds = Math.Clamp(settings.MonitorIntervalSeconds, 1, 30),
+            TerminalPalette = TerminalThemes.All.FirstOrDefault(theme =>
+                string.Equals(theme.Name, settings.TerminalPalette, StringComparison.OrdinalIgnoreCase)).Name
+                ?? AppSettings.Default.TerminalPalette,
+        };
     }
 }

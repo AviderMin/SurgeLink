@@ -13,7 +13,14 @@ public sealed class JsonSessionStore : ISessionStore
     public JsonSessionStore(string path)
     {
         _path = path;
-        _profiles = AtomicJsonFile.Read(path, new List<SessionProfile>());
+        _profiles = AtomicJsonFile.Read(path, new List<SessionProfile>())
+            .Where(profile => profile is not null
+                && !string.IsNullOrWhiteSpace(profile.Id)
+                && !string.IsNullOrWhiteSpace(profile.ProtocolId)
+                && profile.Name is not null && profile.Host is not null && profile.Username is not null)
+            .Select(profile => profile.Options is null
+                ? profile with { Options = new Dictionary<string, string>() } : profile)
+            .ToList();
     }
 
     /// <inheritdoc />
@@ -30,8 +37,9 @@ public sealed class JsonSessionStore : ISessionStore
     {
         lock (_gate)
         {
-            _profiles = profiles.ToList();
-            AtomicJsonFile.Write(_path, _profiles);
+            var next = profiles.ToList();
+            AtomicJsonFile.Write(_path, next);
+            _profiles = next;
         }
     }
 
@@ -40,17 +48,19 @@ public sealed class JsonSessionStore : ISessionStore
     {
         lock (_gate)
         {
-            var index = _profiles.FindIndex(p => string.Equals(p.Id, profile.Id, StringComparison.Ordinal));
+            var next = _profiles.ToList();
+            var index = next.FindIndex(p => string.Equals(p.Id, profile.Id, StringComparison.Ordinal));
             if (index >= 0)
             {
-                _profiles[index] = profile;
+                next[index] = profile;
             }
             else
             {
-                _profiles.Add(profile);
+                next.Add(profile);
             }
 
-            AtomicJsonFile.Write(_path, _profiles);
+            AtomicJsonFile.Write(_path, next);
+            _profiles = next;
         }
     }
 
@@ -59,10 +69,12 @@ public sealed class JsonSessionStore : ISessionStore
     {
         lock (_gate)
         {
-            var removed = _profiles.RemoveAll(p => string.Equals(p.Id, profileId, StringComparison.Ordinal)) > 0;
+            var next = _profiles.ToList();
+            var removed = next.RemoveAll(p => string.Equals(p.Id, profileId, StringComparison.Ordinal)) > 0;
             if (removed)
             {
-                AtomicJsonFile.Write(_path, _profiles);
+                AtomicJsonFile.Write(_path, next);
+                _profiles = next;
             }
 
             return removed;

@@ -11,7 +11,7 @@ using static Microsoft.UI.Reactor.Factories;
 namespace SurgeLink.App.Shell;
 
 /// <summary>Props for the modal settings dialog.</summary>
-internal sealed record SettingsDialogProps(Action OnClosed);
+internal sealed record SettingsDialogProps(Action OnClosed, Action<Exception> OnSaveFailed);
 
 /// <summary>
 /// Settings in a native dialog shared with About. Changes are
@@ -174,7 +174,11 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
                 closed.Current = true;
                 if (result == ContentDialogResult.Primary)
                 {
-                    store.Update(_ => draft);
+                    try { store.Update(_ => draft); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        Props.OnSaveFailed(ex);
+                    }
                 }
 
                 Props.OnClosed();

@@ -7,7 +7,7 @@ public sealed class JsonHostKeyStore : IHostKeyStore
 {
     private readonly object _gate = new();
     private readonly string _path;
-    private readonly Dictionary<string, KnownHostEntry> _entries;
+    private Dictionary<string, KnownHostEntry> _entries;
 
     /// <summary>Creates a store backed by <paramref name="path"/>.</summary>
     public JsonHostKeyStore(string path)
@@ -37,8 +37,12 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     {
         lock (_gate)
         {
-            _entries[entry.Endpoint] = entry;
-            Persist();
+            var next = new Dictionary<string, KnownHostEntry>(_entries, StringComparer.OrdinalIgnoreCase)
+            {
+                [entry.Endpoint] = entry,
+            };
+            Persist(next);
+            _entries = next;
         }
     }
 
@@ -47,12 +51,14 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     {
         lock (_gate)
         {
-            if (!_entries.Remove(endpoint))
+            var next = new Dictionary<string, KnownHostEntry>(_entries, StringComparer.OrdinalIgnoreCase);
+            if (!next.Remove(endpoint))
             {
                 return false;
             }
 
-            Persist();
+            Persist(next);
+            _entries = next;
             return true;
         }
     }
@@ -66,8 +72,8 @@ public sealed class JsonHostKeyStore : IHostKeyStore
         }
     }
 
-    private void Persist() =>
-        AtomicJsonFile.Write(_path, _entries.Values.OrderBy(e => e.Endpoint, StringComparer.Ordinal).ToList());
+    private void Persist(Dictionary<string, KnownHostEntry> entries) =>
+        AtomicJsonFile.Write(_path, entries.Values.OrderBy(e => e.Endpoint, StringComparer.Ordinal).ToList());
 
     private static Dictionary<string, KnownHostEntry> Load(string path)
     {
@@ -75,6 +81,9 @@ public sealed class JsonHostKeyStore : IHostKeyStore
         var map = new Dictionary<string, KnownHostEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in list)
         {
+            if (entry is null || string.IsNullOrWhiteSpace(entry.Endpoint)
+                || string.IsNullOrWhiteSpace(entry.Algorithm)
+                || string.IsNullOrWhiteSpace(entry.FingerprintSha256)) { continue; }
             map[entry.Endpoint] = entry;
         }
 

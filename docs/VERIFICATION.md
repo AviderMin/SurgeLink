@@ -21,9 +21,26 @@ dotnet test tests/SurgeLink.Terminal.Tests              # emulator
 dotnet test tests/SurgeLink.Protocols.Ssh.Tests         # /proc, df, ps and Windows CIM parsers
 dotnet test tests/SurgeLink.Core.Tests                  # stores, catalog, session manager
 dotnet test tests/SurgeLink.Protocols.Conformance       # protocol conformance kit, Demo fixture
+dotnet test tests/SurgeLink.Protocols.Telnet.Tests      # Telnet codec and loopback transport
+dotnet test tests/SurgeLink.Protocols.Serial.Tests      # serial options and fake-device lifecycle
 ```
 
 The full suite is offline; use actual test output for current counts.
+Use `dotnet test SurgeLink.slnx -c Release -p:Platform=x64 -m:1` to run the entire
+suite sequentially. Performance smoke tests have a 200 ms budget, so avoid running
+builds or live monitoring sessions at the same time when measuring them.
+
+Static repository and UI text checks:
+
+```powershell
+python tools/check-repository.py
+python tools/check-ui-localization.py
+dotnet list SurgeLink.slnx package --vulnerable --include-transitive
+```
+
+The UI text check covers literal `Str.T` / `Str.F` keys, duplicate Chinese keys and
+format-placeholder parity. Dynamic keys, layout, keyboard access and theme contrast
+still require runtime checks. The dependency vulnerability check requires network access.
 
 Release tooling regression checks:
 
@@ -89,7 +106,7 @@ folder (where "Paste into this folder" has to be reachable).
 `{"language":1}` (English) and drives the demo session end to end, then relaunches with
 `{"language":2}` (Chinese) and asserts Chinese text is present in the accessibility tree
 (no "Render error", key wording such as 会话/设置/新建). Afterwards it restores
-`{"language":0}` so a manual run follows the Windows UI language again.
+the user's original settings bytes, or removes the temporary settings file if none existed.
 
 **End-to-end smoke test (no SSH server required)**
 

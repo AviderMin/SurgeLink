@@ -15,5 +15,6 @@ public static class ZhTerminal
         ["terminal.resetZoom"] = "重置字号",
         ["terminal.output"] = "终端输出",
         ["terminal.label"] = "终端",
+        ["terminal.unavailable"] = "此会话不支持终端。",
     };
 }

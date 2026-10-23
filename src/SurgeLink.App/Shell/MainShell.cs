@@ -71,6 +71,28 @@ internal sealed class MainShell : Component
         var shellModal = UseRef<string?>(null);
         var connectPending = UseRef(false);
         var connectionCancellation = UseRef<CancellationTokenSource?>(null);
+        var (persistenceError, setPersistenceError) = UseState<string?>(null);
+
+        void ReportPersistenceFailure(Exception error) => setPersistenceError(error.Message);
+
+        bool TryPersist(Action operation)
+        {
+            try
+            {
+                operation();
+                setPersistenceError(null);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                or System.Security.Cryptography.CryptographicException)
+            {
+                ReportPersistenceFailure(ex);
+                // Profile and credential files may fail independently; show what
+                // actually persisted even if the second write failed.
+                workspace.ReloadProfiles();
+                return false;
+            }
+        }
 
         async void CancelConnection()
         {
@@ -173,16 +195,18 @@ internal sealed class MainShell : Component
                               0,
                               Environment.UserName,
                               Str.T("shell.demo.profileName", "Demo session"));
-            workspace.SaveProfile(profile, new StoredCredential { Password = "demo" });
-            Connect(profile);
+            if (TryPersist(() => workspace.SaveProfile(profile, new StoredCredential { Password = "demo" })))
+            {
+                Connect(profile);
+            }
         }
 
         void SaveProfile(SessionEditorOutcome outcome)
         {
             shellModal.Current = null;
             setEditor(null);
-            workspace.SaveProfile(outcome.Profile, outcome.Credential);
-            if (outcome.ConnectAfterSave)
+            if (TryPersist(() => workspace.SaveProfile(outcome.Profile, outcome.Credential))
+                && outcome.ConnectAfterSave)
             {
                 _ = ConnectAsync(outcome.Profile, outcome.Options);
             }
@@ -205,7 +229,7 @@ internal sealed class MainShell : Component
 
             if (confirmed)
             {
-                workspace.DeleteProfile(profile.Id);
+                TryPersist(() => workspace.DeleteProfile(profile.Id));
             }
         }
 
@@ -313,8 +337,16 @@ internal sealed class MainShell : Component
 
         Element BuildContent() => Grid(
             columns: [GridSize.Star()],
-            rows: [GridSize.Star()],
-            workspaceSurface.Grid(row: 0));
+            rows: [GridSize.Auto, GridSize.Star()],
+            (persistenceError is null ? Empty() : InfoBar(
+                Str.T("shell.error.saveFailed", "Could not save changes"),
+                Str.F("shell.error.saveFailedHint", "Check folder access and available disk space, then try again. {0}", persistenceError)) with
+            {
+                Severity = InfoBarSeverity.Error,
+                IsClosable = true,
+                OnClosed = () => setPersistenceError(null),
+            }).Grid(row: 0),
+            workspaceSurface.Grid(row: 1));
 
         // A bounded star row gives the session list the remaining pane height.
         // NavigationView.PaneCustomContent is measured in an Auto row instead.
@@ -368,7 +400,7 @@ internal sealed class MainShell : Component
 
         var settingsOverlay = settingsOpen
             ? Component<SettingsDialog, SettingsDialogProps>(
-                new SettingsDialogProps(() => { shellModal.Current = null; setSettingsOpen(false); }))
+                new SettingsDialogProps(() => { shellModal.Current = null; setSettingsOpen(false); }, ReportPersistenceFailure))
                 .WithKey("settings-dialog-" + settingsRequest)
             : Empty();
 

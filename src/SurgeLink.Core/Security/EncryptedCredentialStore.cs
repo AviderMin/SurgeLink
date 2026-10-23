@@ -29,6 +29,9 @@ public sealed class EncryptedCredentialStore : ICredentialStore
         _path = path;
         _protector = protector;
         _file = AtomicJsonFile.Read(path, new CredentialFile());
+        _file.Profiles = (_file.Profiles ?? new Dictionary<string, Entry>())
+            .Where(pair => pair.Value is not null)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
     }
 
     /// <inheritdoc />
@@ -54,12 +57,14 @@ public sealed class EncryptedCredentialStore : ICredentialStore
     {
         lock (_gate)
         {
-            _file.Profiles[profileId] = new Entry
+            var next = new CredentialFile { Profiles = new(_file.Profiles, StringComparer.Ordinal) };
+            next.Profiles[profileId] = new Entry
             {
                 Password = Protect(credential.Password),
                 Passphrase = Protect(credential.PrivateKeyPassphrase),
             };
-            AtomicJsonFile.Write(_path, _file);
+            AtomicJsonFile.Write(_path, next);
+            _file = next;
         }
     }
 
@@ -68,9 +73,12 @@ public sealed class EncryptedCredentialStore : ICredentialStore
     {
         lock (_gate)
         {
-            if (_file.Profiles.Remove(profileId))
+            if (!_file.Profiles.ContainsKey(profileId)) { return; }
+            var next = new CredentialFile { Profiles = new(_file.Profiles, StringComparer.Ordinal) };
+            if (next.Profiles.Remove(profileId))
             {
-                AtomicJsonFile.Write(_path, _file);
+                AtomicJsonFile.Write(_path, next);
+                _file = next;
             }
         }
     }

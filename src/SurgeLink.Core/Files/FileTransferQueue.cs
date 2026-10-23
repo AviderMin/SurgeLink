@@ -131,6 +131,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
     {
         Task? worker;
         TransferItem[] items;
+        TransferItem[] pending;
         lock (_gate)
         {
             if (_disposed)
@@ -140,16 +141,19 @@ public sealed class FileTransferQueue : IAsyncDisposable
 
             _disposed = true;
             items = _items.ToArray();
+            pending = _pending.Select(job => job.Item).ToArray();
             _pending.Clear();
             worker = _worker;
         }
 
         foreach (var item in items)
         {
+            if (item.Status == TransferStatus.Queued) { item.Status = TransferStatus.Cancelled; }
             item.Cancellation.Cancel();
         }
 
         Publish(force: true);
+        foreach (var item in pending) { RaiseTransferFinished(item); }
 
         var workerCompleted = true;
         if (worker is not null)
@@ -213,7 +217,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
         if (item.Status == TransferStatus.Cancelled || item.Cancellation.IsCancellationRequested)
         {
             SetStatus(item, TransferStatus.Cancelled);
-            TransferFinished?.Invoke(item);
+            RaiseTransferFinished(item);
             return;
         }
 
@@ -250,7 +254,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
         }
         finally
         {
-            TransferFinished?.Invoke(item);
+            RaiseTransferFinished(item);
         }
     }
 
@@ -484,5 +488,23 @@ public sealed class FileTransferQueue : IAsyncDisposable
         RaiseChanged();
     }
 
-    private void RaiseChanged() => Changed?.Invoke();
+    private void RaiseChanged()
+    {
+        if (Changed is not { } handlers) { return; }
+        foreach (Action handler in handlers.GetInvocationList())
+        {
+            try { handler(); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Transfer change subscriber failed."); }
+        }
+    }
+
+    private void RaiseTransferFinished(TransferItem item)
+    {
+        if (TransferFinished is not { } handlers) { return; }
+        foreach (Action<TransferItem> handler in handlers.GetInvocationList())
+        {
+            try { handler(item); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Transfer completion subscriber failed."); }
+        }
+    }
 }

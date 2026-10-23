@@ -8,6 +8,61 @@ namespace SurgeLink.Core.Tests;
 public sealed class FileTransferQueueTests
 {
     [Fact]
+    public async Task SubscriberFailuresDoNotStopFollowingTransfersOrOtherSubscribers()
+    {
+        using var temp = new TempDirectory();
+        var fs = new FakeFileSystem();
+        fs.Files["/one"] = Encoding.UTF8.GetBytes("one");
+        fs.Files["/two"] = Encoding.UTF8.GetBytes("two");
+        await using var queue = new FileTransferQueue();
+        var finished = new ConcurrentQueue<string>();
+        var changes = 0;
+        queue.Changed += () => throw new InvalidOperationException("view failed");
+        queue.Changed += () => Interlocked.Increment(ref changes);
+        queue.TransferFinished += _ => throw new InvalidOperationException("completion failed");
+        queue.TransferFinished += item => finished.Enqueue(item.Id);
+        var first = Download("/one", temp.File("one"), 3);
+        var second = Download("/two", temp.File("two"), 3);
+        queue.Enqueue(first, fs);
+        queue.Enqueue(second, fs);
+        Assert.True(await WaitAsync(() => finished.Count == 2));
+        Assert.Equal(new[] { first.Id, second.Id }, finished.ToArray());
+        Assert.Equal(TransferStatus.Completed, first.Status);
+        Assert.Equal(TransferStatus.Completed, second.Status);
+        Assert.True(Volatile.Read(ref changes) > 0);
+    }
+
+    [Fact]
+    public async Task ShutdownMarksPendingWorkCancelledAndNotifiesCompletionOnce()
+    {
+        using var temp = new TempDirectory();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fs = new FakeFileSystem
+        {
+            OpenReadOverride = async (_, token) =>
+            {
+                entered.TrySetResult();
+                await Task.Delay(Timeout.Infinite, token);
+                throw new InvalidOperationException("unreachable");
+            },
+        };
+        await using var queue = new FileTransferQueue();
+        var finished = new ConcurrentQueue<string>();
+        queue.TransferFinished += item => finished.Enqueue(item.Id);
+        var active = Download("/one", temp.File("one"), 1);
+        var pending = Download("/two", temp.File("two"), 1);
+        queue.Enqueue(active, fs);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        queue.Enqueue(pending, fs);
+        await queue.DisposeAsync();
+        Assert.Equal(TransferStatus.Cancelled, active.Status);
+        Assert.Equal(TransferStatus.Cancelled, pending.Status);
+        Assert.Equal(0, fs.OpenReadCalls("/two"));
+        Assert.Equal(2, finished.Count);
+        Assert.Equal(2, finished.Distinct().Count());
+    }
+
+    [Fact]
     public async Task FolderDownloadCreatesZipWithNestedFilesAndEmptyFolders()
     {
         using var temp = new TempDirectory();
