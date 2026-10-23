@@ -4,7 +4,7 @@
 
 ```powershell
 # whole solution
-dotnet build SurgeLink.sln -p:Platform=x64
+dotnet build SurgeLink.slnx -p:Platform=x64
 
 # app only (the usual inner loop)
 dotnet build src/SurgeLink.App/SurgeLink.App.csproj -c Debug -p:Platform=x64
@@ -17,13 +17,20 @@ Windows App Runtime 2.x automatically.
 ## Tests
 
 ```powershell
-dotnet test tests/SurgeLink.Terminal.Tests              # emulator (273 tests)
-dotnet test tests/SurgeLink.Protocols.Ssh.Tests         # /proc, df, ps and Windows CIM parsers (305 tests)
-dotnet test tests/SurgeLink.Core.Tests                  # stores, catalog, session manager (95 tests)
-dotnet test tests/SurgeLink.Protocols.Conformance       # protocol conformance kit, Demo fixture (30 tests)
+dotnet test tests/SurgeLink.Terminal.Tests              # emulator
+dotnet test tests/SurgeLink.Protocols.Ssh.Tests         # /proc, df, ps and Windows CIM parsers
+dotnet test tests/SurgeLink.Core.Tests                  # stores, catalog, session manager
+dotnet test tests/SurgeLink.Protocols.Conformance       # protocol conformance kit, Demo fixture
 ```
 
-The full suite is offline and runs in a few seconds.
+The full suite is offline; use actual test output for current counts.
+
+Release tooling regression checks:
+
+```powershell
+python -m unittest discover -s tools/tests -p test_release_notes.py -v
+pwsh -NoProfile -File tools/tests/test-release-tag.ps1
+```
 
 ## Isolated builds (parallel agents / CI)
 
@@ -37,8 +44,8 @@ project concurrently without fighting over `obj/`.
 
 ## Running the app and checking it headlessly
 
-Nobody on this project can look at screenshots, so verification is done through
-**Windows UI Automation** plus pixel statistics.
+The scripts use **Windows UI Automation** and pixel statistics. Inspect captured
+screenshots as well when checking visual layout.
 
 ```powershell
 # one-command end-to-end check: build, launch, drive the demo session through
@@ -93,14 +100,12 @@ folder (where "Paste into this folder" has to be reachable).
    (synthetic metrics).
 4. Dump the tree and assert on those strings.
 
-Verification runs are safe to do in parallel: the run scripts only stop instances launched from
-their own artifacts folder (`artifacts/agent-build/<agent>`), and `uia-action.ps1` targets the
-first running instance.
+Use isolated build folders and avoid concurrent UI runs: `uia-action.ps1` targets the
+first running instance, and the localization smoke test changes local settings.
 
 ## Verifying real SSH
 
-The development machine has no SSH server and no admin rights to install one, so the SSH
-transport is covered by:
+Offline tests do not establish real SSH transport compatibility. Verify with:
 
 - unit tests for every parser and path helper (`tests/SurgeLink.Protocols.Ssh.Tests`),
 - manual verification against any reachable host — set up a profile in the session editor
@@ -119,21 +124,18 @@ When testing host key handling, switch the server's key and confirm the app show
 Deleting the folder resets the app completely (including saved credentials and trusted keys).
 ## Windows 10 compatibility
 
-On the compat-win10 branch, the minimum OS version is Windows 10 21H2 (build 19044) in the project,
-APPX manifest and Inno Setup installer. The build still targets SDK 22621;
-that SDK target does not set the minimum OS version.
+Starting with mainline version 1.0.2.15, the minimum OS version is Windows 10 21H2
+(build 19044) in the project, APPX manifest and Inno Setup installer. This merges
+the compat-win10 branch's 1.0.2.14 configuration into master. The build still targets
+SDK 22621; that SDK target does not set the minimum OS version.
 Main-window Mica and editor-window MicaAlt are disabled on Windows 10.
 
-Validation on 2026-10-22: x64 Release build passed without warnings and all
-802 offline tests passed on Windows 11 build 28000. Windows 10 execution is
-pending; lowering the package minimum does not establish runtime compatibility.
+Windows 10 21H2 execution remains pending; lowering the installation minimum does
+not establish runtime compatibility. ARM64 requires testing on ARM64 hardware.
 
-On a Windows 10 21H2 x64 machine, extract the complete distribution ZIP and
-run Install.ps1. Verify installation and launch, light/dark/high-contrast
-backgrounds, title bar and window resizing, an offline Demo session across
-Terminal/Files/Monitor, file editor opening, local upload/download pickers,
-and an SSH connection with file transfer. Check for startup/crash logs.
-Record the exact OS build and results before claiming verified Win10 support.
-1.0.2.14 lowers the installation and application minimum to build 19044.
-Windows 10 21H2 execution remains pending; test launch, terminal, file transfers,
-and monitoring on a fully patched target machine before claiming verified compatibility.
+On a fully patched Windows 10 21H2 x64 machine, install the EXE or extract the
+APPX distribution ZIP and run Install.ps1. Verify installation and launch,
+light/dark/high-contrast backgrounds, title bar and resizing, an offline Demo
+session across Terminal/Files/Monitor, file editor opening, upload/download
+pickers, and a real SSH connection with file transfer. Check startup/crash logs.
+Record the exact OS edition/build and results before claiming verified support.

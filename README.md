@@ -59,9 +59,13 @@ SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github
 - 提供 **x64**、**ARM64** 两种安装包，请按设备架构选择。
 - 分发包包含 .NET 与 Windows App SDK 运行库，无需安装 .NET SDK。
 
+1.0.2.15 起主线的安装与应用最低版本统一为 19044；Windows 10 21H2 实机运行尚待验证，ARM64 也需对应设备验证。
+
 ### 获取安装包
 
-在 [GitHub Actions](https://github.com/AviderMin/SurgeLink/actions/workflows/package.yml) 中选择一次成功的 **Package Windows** 运行，从 Artifacts 下载对应架构的 `SurgeLink_<版本>_<架构>.zip`。下载 Actions 产物通常需要登录 GitHub，且产物有保留期限。
+从 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases) 下载对应架构的 `SurgeLink-Setup-<版本>-<架构>.exe`，双击安装。安装程序包含运行库，支持开始菜单入口、可选桌面快捷方式和卸载，目前未进行代码签名。
+
+需要 APPX 侧载时，下载 `SurgeLink_<版本>_<架构>.zip`，按下述步骤安装。单独打包的测试产物也可从 [GitHub Actions](https://github.com/AviderMin/SurgeLink/actions) 下载，通常需要登录 GitHub，保留 14 天。
 
 完整解压一次后，目录中包含：
 
@@ -121,16 +125,18 @@ dotnet test SurgeLink.slnx -c Release -p:Platform=x64
 本地生成包含运行库的安装包：
 
 ```powershell
-pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2 -Architecture x64
-pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2 -Architecture arm64
+pwsh -NoProfile -File tools/package-exe.ps1 -Version 1.0.2.15 -Architecture x64
+pwsh -NoProfile -File tools/package-exe.ps1 -Version 1.0.2.15 -Architecture arm64
+pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.15 -Architecture x64
+pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.15 -Architecture arm64
 ```
 
-| 架构 | 输出目录 |
-| --- | --- |
-| x64 | `artifacts/appx/` |
-| ARM64 | `artifacts/appx/arm64/` |
+| 产物 | x64 输出目录 | ARM64 输出目录 |
+| --- | --- | --- |
+| Inno EXE 安装包与 SHA256 | `artifacts/installer/x64/` | `artifacts/installer/arm64/` |
+| APPX 分发 ZIP | `artifacts/appx/` | `artifacts/appx/arm64/` |
 
-[打包工作流](.github/workflows/package.yml) 支持手动运行或推送 `v1.0.2` 形式的数字版本标签。它先运行测试，再分别构建两个架构，每个架构只上传一个分发 ZIP，保留 14 天，不进行二次压缩，也不自动创建 GitHub Release 或提交 Microsoft Store。
+[Release 工作流](.github/workflows/release.yml) 支持手动运行或推送 `v1.0.2.15` 形式的数字版本标签。它复用 [Installer](.github/workflows/package-exe.yml) 和 [APPX](.github/workflows/package-appx.yml) 工作流，先运行测试，再分别构建两个架构。完整产物上传草稿后，核对或创建指向构建提交的 Tag，再公开 Release，提供 EXE、APPX ZIP 与 SHA256 校验清单。单独运行打包工作流只上传 Actions 产物，保留 14 天，不创建 Release。工作流不自动提交 Microsoft Store。
 
 打包使用临时生成的开发签名密钥，完成后删除临时 PFX；不需要向仓库提交私钥或配置签名 Secrets。ARM64 包在 x64 runner 上交叉编译，实际启动与功能仍需在 ARM64 设备验证。
 

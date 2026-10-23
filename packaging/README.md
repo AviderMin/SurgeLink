@@ -1,4 +1,4 @@
-# APPX 与 ZIP 发布
+# EXE、APPX 与 GitHub Release 发布
 
 ## GitHub Actions 多架构打包
 
@@ -51,7 +51,7 @@ x64 保持输出到 `artifacts/appx`；ARM64 输出到 `artifacts/appx/arm64`。
 
 上传后需再次确认包接受验证结果。商店身份匹配和受限功能批准由 Partner Center 验证。
 
-运行 `pwsh -NoProfile -File tools/package-appx.ps1`。默认版本为 1.0.2，APPX 清单版本为 1.0.2.0。
+APPX 脚本省略 `-Version` 时默认使用 1.0.2；发布新版本应显式传入 `-Version 1.0.2.15`。统一 Release 工作流会显式传入解析后的版本，EXE 脚本省略版本时读取 `Directory.Build.props`。
 
 发布结果：`artifacts/appx/SurgeLink_1.0.2_x64.zip`，包含且仅包含：
 
@@ -65,7 +65,7 @@ x64 保持输出到 `artifacts/appx`；ARM64 输出到 `artifacts/appx/arm64`。
 
 打包参数支持 `-Version 1.0.2` 或四段版本号；已完成发布时 `-SkipPublish` 可仅重打包。版本覆盖参数同时传递给 .NET 发布，避免应用内版本和包版本不一致。
 
-默认 x64 Release，面向 Windows 10 21H2（10.0.19044）及以上，包含 .NET 和 Windows App SDK 运行库。应用 ICO、标题栏及关于页、安装包图标统一使用 `docs/LOGO.png`；ICO 由 `tools/make-icon.ps1` 生成。MakePRI 合并资源到 `resources.pri`，并检查 Reactor 启动资源；MakeAppx 执行包校验，SignTool 使用开发证书签名。
+1.0.2.15 起主线与兼容分支的最低要求一致：默认 x64 Release，面向 Windows 10 21H2（10.0.19044）及以上，包含 .NET 和 Windows App SDK 运行库。应用 ICO、标题栏及关于页、安装包图标统一使用 `docs/LOGO.png`；ICO 由 `tools/make-icon.ps1` 生成。MakePRI 合并资源到 `resources.pri`，并检查 Reactor 启动资源；MakeAppx 执行包校验，SignTool 使用开发证书签名。
 
 开发私钥仅用于此次签名，临时 PFX 完成后删除。每次重打包生成新证书，安装脚本会绑定本次证书指纹与 APPX 哈希；请分发同一个 ZIP 内的配套文件。此签名适合开发测试，公开发行应使用正式签名渠道。
 
@@ -102,6 +102,8 @@ EXE 发布检查包含应用自身的 `SurgeLink.pri`，缺失时直接停止打
 x64 会实际静默安装并检查程序启动后持续运行十秒，ARM64 为交叉编译，仍需真机验证。
 每个架构的 EXE 和 SHA256 分别作为原始文件上传，保存 14 天；不上传发布目录或创建 GitHub Release。
 APPX 与 Installer 工作流可单独手动运行；版本标签统一交给 Release 工作流，避免重复打包。安装包暂未签名。
+
+Windows 10 21H2（19044）的安装门槛已开放，实机启动和功能验证仍待完成；ARM64 仍需对应设备验证。
 
 ## 统一发布 GitHub Release
 
