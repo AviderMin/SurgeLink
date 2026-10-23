@@ -190,12 +190,21 @@ public sealed class WorkspaceStore
                 terminal.Closed += (_, _) => OnTerminalClosed(tab);
             }
 
-            var updatedProfile = profile.MarkUsed(DateTimeOffset.UtcNow);
-            if (!string.IsNullOrWhiteSpace(session.HostInfo.OperatingSystem))
+            // Merge only connection metadata into a still-existing, matching profile.
+            // Serialize this read/modify/write with profile edits and deletion.
+            lock (_gate)
             {
-                updatedProfile = updatedProfile with { DetectedOperatingSystem = session.HostInfo.OperatingSystem };
+                var current = _profiles.Load().FirstOrDefault(p => p.Id == profile.Id);
+                if (current is not null && SameConnection(current, profile))
+                {
+                    var updated = current.MarkUsed(DateTimeOffset.UtcNow);
+                    if (!string.IsNullOrWhiteSpace(session.HostInfo.OperatingSystem))
+                    {
+                        updated = updated with { DetectedOperatingSystem = session.HostInfo.OperatingSystem };
+                    }
+                    _profiles.Upsert(updated);
+                }
             }
-            _profiles.Upsert(updatedProfile);
 
             Update(s => s with
             {
@@ -272,7 +281,7 @@ public sealed class WorkspaceStore
     /// Drops the connection behind a tab and opens the same profile again.
     /// The tab is replaced (same position is not guaranteed, the new tab becomes active).
     /// </summary>
-    public async Task ReconnectAsync(Guid tabId, CancellationToken cancellationToken = default)
+    public async Task ReconnectAsync(Guid tabId, ConnectOptions? options = null, CancellationToken cancellationToken = default)
     {
         WorkspaceTab? tab;
         lock (_gate)
@@ -285,10 +294,28 @@ public sealed class WorkspaceStore
             return;
         }
 
-        var profile = tab.Profile;
+        var profile = GetReconnectProfile(tabId);
+        if (profile is null) { return; }
+        cancellationToken.ThrowIfCancellationRequested();
         await CloseAsync(tabId);
-        await OpenAsync(profile, null, cancellationToken);
+        await OpenAsync(profile, options, cancellationToken);
     }
+
+    /// <summary>Uses the latest saved configuration, or the tab configuration if it was deleted.</summary>
+    public SessionProfile? GetReconnectProfile(Guid tabId)
+    {
+        lock (_gate)
+        {
+            var tab = _snapshot.Tabs.FirstOrDefault(t => t.Id == tabId);
+            return tab is null ? null : _profiles.Load().FirstOrDefault(p => p.Id == tab.Profile.Id) ?? tab.Profile;
+        }
+    }
+
+    private static bool SameConnection(SessionProfile left, SessionProfile right) =>
+        left.ProtocolId == right.ProtocolId && left.Host == right.Host && left.Port == right.Port
+        && left.Username == right.Username && left.Authentication == right.Authentication
+        && left.PrivateKeyPath == right.PrivateKeyPath && left.Options.Count == right.Options.Count
+        && left.Options.All(pair => right.Options.TryGetValue(pair.Key, out var value) && value == pair.Value);
 
     /// <summary>Makes a tab active.</summary>
     public void Activate(Guid tabId) =>
@@ -327,32 +354,38 @@ public sealed class WorkspaceStore
     /// <summary>Adds or updates a saved profile.</summary>
     public void SaveProfile(SessionProfile profile, StoredCredential? credential = null)
     {
-        var previous = _profiles.Load().FirstOrDefault(item => item.Id == profile.Id);
-        if (previous is not null &&
-            (!string.Equals(previous.Host, profile.Host, StringComparison.OrdinalIgnoreCase)
-             || previous.Port != profile.Port || previous.ProtocolId != profile.ProtocolId))
+        lock (_gate)
         {
-            profile = profile with { DetectedOperatingSystem = null };
-        }
-        _profiles.Upsert(profile);
-        if (credential is not null)
-        {
-            _credentials.Save(profile.Id, credential);
-        }
-        else
-        {
-            _credentials.Delete(profile.Id);
-        }
+            var previous = _profiles.Load().FirstOrDefault(item => item.Id == profile.Id);
+            if (previous is not null &&
+                (!string.Equals(previous.Host, profile.Host, StringComparison.OrdinalIgnoreCase)
+                 || previous.Port != profile.Port || previous.ProtocolId != profile.ProtocolId))
+            {
+                profile = profile with { DetectedOperatingSystem = null };
+            }
+            _profiles.Upsert(profile);
+            if (credential is not null)
+            {
+                _credentials.Save(profile.Id, credential);
+            }
+            else
+            {
+                _credentials.Delete(profile.Id);
+            }
 
-        Update(s => s with { Profiles = LoadProfilesFromDisk() });
+            Update(s => s with { Profiles = LoadProfilesFromDisk() });
+        }
     }
 
     /// <summary>Deletes a saved profile and its stored secret.</summary>
     public void DeleteProfile(string profileId)
     {
-        _profiles.Delete(profileId);
-        _credentials.Delete(profileId);
-        Update(s => s with { Profiles = LoadProfilesFromDisk() });
+        lock (_gate)
+        {
+            _profiles.Delete(profileId);
+            _credentials.Delete(profileId);
+            Update(s => s with { Profiles = LoadProfilesFromDisk() });
+        }
     }
 
     /// <summary>Re-reads profiles from disk.</summary>

@@ -1,4 +1,3 @@
-using System.Text;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
@@ -46,6 +45,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var window = UseWindow();
         var allowClose = UseRef(false);
         var operationBusy = UseRef(false);
+        var document = UseRef<TextFileDocument?>(null);
         var lifetime = UseMemo(() => new CancellationTokenSource(), props.FileSystem, target.FullPath);
         var (error, setError) = UseState<string?>(null, threadSafe: true);
         var (status, setStatus) = UseState<string?>(null, threadSafe: true);
@@ -185,10 +185,11 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 await using var stream = await props.FileSystem
                     .OpenReadAsync(target.FullPath, cancellationToken)
                     .ConfigureAwait(true);
-                var content = await BoundedTextFile.ReadAsync(stream, MaximumEditorBytes, cancellationToken).ConfigureAwait(true);
+                var content = await BoundedTextFile.ReadDocumentAsync(stream, MaximumEditorBytes, cancellationToken).ConfigureAwait(true);
                 cancellationToken.ThrowIfCancellationRequested();
-                setText(content);
-                setSavedText(content);
+                document.Current = content;
+                setText(content.Text);
+                setSavedText(content.Text);
             }
             catch (OperationCanceledException)
             {
@@ -216,7 +217,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             var token = lifetime.Token;
             try
             {
-                var bytes = new UTF8Encoding(false, true).GetBytes(snapshot);
+                var bytes = (document.Current ?? throw new InvalidOperationException("No loaded document.")).Encode(snapshot);
                 if (bytes.Length > MaximumEditorBytes) { throw new IOException(Str.T("sftp.editor.tooLarge", "This file is too large for the built-in text editor.")); }
                 await RemoteFileWrite.WriteAsync(props.FileSystem, target.FullPath, bytes.Length, null, true,
                     (stream, ct) => stream.WriteAsync(bytes, ct).AsTask(), token).ConfigureAwait(true);

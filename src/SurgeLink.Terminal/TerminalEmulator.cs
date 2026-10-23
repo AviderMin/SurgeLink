@@ -81,6 +81,9 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     /// <inheritdoc />
     public event EventHandler? Invalidated;
 
+    /// <summary>Protocol replies to send to the remote host; raised on the feeding thread.</summary>
+    public event Action<string>? ResponseRequested;
+
     /// <inheritdoc />
     public TerminalCell GetCell(int row, int column)
     {
@@ -395,6 +398,9 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             case 'H':
                 _screen.SetTabStop();
                 break;
+            case 'Z':
+                ResponseRequested?.Invoke("\x1b[?1;0c");
+                break;
             case 'c':
                 Reset();
                 break;
@@ -506,6 +512,22 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                 }
 
                 break;
+            case 'n' when intermediates.IsEmpty:
+                if (privateMarker == '\0' && ParameterOrZero(parameters, 0) == 5)
+                {
+                    ResponseRequested?.Invoke("\x1b[0n");
+                }
+                else if ((privateMarker == '\0' || privateMarker == '?') && ParameterOrZero(parameters, 0) == 6)
+                {
+                    var row = _screen.CursorRow - (_modes.OriginMode ? _screen.ScrollTop : 0) + 1;
+                    var prefix = privateMarker == '?' ? "?" : string.Empty;
+                    ResponseRequested?.Invoke(FormattableString.Invariant($"\x1b[{prefix}{row};{_screen.CursorColumn + 1}R"));
+                }
+                break;
+            case 'c' when intermediates.IsEmpty && ParameterOrZero(parameters, 0) == 0:
+                if (privateMarker == '\0') { ResponseRequested?.Invoke("\x1b[?1;0c"); }
+                else if (privateMarker == '>') { ResponseRequested?.Invoke("\x1b[>0;1;0c"); }
+                break;
             case 'q':
                 if (intermediate == ' ')
                 {
@@ -542,8 +564,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
 
                 break;
             default:
-                // DSR/DA/window manipulation and unknown finals are ignored; this
-                // emulator has no reverse channel to answer them on.
+                // Unsupported queries and window manipulation are ignored.
                 break;
         }
     }

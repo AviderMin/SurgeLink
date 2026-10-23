@@ -1,0 +1,104 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using SurgeLink.App.Services;
+using SurgeLink.App.Sessions;
+using SurgeLink.Core.Protocols;
+using SurgeLink.Core.Sessions;
+using SurgeLink.Core.Storage;
+using SurgeLink.Core.Tests.Fakes;
+
+namespace SurgeLink.Core.Tests;
+
+public sealed class WorkspaceRegressionTests
+{
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task LateConnectionCompletionDoesNotUndoEditsOrDeletion(bool delete, bool renameOnly)
+    {
+        using var temp = new TempDirectory();
+        var store = new JsonSessionStore(temp.File("sessions.json"));
+        var plugin = new FakeProtocolPlugin();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probe = new TaskCompletionSource<RemoteHostInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
+        plugin.SessionFactory = _ => new FakeProtocolSession(plugin.Descriptor)
+        {
+            HostInfoLoader = _ => { started.SetResult(); return probe.Task; },
+        };
+        var catalog = new ProtocolCatalog(); catalog.Register(plugin);
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, store, credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var profile = SessionProfile.New("fake", "old.test", 22, "alice");
+        workspace.SaveProfile(profile);
+        var opening = workspace.OpenAsync(profile, null, CancellationToken.None);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var edited = profile with { Host = renameOnly ? profile.Host : "new.test", Name = "New name" };
+        if (delete) { workspace.DeleteProfile(profile.Id); }
+        else { workspace.SaveProfile(edited); }
+        probe.SetResult(RemoteHostInfo.Empty);
+        var tab = await opening;
+        if (delete) { Assert.Empty(store.Load()); }
+        else
+        {
+            var saved = Assert.Single(store.Load());
+            Assert.Equal(edited.Host, saved.Host);
+            Assert.Equal(edited.Name, saved.Name);
+            if (renameOnly) { Assert.NotNull(saved.LastUsedUtc); }
+            else { Assert.Null(saved.LastUsedUtc); }
+        }
+        await workspace.CloseAsync(tab.Id);
+    }
+
+    [Fact]
+    public async Task ReconnectUsesCurrentProfileAndOneTimeSecretWithoutResurrectingDeletedProfile()
+    {
+        using var temp = new TempDirectory();
+        var store = new JsonSessionStore(temp.File("sessions.json"));
+        var plugin = new FakeProtocolPlugin();
+        var catalog = new ProtocolCatalog(); catalog.Register(plugin);
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, store, credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var profile = SessionProfile.New("fake", "old.test", 22, "alice");
+        workspace.SaveProfile(profile);
+        var tab = await workspace.OpenAsync(profile, new ConnectOptions { Password = "first" }, CancellationToken.None);
+        workspace.SaveProfile(profile with { Host = "new.test", Name = "Renamed" });
+        await workspace.ReconnectAsync(tab.Id, new ConnectOptions { Password = "second" });
+        Assert.Equal("new.test", plugin.LastRequest!.Host);
+        Assert.Equal("second", plugin.LastRequest.Password);
+        Assert.Equal("Renamed", Assert.Single(store.Load()).Name);
+        Assert.Null(credentials.Get(profile.Id));
+        tab = Assert.Single(workspace.Snapshot.Tabs);
+        workspace.DeleteProfile(profile.Id);
+        await workspace.ReconnectAsync(tab.Id, new ConnectOptions { Password = "third" });
+        Assert.Empty(store.Load());
+        await workspace.CloseAsync(Assert.Single(workspace.Snapshot.Tabs).Id);
+    }
+
+    [Fact]
+    public async Task CancelledReconnectKeepsOriginalTab()
+    {
+        using var temp = new TempDirectory();
+        var plugin = new FakeProtocolPlugin();
+        var catalog = new ProtocolCatalog(); catalog.Register(plugin);
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
+            new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var tab = await workspace.OpenAsync(SessionProfile.New("fake", "host", 22, "alice"), null, CancellationToken.None);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => workspace.ReconnectAsync(tab.Id,
+            cancellationToken: new CancellationToken(true)));
+        Assert.Same(tab, Assert.Single(workspace.Snapshot.Tabs));
+        await workspace.CloseAsync(tab.Id);
+    }
+
+    private sealed class InlineDispatcher : IUiDispatcher
+    {
+        public bool IsOnUiThread => true;
+        public void Post(Action action) => action();
+    }
+}

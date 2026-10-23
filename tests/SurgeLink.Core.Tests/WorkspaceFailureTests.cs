@@ -53,9 +53,10 @@ public sealed class WorkspaceFailureTests
         var credentials = new FakeCredentialStore();
         await using var manager = new SessionManager(catalog, credentials,
             new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
-        var workspace = new WorkspaceStore(manager, new FailingStore(), credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var profile = SessionProfile.New("fake", "example.test", 22, "alice");
+        var workspace = new WorkspaceStore(manager, new FailingStore(profile), credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
         await Assert.ThrowsAsync<IOException>(() => workspace.OpenAsync(
-            SessionProfile.New("fake", "example.test", 22, "alice"), null, CancellationToken.None));
+            profile, null, CancellationToken.None));
         Assert.Empty(manager.Sessions);
         Assert.Empty(workspace.Snapshot.Tabs);
         Assert.False(workspace.Snapshot.IsConnecting);
@@ -69,9 +70,9 @@ public sealed class WorkspaceFailureTests
         public void Post(Action action) => action();
     }
 
-    private sealed class FailingStore : ISessionStore
+    private sealed class FailingStore(SessionProfile? profile = null) : ISessionStore
     {
-        public IReadOnlyList<SessionProfile> Load() => Array.Empty<SessionProfile>();
+        public IReadOnlyList<SessionProfile> Load() => profile is null ? [] : [profile];
         public void Save(IReadOnlyList<SessionProfile> profiles) => throw new IOException("disk full");
         public void Upsert(SessionProfile profile) => throw new IOException("disk full");
         public bool Delete(string profileId) => false;

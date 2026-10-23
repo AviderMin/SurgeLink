@@ -25,6 +25,7 @@ public sealed class TerminalBridge : IAsyncDisposable
         _dispatcher = dispatcher;
         _logger = logger;
         Emulator = new TerminalEmulator(columns, rows);
+        Emulator.ResponseRequested += OnResponseRequested;
         _remote.OutputReceived += OnOutputReceived;
         _remote.Closed += OnRemoteClosed;
     }
@@ -107,6 +108,8 @@ public sealed class TerminalBridge : IAsyncDisposable
         RaiseInvalidated();
     }
 
+    private void OnResponseRequested(string response) => Send(System.Text.Encoding.UTF8.GetBytes(response));
+
     private async void Send(byte[] bytes)
     {
         try
@@ -168,6 +171,7 @@ public sealed class TerminalBridge : IAsyncDisposable
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
+        Emulator.ResponseRequested -= OnResponseRequested;
         _remote.OutputReceived -= OnOutputReceived;
         _remote.Closed -= OnRemoteClosed;
         await _remote.DisposeAsync().ConfigureAwait(false);

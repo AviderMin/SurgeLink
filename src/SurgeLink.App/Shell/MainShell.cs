@@ -113,7 +113,7 @@ internal sealed class MainShell : Component
             catch (Exception ex) { CrashLog.Write("ConnectionErrorDialog", ex); }
         }
 
-        async Task ConnectAsync(SessionProfile profile, ConnectOptions? suppliedOptions = null)
+        async Task ConnectAsync(SessionProfile profile, ConnectOptions? suppliedOptions = null, Guid? reconnectTabId = null)
         {
             if (connectPending.Current || workspace.Snapshot.IsConnecting)
             {
@@ -135,6 +135,11 @@ internal sealed class MainShell : Component
                     return;
                 }
 
+                if (reconnectTabId is Guid tabId)
+                {
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    await workspace.CloseAsync(tabId);
+                }
                 await Task.Run(() => workspace.OpenAsync(profile, options, cancellation.Token));
             }
             catch (ProtocolException) when (cancellation.IsCancellationRequested) { }
@@ -259,23 +264,11 @@ internal sealed class MainShell : Component
             workspace.Activate(tabs[next].Id);
         }
 
-        void Reconnect(WorkspaceTab tab) => _ = ReconnectAsync(tab);
-
-        async Task ReconnectAsync(WorkspaceTab tab)
+        void Reconnect(WorkspaceTab tab)
         {
-            try
+            if (workspace.GetReconnectProfile(tab.Id) is { } profile)
             {
-                await workspace.ReconnectAsync(tab.Id);
-            }
-            catch (ProtocolException ex)
-            {
-                await services.Interaction.ShowErrorAsync(
-                    Str.T("shell.error.reconnectFailed", "Reconnect failed"), ex.Message);
-            }
-            catch (Exception ex)
-            {
-                await services.Interaction.ShowErrorAsync(
-                    Str.T("shell.error.reconnectFailed", "Reconnect failed"), ex.Message);
+                _ = ConnectAsync(profile, reconnectTabId: tab.Id);
             }
         }
 
@@ -421,10 +414,20 @@ internal sealed class MainShell : Component
         switch (profile.Authentication)
         {
             case AuthenticationMethod.PublicKey:
+                var passphrase = stored?.PrivateKeyPassphrase;
+                if (passphrase is null)
+                {
+                    passphrase = await services.Interaction.RequestSecretAsync(
+                        new SecretRequest(
+                            Str.T("shell.prompt.passphrase.title", "Private key passphrase"),
+                            Str.T("shell.prompt.passphrase.body", "Enter the key passphrase, or leave it empty for an unencrypted key.")),
+                        cancellationToken);
+                    if (passphrase is null) { return null; }
+                }
                 return new ConnectOptions
                 {
                     PrivateKeyPath = profile.PrivateKeyPath,
-                    PrivateKeyPassphrase = stored?.PrivateKeyPassphrase,
+                    PrivateKeyPassphrase = passphrase,
                 };
 
             case AuthenticationMethod.KeyboardInteractive:

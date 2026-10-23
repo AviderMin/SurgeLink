@@ -6,6 +6,8 @@ public static class ZhShell
     /// <summary>Key -> 中文 mapping. Keep keys prefixed with <c>shell.</c>.</summary>
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["shell.prompt.passphrase.title"] = "私钥口令",
+        ["shell.prompt.passphrase.body"] = "请输入私钥口令；未加密的私钥可留空。",
         ["shell.settings.privacy"] = "隐私模式",
         ["shell.settings.privacy.description"] = "使用 *** 隐藏服务器 IP 和域名，鼠标悬停时显示原文。终端输出和远程文件内容保持原样。",
         ["shell.command.newSession"] = "新建会话",
