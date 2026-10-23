@@ -105,6 +105,7 @@ public sealed class AppServices
         var protocols = new ProtocolCatalog();
         protocols.Register(new SshProtocolPlugin());
         protocols.Register(new SurgeLink.Protocols.Telnet.TelnetProtocolPlugin());
+        protocols.Register(new SurgeLink.Protocols.Serial.SerialProtocolPlugin());
         protocols.Register(new SurgeLink.Protocols.Demo.DemoProtocolPlugin());
 
         var profileStore = new JsonSessionStore(AppPaths.SessionsFile);

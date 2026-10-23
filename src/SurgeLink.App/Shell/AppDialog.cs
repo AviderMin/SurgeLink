@@ -10,6 +10,13 @@ namespace SurgeLink.App.Shell;
 /// <summary>Shared native dialog presentation for app preferences and information.</summary>
 internal static class AppDialog
 {
+    // Match the session editor, including its margins in narrow windows.
+    public const double ContentWidth = 640;
+    public const double MaxWidth = 760;
+
+    public static double FitContentWidth(double preferredWidth, double windowWidth) =>
+        Math.Max(0, Math.Min(preferredWidth, windowWidth - 96));
+
     public static Element Render(
         string title,
         Element content,
@@ -18,7 +25,8 @@ internal static class AppDialog
         string primaryText,
         string? closeText = null,
         ElementTheme theme = ElementTheme.Default,
-        bool isOpen = true)
+        bool isOpen = true,
+        double? contentWidth = null)
     {
         ScrollViewer? scroll = null;
         ContentDialog? nativeDialog = null;
@@ -30,6 +38,7 @@ internal static class AppDialog
             // Leave space for the native title, padding, command row and window margins.
             nativeDialog.Resources["ContentDialogMaxHeight"] = Math.Max(200, root.Size.Height - 48);
             scroll.MaxHeight = Math.Max(80, Math.Min(480, root.Size.Height - 280));
+            if (contentWidth is { } width) { scroll.Width = FitContentWidth(width, root.Size.Width); }
         }
         var body = ScrollViewer(Border(content).Padding(0, 0, 16, 24))
             .MaxHeight(320)
@@ -51,6 +60,7 @@ internal static class AppDialog
             {
                 if (sizingRoot is not null && sizingHandler is not null) { sizingRoot.Changed -= sizingHandler; }
                 nativeDialog?.Resources.Remove("ContentDialogMaxHeight");
+                if (contentWidth.HasValue) { nativeDialog?.Resources.Remove("ContentDialogMaxWidth"); }
                 onClosed(result);
             },
         };
@@ -58,7 +68,13 @@ internal static class AppDialog
         return QueuedDialog.Wrap(dialog.Set(control =>
         {
             nativeDialog = control;
+            if (contentWidth.HasValue)
+            {
+                control.Resources["ContentDialogMaxWidth"] = MaxWidth;
+                if (scroll is not null) { scroll.Width = contentWidth.Value; }
+            }
             control.RequestedTheme = theme;
+            Resize();
             DialogAutomation.Tag(automationPrefix)(control);
         }).Opened(() =>
         {

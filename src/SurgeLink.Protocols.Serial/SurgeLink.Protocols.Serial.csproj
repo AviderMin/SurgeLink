@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>SurgeLink.Protocols.Serial</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.IO.Ports" />
+    <ProjectReference Include="..\SurgeLink.Core\SurgeLink.Core.csproj" />
+    <InternalsVisibleTo Include="SurgeLink.Protocols.Serial.Tests" />
+    <InternalsVisibleTo Include="SurgeLink.Protocols.Conformance" />
+  </ItemGroup>
+</Project>

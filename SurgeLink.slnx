@@ -11,6 +11,7 @@
     <Project Path="src/SurgeLink.Protocols.Demo/SurgeLink.Protocols.Demo.csproj" />
     <Project Path="src/SurgeLink.Protocols.Ssh/SurgeLink.Protocols.Ssh.csproj" />
     <Project Path="src/SurgeLink.Protocols.Telnet/SurgeLink.Protocols.Telnet.csproj" />
+    <Project Path="src/SurgeLink.Protocols.Serial/SurgeLink.Protocols.Serial.csproj" />
     <Project Path="src/SurgeLink.Terminal/SurgeLink.Terminal.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -18,6 +19,7 @@
     <Project Path="tests/SurgeLink.Protocols.Conformance/SurgeLink.Protocols.Conformance.csproj" />
     <Project Path="tests/SurgeLink.Protocols.Ssh.Tests/SurgeLink.Protocols.Ssh.Tests.csproj" />
     <Project Path="tests/SurgeLink.Protocols.Telnet.Tests/SurgeLink.Protocols.Telnet.Tests.csproj" />
+    <Project Path="tests/SurgeLink.Protocols.Serial.Tests/SurgeLink.Protocols.Serial.Tests.csproj" />
     <Project Path="tests/SurgeLink.Terminal.Tests/SurgeLink.Terminal.Tests.csproj" />
   </Folder>
 </Solution>

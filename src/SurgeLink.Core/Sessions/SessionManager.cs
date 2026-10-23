@@ -159,8 +159,8 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
             return new ConnectionRequest
             {
                 Host = profile.Host,
-                Port = profile.ResolvePort(descriptor.DefaultPort),
-                Username = profile.Username,
+                Port = descriptor.UsesNetworkAddress ? profile.ResolvePort(descriptor.DefaultPort) : 0,
+                Username = descriptor.UsesNetworkAddress ? profile.Username : string.Empty,
                 Authentication = AuthenticationMethod.KeyboardInteractive,
                 ProfileId = profile.Id,
                 DisplayName = profile.Name,

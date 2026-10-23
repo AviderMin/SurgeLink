@@ -9,7 +9,7 @@ public sealed record ConnectionRequest
     private static readonly IReadOnlyDictionary<string, string> NoOptions =
         new Dictionary<string, string>();
 
-    /// <summary>Remote host name or address.</summary>
+    /// <summary>Remote host name/address, or a local device name such as COM3.</summary>
     public required string Host { get; init; }
 
     /// <summary>Remote TCP port.</summary>

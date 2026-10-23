@@ -17,6 +17,31 @@ public sealed class JsonSessionStoreTests
     };
 
     [Fact]
+    public void SerialDeviceAndOptionsRoundTripWithoutNetworkCredentials()
+    {
+        using var temp = new TempDirectory();
+        string path = temp.File("serial.json");
+        var store = new JsonSessionStore(path);
+        store.Upsert(SessionProfile.New("serial", "COM12", 0, "") with
+        {
+            Authentication = AuthenticationMethod.KeyboardInteractive,
+            Options = new Dictionary<string, string>
+            {
+                ["serial.baudRate"] = "9600", ["serial.parity"] = "Even", ["serial.handshake"] = "RequestToSend",
+            },
+        });
+
+        var saved = Assert.Single(new JsonSessionStore(path).Load());
+        Assert.Equal("COM12", saved.Name);
+        Assert.Equal("COM12", saved.UserHost);
+        Assert.Equal(0, saved.Port);
+        Assert.Empty(saved.Username);
+        Assert.Equal("9600", saved.Options["serial.baudRate"]);
+        Assert.Equal("Even", saved.Options["serial.parity"]);
+        Assert.Equal("RequestToSend", saved.Options["serial.handshake"]);
+    }
+
+    [Fact]
     public void MissingFileLoadsEmpty()
     {
         using var temp = new TempDirectory();

@@ -149,7 +149,7 @@ thread, then `AppServices.Create` builds the graph exactly once:
 
 ```
 LoggerFactory ─┬─ ProtocolHostContext ─ SessionManager ─ WorkspaceStore
-ProfileStore ──┤                        └ ProtocolCatalog ─ SshProtocolPlugin, TelnetProtocolPlugin, DemoProtocolPlugin
+ProfileStore ──┤                        └ ProtocolCatalog ─ SshProtocolPlugin, TelnetProtocolPlugin, SerialProtocolPlugin, DemoProtocolPlugin
 CredentialStore┘
 HostKeyStore
 Dispatcher, InteractionService, AppSettingsStore
@@ -160,6 +160,7 @@ Adding a protocol plugin is one line in `AppServices.Create`:
 ```csharp
 protocols.Register(new SshProtocolPlugin());
 protocols.Register(new TelnetProtocolPlugin());
+protocols.Register(new SerialProtocolPlugin());
 protocols.Register(new DemoProtocolPlugin());
 ```
 
@@ -170,11 +171,14 @@ protocols.Register(new DemoProtocolPlugin());
 - `tests/SurgeLink.Protocols.Ssh.Tests` — /proc, df, ps parsers, path normalisation, option parsing.
 - `tests/SurgeLink.Protocols.Telnet.Tests` — incremental IAC parsing, option negotiation, NVT/BINARY,
   terminal type, NAWS and TCP connection/close behaviour against local test servers.
+- `tests/SurgeLink.Protocols.Serial.Tests` — COM-port option validation, raw byte I/O, cancellation,
+  open/write timeouts, unplug faults and deterministic teardown using a bounded fake port.
 - `tests/SurgeLink.Core.Tests` — stores, catalog, session manager behaviour with fake protocols.
 - `tests/SurgeLink.Protocols.Conformance` — a protocol-agnostic conformance suite. Any protocol is
   validated by adding one `ProtocolFixture` subclass; it checks capability handles, session
   lifecycle, terminal/file-system/monitor behaviour and no-late-callback guarantees. Demo covers
-  every capability; Telnet exercises the terminal-only subset against a loopback server.
+  every capability; Telnet uses a loopback server, and Serial uses a bounded fake port for the
+  terminal-only subset. Real COM hardware requires a separate device smoke test.
 - UI is verified through Windows UI Automation (see `docs/VERIFICATION.md`): the app is launched,
   driven with Invoke/Value patterns and its control tree is asserted, which also double-checks
   accessibility names.

@@ -59,7 +59,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         var template = props.Existing;
         var plugins = services.Protocols.Plugins;
         var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
-        var (viewport, setViewport) = UseState((Width: 640d, Height: 520d));
+        var (viewport, setViewport) = UseState((Width: AppDialog.ContentWidth, Height: 520d));
 
         var (name, setName) = UseState(template?.Name ?? string.Empty);
         var (group, setGroup) = UseState(template?.Group ?? string.Empty);
@@ -76,6 +76,9 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         var (remember, setRemember) = UseState(HasStoredSecret(services, template));
         var (attempted, setAttempted) = UseState(false);
         var (pickerError, setPickerError) = UseState<string?>(null);
+        var (protocolOptions, setProtocolOptions) = UseState<IReadOnlyDictionary<string, string>>(
+            template?.Options ?? new Dictionary<string, string>());
+        var (endpointRefresh, setEndpointRefresh) = UseState(0);
 
         // Read by the dialog buttons, which are wired on mount in the editor's
         // command space (the declarative DSL has no click handler for those).
@@ -91,6 +94,8 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
         var protocol = plugins.Count > 0 ? plugins[Math.Clamp(protocolIndex, 0, plugins.Count - 1)].Descriptor : null;
         var terminalLogin = protocol?.AuthenticatesInTerminal == true;
+        var localDevice = protocol?.UsesNetworkAddress == false;
+        var endpoints = UseMemo(() => protocol?.DiscoverEndpoints?.Invoke() ?? Array.Empty<string>(), protocol!, endpointRefresh);
         var isPassword = !terminalLogin && authIndex == (int)AuthenticationMethod.Password;
         var isKey = !terminalLogin && authIndex == (int)AuthenticationMethod.PublicKey;
         var authNames = new[]
@@ -153,7 +158,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                 // Set runs against the live ContentDialog created by the overlay
                 // lifecycle (OnMountAdd receives only the hidden anchor).
                 dialogControl.Current = control;
-                control.Resources["ContentDialogMaxWidth"] = 760d;
+                control.Resources["ContentDialogMaxWidth"] = AppDialog.MaxWidth;
                 control.RequestedTheme = ThemeController.ToElementTheme(settings.Theme);
                 DialogAutomation.Tag("SessionEditor")(control);
             })
@@ -179,7 +184,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             if (control.XamlRoot is { } root)
             {
                 void Resize() => setViewport((
-                    Math.Max(0, Math.Min(640, root.Size.Width - 96)),
+                    AppDialog.FitContentWidth(AppDialog.ContentWidth, root.Size.Width),
                     Math.Max(0, Math.Min(600, root.Size.Height - 240))));
                 sizingRoot.Current = root;
                 sizingHandler.Current = (_, _) => Resize();
@@ -239,7 +244,9 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         Element[] BuildFields()
         {
             var nameLabel = Str.T("shell.editor.name", "Session name");
-            var hostLabel = Str.T("shell.editor.host", "Host");
+            var namePlaceholder = localDevice ? Str.T("shell.editor.deviceNamePlaceholder", "Defaults to device name")
+                : Str.T("shell.editor.namePlaceholder", "Defaults to user@host");
+            var hostLabel = localDevice ? Str.T(protocol!.EndpointLabelKey, protocol.EndpointLabel) : Str.T("shell.editor.host", "Host");
             var portLabel = Str.T("shell.editor.port", "Port");
             var userLabel = terminalLogin
                 ? Str.T("shell.editor.userNameOptional", "User name (optional label)")
@@ -258,7 +265,11 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                     .HAlign(HorizontalAlignment.Stretch)
                     .AutomationName(Str.T("shell.editor.protocol", "Protocol"))
                     .AutomationId("SessionEditorProtocol"),
-                SessionEditorLayout.Pair(
+                localDevice
+                    ? TextBox(Optional<string>.Of(host), setHost, header: hostLabel,
+                            placeholderText: Str.T("shell.editor.devicePlaceholder", "e.g. COM3"))
+                        .AutomationName(hostLabel).AutomationId("SessionEditorHost")
+                    : SessionEditorLayout.Pair(
                     (settings.PrivacyMode
                         ? (Element)PasswordBox(Optional<string>.Of(host), setHost,
                                 placeholderText: Str.T("shell.editor.hostPlaceholder", "host name or IP address"))
@@ -272,9 +283,22 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                             placeholderText: (protocol?.DefaultPort ?? 22).ToString(CultureInfo.InvariantCulture))
                         .AutomationName(portLabel).AutomationId("SessionEditorPort").Grid(column: 1),
                     GridSize.Px(104)),
-                Caption(protocol?.Description ?? Str.T("shell.editor.protocolHint",
-                        "Pick a protocol to see what the connection offers."))
+                Caption(protocol?.Description is { } description ? Str.T("protocol." + protocol.Id + ".description", description)
+                        : Str.T("shell.editor.protocolHint", "Pick a protocol to see what the connection offers."))
                     .Foreground(Theme.SecondaryText).TextWrapping(TextWrapping.Wrap));
+
+            Element? devicePicker = !localDevice ? null : SessionEditorLayout.Section(
+                Str.T("shell.editor.devices", "Detected devices"),
+                Str.T("shell.editor.devicesHint", "Select a detected port or enter its name above. Refresh after attaching an adapter."),
+                SessionEditorLayout.Pair(
+                    ComboBox(endpoints.ToArray(), Optional<int>.Of(endpoints.ToList().IndexOf(host)),
+                            index => { if (index >= 0 && index < endpoints.Count) setHost(endpoints[index]); })
+                        .HAlign(HorizontalAlignment.Stretch)
+                        .AutomationName(Str.T("shell.editor.devices", "Detected devices"))
+                        .AutomationId("SessionEditorDevices").Grid(column: 0),
+                    Button(Str.T("shell.editor.refreshDevices", "Refresh"), () => setEndpointRefresh(endpointRefresh + 1))
+                        .AutomationName(Str.T("shell.editor.refreshDevices", "Refresh"))
+                        .AutomationId("SessionEditorRefreshDevices").Grid(column: 1), GridSize.Auto));
 
             var authentication = new List<Element>
             {
@@ -288,7 +312,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                     .HAlign(HorizontalAlignment.Stretch)
                     .AutomationName(authLabel).AutomationId("SessionEditorAuthentication"));
             }
-            else
+            else if (!localDevice)
             {
                 authentication.Add(InfoBar(
                     Str.T("shell.editor.terminalLoginTitle", "Login in the terminal"),
@@ -337,11 +361,11 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                 Str.T("shell.editor.section.organizationHint", "Add an optional name and group to keep your sessions organized."),
                 settings.PrivacyMode && template is not null && PrivacyDisplay.Mask(template.Name) != template.Name
                     ? (Element)PasswordBox(Optional<string>.Of(name), setName,
-                            placeholderText: Str.T("shell.editor.namePlaceholder", "Defaults to user@host"))
+                            placeholderText: namePlaceholder)
                         .Set(control => { control.Header = nameLabel; PrivacyDisplay.HideInput(control); })
                         .AutomationName(nameLabel).AutomationId("SessionEditorName")
                     : TextBox(Optional<string>.Of(name), setName, header: nameLabel,
-                            placeholderText: Str.T("shell.editor.namePlaceholder", "Defaults to user@host"))
+                            placeholderText: namePlaceholder)
                         .AutomationName(nameLabel).AutomationId("SessionEditorName"),
                 TextBox(Optional<string>.Of(group), setGroup, header: groupLabel,
                         placeholderText: Str.T("shell.editor.groupPlaceholder", "e.g. Production"))
@@ -350,14 +374,27 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             if (showErrors)
             {
                 var message = pickerError ?? string.Join(Environment.NewLine, errors);
-                fields.Add(InfoBar(Str.T("shell.editor.invalidTitle", "Check the connection details"), message).Warning());
+                fields.Add(InfoBar(Str.T("shell.editor.invalidTitle", "Check the connection details"), message).Warning().WithKey("validation"));
             }
-            fields.Add(connection);
-            fields.Add(SessionEditorLayout.Section(
+            fields.Add(connection.WithKey("connection"));
+            if (devicePicker is not null) fields.Add(devicePicker.WithKey("devices"));
+            if (protocol is { ConnectionOptions.Count: > 0 })
+            {
+                fields.Add(SessionEditorLayout.Section(
+                    Str.T("shell.editor.connectionOptions", "Connection settings"),
+                    Str.T("shell.editor.connectionOptionsHint", "Match these settings to the target device."),
+                    Component<ProtocolOptionsEditor, ProtocolOptionsEditorProps>(new(protocol.ConnectionOptions, protocolOptions,
+                        (key, value) =>
+                        {
+                            var next = new Dictionary<string, string>(protocolOptions) { [key] = value };
+                            setProtocolOptions(next);
+                        }))).WithKey("options"));
+            }
+            if (!localDevice) fields.Add(SessionEditorLayout.Section(
                 Str.T("shell.editor.section.authentication", "Authentication"),
                 Str.T("shell.editor.section.authenticationHint", "Choose how to sign in to this server."),
-                authentication.ToArray()));
-            fields.Add(organization);
+                authentication.ToArray()).WithKey("authentication"));
+            fields.Add(organization.WithKey("organization"));
 
             return fields.ToArray();
         }
@@ -367,7 +404,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             var problems = new List<string>(3);
             if (string.IsNullOrWhiteSpace(host))
             {
-                problems.Add(Str.T("shell.editor.hostRequired", "Host is required."));
+                problems.Add(localDevice ? Str.T("shell.editor.deviceRequired", "Device name is required.") : Str.T("shell.editor.hostRequired", "Host is required."));
             }
 
             if (!terminalLogin && string.IsNullOrWhiteSpace(userName))
@@ -375,7 +412,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                 problems.Add(Str.T("shell.editor.userRequired", "User name is required."));
             }
 
-            if (port.Length > 0 && ParsePort(port) < 0)
+            if (!localDevice && port.Length > 0 && ParsePort(port) < 0)
             {
                 problems.Add(Str.F(
                     "shell.editor.portInvalid",
@@ -386,6 +423,13 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             if (isKey && string.IsNullOrWhiteSpace(keyPath))
             {
                 problems.Add(Str.T("shell.editor.keyRequired", "Pick the private key file to use."));
+            }
+
+            foreach (var field in protocol?.ConnectionOptions ?? [])
+            {
+                string value = protocolOptions.TryGetValue(field.Key, out string? configured) ? configured : field.DefaultValue;
+                if (!field.IsValid(value)) problems.Add(Str.F("shell.editor.optionInvalid", "Check the value for {0}.",
+                    Str.T("protocol.option." + field.Key, field.Label)));
             }
 
             return problems;
@@ -414,14 +458,17 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
         SessionProfile BuildProfile()
         {
-            var parsedPort = ParsePort(port);
+            var parsedPort = localDevice ? 0 : ParsePort(port);
             var protocolId = protocol?.Id ?? template?.ProtocolId ?? "ssh";
             var displayName = string.IsNullOrWhiteSpace(name)
-                ? (string.IsNullOrWhiteSpace(userName) ? host.Trim() : $"{userName.Trim()}@{host.Trim()}")
+                ? (localDevice || string.IsNullOrWhiteSpace(userName) ? host.Trim() : $"{userName.Trim()}@{host.Trim()}")
                 : name.Trim();
             var groupValue = string.IsNullOrWhiteSpace(group) ? null : group.Trim();
             var auth = terminalLogin ? AuthenticationMethod.KeyboardInteractive : (AuthenticationMethod)authIndex;
             var keyFile = isKey && !string.IsNullOrWhiteSpace(keyPath) ? keyPath.Trim() : null;
+            var savedOptions = new Dictionary<string, string>(protocolOptions);
+            foreach (var field in protocol?.ConnectionOptions ?? [])
+                if (!savedOptions.ContainsKey(field.Key)) savedOptions[field.Key] = field.DefaultValue;
 
             if (props.Mode == SessionEditorMode.Edit && template is not null)
             {
@@ -431,20 +478,22 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                     ProtocolId = protocolId,
                     Host = host.Trim(),
                     Port = parsedPort,
-                    Username = userName.Trim(),
+                    Username = localDevice ? string.Empty : userName.Trim(),
                     Authentication = auth,
                     PrivateKeyPath = keyFile,
                     Group = groupValue,
+                    Options = savedOptions,
                 };
             }
 
             // Create and Duplicate both get a fresh identity so credentials and
             // open sessions never collide with the source profile.
-            return SessionProfile.New(protocolId, host.Trim(), parsedPort, userName.Trim(), displayName) with
+            return SessionProfile.New(protocolId, host.Trim(), parsedPort, localDevice ? string.Empty : userName.Trim(), displayName) with
             {
                 Authentication = auth,
                 PrivateKeyPath = keyFile,
                 Group = groupValue,
+                Options = savedOptions,
             };
         }
 

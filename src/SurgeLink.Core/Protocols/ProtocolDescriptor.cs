@@ -22,4 +22,17 @@ public sealed record ProtocolDescriptor(
 
     /// <summary>Login is entered in the terminal; the shell must not collect connection credentials.</summary>
     public bool AuthenticatesInTerminal { get; init; }
+
+    /// <summary>False for local devices: no TCP port or user name is needed.</summary>
+    public bool UsesNetworkAddress { get; init; } = true;
+
+    /// <summary>Endpoint label and localization key for a local-device connection.</summary>
+    public string EndpointLabel { get; init; } = "Device";
+    public string EndpointLabelKey { get; init; } = "protocol.device";
+
+    /// <summary>Optional discovery callback; returns device names without opening them.</summary>
+    public Func<IReadOnlyList<string>>? DiscoverEndpoints { get; init; }
+
+    /// <summary>Protocol-specific connection settings rendered by the session editor.</summary>
+    public IReadOnlyList<ProtocolOptionDescriptor> ConnectionOptions { get; init; } = [];
 }

@@ -160,7 +160,6 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
                             onContent: Str.T("shell.settings.on", "On"),
                             offContent: Str.T("shell.settings.off", "Off"))
                         .AutomationName(Str.T("shell.settings.confirmClose", "Confirm closing connected tabs")))))
-            .MaxWidth(560)
             // Keep the native overlay scrollbar clear of the setting cards.
             .Padding(0, 0, AppTheme.SpacingL, 0);
 
@@ -185,7 +184,8 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
             Str.T("common.save", "Save"),
             Str.T("common.cancel", "Cancel"),
             theme: ThemeController.ToElementTheme(settings.Theme),
-            isOpen: !closed.Current);
+            isOpen: !closed.Current,
+            contentWidth: AppDialog.ContentWidth);
     }
 
     private static Element Section(string title, params Element[] rows) =>

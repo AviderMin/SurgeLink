@@ -36,6 +36,7 @@ internal sealed class AboutDialog : Component<AboutDialogProps>
         "About",
         _ => Props.OnClosed(),
         Str.T("common.close", "Close"),
-        theme: ThemeController.ToElementTheme(settings.Theme));
+        theme: ThemeController.ToElementTheme(settings.Theme),
+        contentWidth: AppDialog.ContentWidth);
     }
 }

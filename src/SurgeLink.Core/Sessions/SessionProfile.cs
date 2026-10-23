@@ -17,7 +17,7 @@ public sealed record SessionProfile
     /// <summary>Protocol plugin id, for example <c>ssh</c>.</summary>
     public required string ProtocolId { get; init; }
 
-    /// <summary>Remote host name or address.</summary>
+    /// <summary>Remote host name/address, or a local device name such as COM3.</summary>
     public required string Host { get; init; }
 
     /// <summary>Remote port; 0 means "use the protocol default".</summary>

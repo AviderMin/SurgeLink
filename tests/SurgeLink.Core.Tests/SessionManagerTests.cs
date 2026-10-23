@@ -98,6 +98,26 @@ public sealed class SessionManagerTests
     }
 
     [Fact]
+    public async Task LocalDeviceDropsStaleNetworkPortAndUserButPreservesOptions()
+    {
+        await using var harness = new Harness();
+        var plugin = new FakeProtocolPlugin("local", 0, authenticatesInTerminal: true, usesNetworkAddress: false);
+        harness.Catalog.Register(plugin);
+        var profile = Profile(port: 22) with
+        {
+            ProtocolId = "local", Host = "COM3", Options = new Dictionary<string, string> { ["serial.baudRate"] = "9600" },
+        };
+
+        await harness.Manager.OpenAsync(profile, null, CancellationToken.None);
+
+        Assert.Equal("COM3", plugin.LastRequest!.Host);
+        Assert.Equal(0, plugin.LastRequest.Port);
+        Assert.Empty(plugin.LastRequest.Username);
+        Assert.Equal("9600", plugin.LastRequest.Options["serial.baudRate"]);
+        Assert.Equal(0, harness.Credentials.GetCalls);
+    }
+
+    [Fact]
     public async Task OpenBuildsRequestFromProfile()
     {
         await using var harness = new Harness(2222);

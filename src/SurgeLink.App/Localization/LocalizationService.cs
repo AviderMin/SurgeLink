@@ -25,6 +25,7 @@ public sealed class LocalizationService
         Register(ZhShell.Map);
         Register(ZhData.Map);
         Register(ZhTerminal.Map);
+        Register(ZhProtocols.Map);
 
         _configured = settings.Current.Language;
         _isChinese = ResolveIsChinese(_configured);

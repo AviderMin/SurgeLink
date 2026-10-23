@@ -8,6 +8,18 @@ describe that integration. For a new protocol, choose a new project name and id.
 Set `ProtocolDescriptor.AuthenticatesInTerminal` when login is entered in the
 terminal, so the session editor and connector skip connection credentials.
 
+Local device transports (see `SurgeLink.Protocols.Serial`) also set
+`UsesNetworkAddress = false`, supply an endpoint label and optional
+`DiscoverEndpoints` callback, and declare `ConnectionOptions`. The session editor
+renders these option descriptors without referencing the protocol assembly;
+stable keys/choice values are persisted in `SessionProfile.Options`, while labels
+are translated by the app. Serial stores its COM name in `Host`, leaves `Port`
+zero and `Username` empty, and preserves all settings when editing/duplicating.
+Its adapter uses [System.IO.Ports](https://www.nuget.org/packages/System.IO.Ports/10.0.12)
+with a 200 ms read timeout and 2 s write timeout. An in-flight write retains its
+serialization gate until it completes or times out. Open cancellation/timeout
+observes and releases a late handle; it does not forcibly abort a driver open.
+
 The Telnet wire implementation follows [RFC 854](https://www.rfc-editor.org/rfc/rfc854),
 with [NAWS (RFC 1073)](https://www.rfc-editor.org/rfc/rfc1073) and
 [terminal type (RFC 1091)](https://www.rfc-editor.org/rfc/rfc1091). Initial option

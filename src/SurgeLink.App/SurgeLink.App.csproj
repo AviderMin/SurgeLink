@@ -39,6 +39,7 @@
     <ProjectReference Include="..\SurgeLink.Protocols.Demo\SurgeLink.Protocols.Demo.csproj" />
     <ProjectReference Include="..\SurgeLink.Protocols.Ssh\SurgeLink.Protocols.Ssh.csproj" />
     <ProjectReference Include="..\SurgeLink.Protocols.Telnet\SurgeLink.Protocols.Telnet.csproj" />
+    <ProjectReference Include="..\SurgeLink.Protocols.Serial\SurgeLink.Protocols.Serial.csproj" />
   </ItemGroup>
 
   <!-- The unpackaged WinUI publish pipeline can omit the app's own PRI.

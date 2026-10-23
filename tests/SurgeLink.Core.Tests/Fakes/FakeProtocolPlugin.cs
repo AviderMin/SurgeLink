@@ -10,11 +10,13 @@ internal sealed class FakeProtocolPlugin : IProtocolPlugin
         string id = "fake",
         int defaultPort = 2222,
         SessionCapabilities capabilities = SessionCapabilities.Terminal,
-        bool authenticatesInTerminal = false)
+        bool authenticatesInTerminal = false,
+        bool usesNetworkAddress = true)
     {
         Descriptor = new ProtocolDescriptor(id, "Fake protocol", defaultPort, capabilities)
         {
             AuthenticatesInTerminal = authenticatesInTerminal,
+            UsesNetworkAddress = usesNetworkAddress,
         };
     }
 

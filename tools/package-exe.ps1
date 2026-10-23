@@ -39,7 +39,7 @@ $payload = Join-Path ([IO.Path]::GetTempPath()) ('SurgeLink-payload-' + [guid]::
 $null = New-Item -ItemType Directory -Path $outputRoot -Force
 $null = New-Item -ItemType Directory -Path $payload -Force
 # WinUI self-contained native assets must be regenerated for each staging directory.
-& dotnet clean (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') -c Release -r "win-$Architecture" "-p:Platform=$Architecture" -v:quiet
+& dotnet clean (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') -c Release -r "win-$Architecture" "-p:Platform=$Architecture" -m:1 -v:quiet
 if ($LASTEXITCODE -ne 0) { throw 'Release clean failed.' }
 & dotnet publish (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') `
     -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `

@@ -11,6 +11,7 @@
 
     <!-- Protocol stack -->
     <PackageVersion Include="SSH.NET" Version="2026.0.0" />
+    <PackageVersion Include="System.IO.Ports" Version="10.0.12" />
     <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
 
     <!-- Logging (abstractions already flow in transitively through Reactor) -->
