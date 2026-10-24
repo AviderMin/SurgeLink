@@ -51,5 +51,7 @@ public static class Program
                     throw;
                 }
             });
+
+        AppServices.Current?.Agent.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 }

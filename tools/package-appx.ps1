@@ -22,8 +22,20 @@ if (!$SkipPublish) {
         -p:WindowsAppSDKSelfContained=true -p:UseSharedCompilation=false `
         -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false "-p:Version=$Version" -o $payload -m:1 -v:minimal
     if ($LASTEXITCODE -ne 0) { throw 'Self-contained publish failed.' }
+    & dotnet publish (Join-Path $repoRoot 'src/SurgeLink.Cli/SurgeLink.Cli.csproj') `
+        -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
+        -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false `
+        "-p:Version=$Version" -o (Join-Path $payload 'cli') -m:1 -v:minimal
+    if ($LASTEXITCODE -ne 0) { throw 'CLI publish failed.' }
+    & dotnet publish (Join-Path $repoRoot 'src/SurgeLink.AgentHost/SurgeLink.AgentHost.csproj') `
+        -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
+        -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false `
+        "-p:Version=$Version" -o (Join-Path $payload 'agent') -m:1 -v:minimal
+    if ($LASTEXITCODE -ne 0) { throw 'MCP host publish failed.' }
 }
 if (!(Test-Path (Join-Path $payload 'SurgeLink.exe'))) { throw 'Publish output is missing.' }
+if (!(Test-Path (Join-Path $payload 'cli/surgelink-cli.exe'))) { throw 'CLI publish output is missing.' }
+if (!(Test-Path (Join-Path $payload 'agent/surgelink-agent-host.exe'))) { throw 'MCP host publish output is missing.' }
 
 # Include the project license, privacy policy and source location in binary releases.
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $payload 'LICENSE.txt') -Force

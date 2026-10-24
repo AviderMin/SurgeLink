@@ -1,6 +1,6 @@
 # SurgeLink privacy policy
 
-Effective date: 2026-10-22
+Effective date: 2026-10-24
 
 SurgeLink is a Windows desktop SSH terminal, file transfer and remote monitoring
 application. The application does not include analytics, advertising or an
@@ -17,6 +17,17 @@ settings and trusted host fingerprints are stored locally. Remembered passwords
 and private-key passphrases are protected using Windows DPAPI for the current
 Windows user. Private key files remain at the location selected by the user.
 SurgeLink does not copy them into saved profiles.
+
+Optional local CLI access is disabled for every connection until the user explicitly
+shares it in the desktop. Sharing allows programs running as the same Windows user
+to read that connection's label, host information, visible terminal screen and system
+metrics. Directory listings and file reads require confirmation for each request.
+Terminal and file contents may contain secrets. SurgeLink does not select or contact
+an AI model provider; external agents receiving this data may send it to their own
+providers according to their configuration. Desktop privacy masking does not redact
+the CLI payload. Sharing is held only in memory and ends on revocation or connection
+closure; reconnecting requires new consent. Local operation logs record the method,
+opaque session handle and result, without terminal/file payloads.
 
 Diagnostic logs and crash reports are stored locally and can contain hostnames,
 usernames, paths and remote error details. They are not automatically sent to

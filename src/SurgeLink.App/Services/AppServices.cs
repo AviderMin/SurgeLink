@@ -41,6 +41,7 @@ public sealed class AppServices
         Settings = settings;
         Localization = localization;
         Workspace = workspace;
+        Agent = new AgentWorkspaceService(workspace, interaction, dispatcher, loggerFactory.CreateLogger<AgentWorkspaceService>());
     }
 
     /// <summary>The live services instance; created by the startup bootstrap before the shell mounts.</summary>
@@ -76,6 +77,8 @@ public sealed class AppServices
     public LocalizationService Localization { get; }
 
     public WorkspaceStore Workspace { get; }
+
+    public AgentWorkspaceService Agent { get; }
 
     private static readonly object InitializationGate = new();
 

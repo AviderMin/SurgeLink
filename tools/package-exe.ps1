@@ -57,6 +57,19 @@ Get-ChildItem -LiteralPath ($targetDir | Out-String).Trim() | ForEach-Object {
 foreach ($required in @('SurgeLink.exe', 'SurgeLink.dll', 'SurgeLink.pri', 'Reactor.pri', 'Microsoft.UI.Xaml.Controls.pri', 'coreclr.dll', 'Microsoft.UI.Xaml.dll', 'Assets/AppIcon.ico')) {
     if (!(Test-Path -LiteralPath (Join-Path $payload $required))) { throw "Publish output is missing $required" }
 }
+# Keep the CLI payload isolated so its dependency/runtime files cannot overwrite the WinUI app.
+& dotnet publish (Join-Path $repoRoot 'src/SurgeLink.Cli/SurgeLink.Cli.csproj') `
+    -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
+    -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false `
+    "-p:Version=$Version" -o (Join-Path $payload 'cli') -m:1 -v:minimal
+if ($LASTEXITCODE -ne 0) { throw 'CLI publish failed.' }
+if (!(Test-Path -LiteralPath (Join-Path $payload 'cli/surgelink-cli.exe'))) { throw 'CLI publish output is missing.' }
+& dotnet publish (Join-Path $repoRoot 'src/SurgeLink.AgentHost/SurgeLink.AgentHost.csproj') `
+    -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
+    -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false `
+    "-p:Version=$Version" -o (Join-Path $payload 'agent') -m:1 -v:minimal
+if ($LASTEXITCODE -ne 0) { throw 'MCP host publish failed.' }
+if (!(Test-Path -LiteralPath (Join-Path $payload 'agent/surgelink-agent-host.exe'))) { throw 'MCP host publish output is missing.' }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $payload 'LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'PRIVACY.md') -Destination $payload
 $revision = & git -C $repoRoot rev-parse HEAD

@@ -6,6 +6,9 @@
     <Platform Name="ARM64" />
   </Configurations>
   <Folder Name="/src/">
+    <Project Path="src/SurgeLink.Agent/SurgeLink.Agent.csproj" />
+    <Project Path="src/SurgeLink.AgentHost/SurgeLink.AgentHost.csproj" />
+    <Project Path="src/SurgeLink.Cli/SurgeLink.Cli.csproj" />
     <Project Path="src/SurgeLink.App/SurgeLink.App.csproj" />
     <Project Path="src/SurgeLink.Core/SurgeLink.Core.csproj" />
     <Project Path="src/SurgeLink.Protocols.Demo/SurgeLink.Protocols.Demo.csproj" />
@@ -15,6 +18,7 @@
     <Project Path="src/SurgeLink.Terminal/SurgeLink.Terminal.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/SurgeLink.Agent.Tests/SurgeLink.Agent.Tests.csproj" />
     <Project Path="tests/SurgeLink.Core.Tests/SurgeLink.Core.Tests.csproj" />
     <Project Path="tests/SurgeLink.Protocols.Conformance/SurgeLink.Protocols.Conformance.csproj" />
     <Project Path="tests/SurgeLink.Protocols.Ssh.Tests/SurgeLink.Protocols.Ssh.Tests.csproj" />

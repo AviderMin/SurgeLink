@@ -58,6 +58,9 @@ public sealed class WorkspaceTab
     public string? FileBrowserPath { get; internal set; }
 
     public string Title => Profile.Name;
+
+    /// <summary>Prevents new external access once connection teardown starts.</summary>
+    public bool IsClosing { get; internal set; }
 }
 
 /// <summary>Immutable view of the workspace used by the shell to render.</summary>
@@ -150,6 +153,9 @@ public sealed class WorkspaceStore
 
     /// <summary>Raised after every state change, always on the UI thread.</summary>
     public event EventHandler? Changed;
+
+    /// <summary>Revoke and drain external operations before any protocol resources are disposed.</summary>
+    public event Func<WorkspaceTab, Task>? SessionClosing;
 
     /// <summary>Current immutable snapshot.</summary>
     public WorkspaceSnapshot Snapshot => Volatile.Read(ref _snapshot);
@@ -251,7 +257,13 @@ public sealed class WorkspaceStore
             {
                 return;
             }
+            if (tab.IsClosing) return;
+            tab.IsClosing = true;
         }
+
+        if (SessionClosing is { } closing)
+            foreach (Func<WorkspaceTab, Task> handler in closing.GetInvocationList())
+                await handler(tab).ConfigureAwait(false);
 
         tab.Session.StateChanged -= OnSessionStateChanged;
 

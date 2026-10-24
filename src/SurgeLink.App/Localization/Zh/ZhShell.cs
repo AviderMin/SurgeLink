@@ -6,6 +6,16 @@ public static class ZhShell
     /// <summary>Key -> 中文 mapping. Keep keys prefixed with <c>shell.</c>.</summary>
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["shell.agent.enable"] = "允许 CLI 访问",
+        ["shell.agent.revoke"] = "撤销 CLI 访问",
+        ["shell.agent.enableTitle"] = "允许本机 CLI 访问",
+        ["shell.agent.enableBody"] = "允许以当前 Windows 用户身份运行的程序读取会话“{0}”的主机信息、终端屏幕和系统指标吗？文件访问需逐次确认。内容可能包含敏感信息，外部 Agent 可能将其发送给模型服务商。撤销授权或关闭此连接后访问即失效。桌面实例：{1}。",
+        ["shell.agent.allow"] = "允许访问",
+        ["shell.agent.instance"] = "桌面实例：{0}",
+        ["shell.agent.fileTitle"] = "允许 CLI 文件访问",
+        ["shell.agent.fileBody"] = "会话：{0}\n操作：{1}\n远程路径：{2}\n\n允许本次请求吗？符号链接可能指向其他位置。结果将返回本机程序，并可能发送给 AI 服务商。",
+        ["shell.agent.errorTitle"] = "CLI 访问不可用",
+        ["shell.agent.errorBody"] = "无法更改 CLI 访问状态，请检查应用日志后重试。",
         ["shell.prompt.passphrase.title"] = "私钥口令",
         ["shell.prompt.passphrase.body"] = "请输入私钥口令；未加密的私钥可留空。",
         ["shell.settings.privacy"] = "隐私模式",

@@ -39,6 +39,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SurgeLink.Core\SurgeLink.Core.csproj" />
+    <ProjectReference Include="..\SurgeLink.Agent\SurgeLink.Agent.csproj" />
     <ProjectReference Include="..\SurgeLink.Terminal\SurgeLink.Terminal.csproj" />
     <ProjectReference Include="..\SurgeLink.Protocols.Demo\SurgeLink.Protocols.Demo.csproj" />
     <ProjectReference Include="..\SurgeLink.Protocols.Ssh\SurgeLink.Protocols.Ssh.csproj" />

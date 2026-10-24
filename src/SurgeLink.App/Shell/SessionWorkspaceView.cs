@@ -36,6 +36,8 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
         var services = UseContext(AppServices.ReactorContext)
             ?? throw new InvalidOperationException("The session workspace must be inside the shell service context.");
         var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
+        _ = UseExternalStore(services.Agent.Subscribe, () => services.Agent.Revision);
+        var (agentBusy, setAgentBusy) = UseState(false);
         var props = Props;
         var tab = props.Tab;
         var capabilities = tab.Session.Protocol.Capabilities;
@@ -62,6 +64,18 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
 
         var selected = Math.Max(0, views.IndexOf(props.View));
 
+        async void ToggleAgentAccess()
+        {
+            if (agentBusy) return;
+            setAgentBusy(true);
+            try { await services.Agent.ToggleAsync(tab); }
+            finally { setAgentBusy(false); }
+        }
+
+        var agentLabel = services.Agent.IsShared(tab.Id)
+            ? Str.T("shell.agent.revoke", "Revoke CLI access")
+            : Str.T("shell.agent.enable", "Allow CLI access");
+
         var selector = SelectorBar(
             items.ToArray(),
             Optional<int>.Of(selected),
@@ -87,7 +101,12 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
                     .Set(panel => PrivacyDisplay.ApplyGroup(panel, tab.Title))
                     .ToolTip(string.IsNullOrEmpty(props.Message) ? tab.Title : props.Message)
                     .Margin(0, 0, AppTheme.SpacingM, 0).Grid(column: 0),
-                selector.VAlign(VerticalAlignment.Center).Grid(column: 1))
+                HStack(AppTheme.SpacingS,
+                    Button(agentLabel, ToggleAgentAccess)
+                        .IsEnabled(!agentBusy && props.State == ConnectionState.Connected && !tab.IsClosing)
+                        .AutomationName(agentLabel).AutomationId("session-agent-access")
+                        .ToolTip(Str.F("shell.agent.instance", "Desktop instance: {0}", Environment.ProcessId)),
+                    selector).VAlign(VerticalAlignment.Center).Grid(column: 1))
             .Padding(AppTheme.SpacingM, AppTheme.SpacingS)
             .MinHeight(56);
 

@@ -16,7 +16,9 @@
 
     <!-- Logging (abstractions already flow in transitively through Reactor) -->
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.13" />
+    <!-- Low-level stdio host only; the desktop and CLI do not load the MCP SDK. -->
+    <PackageVersion Include="ModelContextProtocol.Core" Version="2.3.0" />
 
     <!-- Tests -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />

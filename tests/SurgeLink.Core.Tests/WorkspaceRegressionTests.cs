@@ -10,6 +10,37 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class WorkspaceRegressionTests
 {
+    [Fact]
+    public async Task ClosingRevokesAndDrainsExternalAccessBeforeDisposingConnection()
+    {
+        using var temp = new TempDirectory();
+        var plugin = new FakeProtocolPlugin();
+        var catalog = new ProtocolCatalog(); catalog.Register(plugin);
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
+            new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var tab = await workspace.OpenAsync(SessionProfile.New("fake", "host.test", 22, "alice"), null, default);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var drain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        workspace.SessionClosing += closing =>
+        {
+            Assert.Same(tab, closing);
+            Assert.True(closing.IsClosing);
+            entered.SetResult();
+            return drain.Task;
+        };
+        var close = workspace.CloseAsync(tab.Id);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, ((FakeProtocolSession)tab.Session).DisposeCount);
+        Assert.False(close.IsCompleted);
+        drain.SetResult();
+        await close.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, ((FakeProtocolSession)tab.Session).DisposeCount);
+        Assert.Empty(workspace.Snapshot.Tabs);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

@@ -178,9 +178,21 @@ docs/                             架构、开发指南与界面截图
 
 UI 使用 C# 元素树与 Reactor hooks 描述，底层仍是原生 WinUI 控件。协议通过能力接口向界面提供终端、文件和监控功能，新增协议不必重写应用外壳。
 
+## AI Agent 与 CLI（只读预览）
+
+连接后，在会话标题栏点击“允许 CLI 访问”，可让当前 Windows 用户下的本机程序读取该连接。
+支持已授权会话列表、主机信息、终端当前屏幕、系统监控，以及逐次在桌面确认的目录列表和文本文件读取。
+撤销授权、关闭或重连后，旧会话句柄失效。授权范围为同一 Windows 用户，当前不区分具体 Agent 应用。
+
+提供 `surgelink-cli` 和独立的 MCP stdio Host，两者共用同一套接入与授权逻辑，不保存额外的 SSH 凭据。
+发行打包脚本将它们分别放入 `cli/` 和 `agent/`；开发构建与 MCP 客户端配置见 [接入文档](docs/AGENT-CLI.md)。
+此版本只开放读取，命令执行、终端输入、文件修改和逐客户端配对尚未提供。
+终端和文件内容可能包含敏感信息，外部 Agent 可能将读取结果发送给其模型服务商；界面隐私遮蔽不会替换接入返回内容。
+
 ## 开发文档
 
-- [外部 AI Agent / MCP 接入开发方案](docs/AI-AGENT-MCP-DEVELOPMENT.md)（设计提案）
+- [Agent CLI 使用与接入契约](docs/AGENT-CLI.md)（只读 v1）
+- [外部 AI Agent 接入开发方案](docs/AI-AGENT-DEVELOPMENT.md)（设计评审与后续路线）
 - [架构与线程模型](docs/ARCHITECTURE.md)
 - [新增协议与契约测试](docs/ADDING-A-PROTOCOL.md)
 - [WinUI 3／Reactor 界面规范](docs/UI-GUIDELINES.md)
