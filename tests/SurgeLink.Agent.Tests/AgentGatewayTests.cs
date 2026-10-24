@@ -10,6 +10,50 @@ namespace SurgeLink.Agent.Tests;
 
 public sealed class AgentGatewayTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RevocationIsObservedBeforeLinkedCancellationCallbacksRun(bool monitoring)
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var answer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var files = new CountingFiles();
+        var monitor = new BlockingMonitor();
+        var gateway = new AgentGateway((_, _) => { started.TrySetResult(); return answer.Task; });
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files, Monitor = monitor }, null);
+        var pending = gateway.ExecuteAsync(new(monitoring ? "monitor.snapshot" : "files.read", handle, "/config"), default);
+        await (monitoring ? monitor.Started.Task : started.Task).WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Hold the newest Lifetime callback ahead of linked-token propagation.
+        // Reflection keeps this scheduler-control hook out of the production API.
+        var grants = (System.Collections.IDictionary)typeof(AgentGateway)
+            .GetField("_grants", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(gateway)!;
+        var grant = Assert.Single(grants.Values.Cast<object>());
+        var lifetime = (CancellationTokenSource)grant.GetType().GetProperty("Lifetime")!.GetValue(grant)!;
+        var callbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCallback = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = lifetime.Token.Register(() =>
+        {
+            callbackEntered.TrySetResult();
+            releaseCallback.Task.GetAwaiter().GetResult();
+        });
+        var revoking = gateway.RevokeAsync("tab");
+        try
+        {
+            await callbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            answer.TrySetResult(true);
+            monitor.Finish.TrySetResult(new SystemSnapshot());
+            Assert.Equal("cancelled", (await pending.WaitAsync(TimeSpan.FromSeconds(5))).ErrorCode);
+            Assert.Equal(0, files.ReadCount);
+            Assert.False(revoking.IsCompleted);
+        }
+        finally
+        {
+            releaseCallback.TrySetResult();
+            await revoking.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
     [Fact]
     public async Task FailingAuditObserverCannotLoseOperationResponseOrSkipOtherObservers()
     {

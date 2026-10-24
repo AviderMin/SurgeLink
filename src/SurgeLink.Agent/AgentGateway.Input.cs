@@ -31,7 +31,7 @@ public sealed partial class AgentGateway
         {
             // Replaying the same operation never selects a tab or writes again.
             if (grant.Activate is not null) await grant.Activate("terminal", ct).ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
+            ThrowIfCancelled(grant, ct);
             var receipt = request.Method == "terminal.text"
                 ? await grant.Terminal.SendTextAsync(request.Text!, request.Submit, request.ExpectedInputRevision.Value, ct).ConfigureAwait(false)
                 : await grant.Terminal.SendKeyAsync(request.Key!, request.ExpectedInputRevision.Value, ct).ConfigureAwait(false);

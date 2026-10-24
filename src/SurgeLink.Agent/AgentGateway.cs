@@ -129,7 +129,7 @@ public sealed partial class AgentGateway
         await grant.Serial.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            ct.ThrowIfCancellationRequested();
+            ThrowIfCancelled(grant, ct);
             if (grant.Session.State != ConnectionState.Connected)
                 return AgentResponse.Error("session_unavailable", "The session is disconnected.");
             if (request.Method is "terminal.text" or "terminal.key")
@@ -166,9 +166,10 @@ public sealed partial class AgentGateway
                         return AgentResponse.Error("invalid_path", "Supply a remote path without control characters (maximum 4096 characters).");
                     // No claim of path sandboxing: each exact path/operation requires desktop approval.
                     // This also covers directory listings and symlinks, which may resolve outside a lexical root.
-                    if (!await _confirmFile(new AgentFileAccess(grant.Info.Label, request.Method, request.Path), ct).ConfigureAwait(false))
+                    var approved = await _confirmFile(new AgentFileAccess(grant.Info.Label, request.Method, request.Path), ct).ConfigureAwait(false);
+                    ThrowIfCancelled(grant, ct);
+                    if (!approved)
                         return AgentResponse.Error("denied", "File access was declined in the desktop.");
-                    ct.ThrowIfCancellationRequested();
                     var files = grant.Session.FileSystem ?? throw new NotSupportedException();
                     if (request.Method == "files.list")
                     {
@@ -183,10 +184,18 @@ public sealed partial class AgentGateway
                     }
                     break;
             }
-            ct.ThrowIfCancellationRequested();
+            ThrowIfCancelled(grant, ct);
             return result;
         }
         finally { grant.Serial.Release(); }
+    }
+
+    private static void ThrowIfCancelled(Grant grant, CancellationToken ct)
+    {
+        // CancelAsync marks Lifetime immediately, but linked-token callbacks run later.
+        // A delayed callback must not let a revoked operation continue or return data.
+        grant.Lifetime.Token.ThrowIfCancellationRequested();
+        ct.ThrowIfCancellationRequested();
     }
 
     private static bool IsKnownMethod(string method) => method is "sessions.list" or "sessions.info" or "sessions.activate"
