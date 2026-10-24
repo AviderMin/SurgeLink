@@ -61,8 +61,9 @@ public sealed class AppSettingsStoreTests
         var original = store.Current;
         var changes = 0;
         store.Changed += (_, _) => changes++;
-        Directory.CreateDirectory(path + ".tmp");
-        Assert.Throws<UnauthorizedAccessException>(() => store.Update(current => current with { Theme = ThemeMode.Dark }));
+        using var blockedReplace = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var failure = Record.Exception(() => store.Update(current => current with { Theme = ThemeMode.Dark }));
+        Assert.True(failure is IOException or UnauthorizedAccessException);
         Assert.Equal(original, store.Current);
         Assert.Equal(original, new AppSettingsStore(path).Current);
         Assert.Equal(0, changes);

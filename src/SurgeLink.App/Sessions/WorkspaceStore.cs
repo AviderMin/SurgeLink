@@ -133,6 +133,7 @@ public sealed class WorkspaceStore
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger<WorkspaceStore> _logger;
     private readonly object _gate = new();
+    private readonly Dictionary<Guid, TaskCompletionSource> _closing = new();
     private WorkspaceSnapshot _snapshot = WorkspaceSnapshot.Empty;
 
     /// <summary>Creates the store and loads saved profiles.</summary>
@@ -247,46 +248,61 @@ public sealed class WorkspaceStore
     }
 
     /// <summary>Closes a tab and disposes its connection.</summary>
-    public async Task CloseAsync(Guid tabId)
+    public Task CloseAsync(Guid tabId)
     {
         WorkspaceTab? tab;
+        TaskCompletionSource completion;
         lock (_gate)
         {
+            if (_closing.TryGetValue(tabId, out var existing)) return existing.Task;
             tab = _snapshot.Tabs.FirstOrDefault(t => t.Id == tabId);
             if (tab is null)
             {
-                return;
+                return Task.CompletedTask;
             }
-            if (tab.IsClosing) return;
+            completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _closing.Add(tabId, completion);
             tab.IsClosing = true;
         }
+        _ = CloseTabCoreAsync(tab, completion);
+        return completion.Task;
+    }
 
-        if (SessionClosing is { } closing)
-            foreach (Func<WorkspaceTab, Task> handler in closing.GetInvocationList())
-                await handler(tab).ConfigureAwait(false);
-
-        tab.Session.StateChanged -= OnSessionStateChanged;
-
-        // Stop the queue before the protocol session and its file system are
-        // disposed; the queue waits for its worker so no transfer keeps using a
-        // dead connection.
-        await tab.Transfers.DisposeAsync().ConfigureAwait(false);
-
-        if (tab.Terminal is not null)
+    private async Task CloseTabCoreAsync(WorkspaceTab tab, TaskCompletionSource completion)
+    {
+        try
         {
-            await tab.Terminal.DisposeAsync();
+            if (SessionClosing is { } closing)
+                foreach (Func<WorkspaceTab, Task> handler in closing.GetInvocationList())
+                    await handler(tab).ConfigureAwait(false);
+
+            tab.Session.StateChanged -= OnSessionStateChanged;
+            // Attempt every cleanup even if an earlier resource fails to close.
+            try { await tab.Transfers.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Transfer queue cleanup failed for {TabId}", tab.Id); }
+            try { if (tab.Terminal is not null) await tab.Terminal.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Terminal cleanup failed for {TabId}", tab.Id); }
+            try { await _sessions.CloseAsync(tab.Session.SessionId).ConfigureAwait(false); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Connection cleanup failed for {TabId}", tab.Id); }
+
+            Update(s =>
+            {
+                var remaining = s.Tabs.Where(t => t.Id != tab.Id).ToList();
+                _closing.Remove(tab.Id);
+                return s with { Tabs = remaining, ActiveTabId = s.ActiveTabId == tab.Id ? remaining.LastOrDefault()?.Id : s.ActiveTabId };
+            });
+            completion.TrySetResult();
         }
-
-        await _sessions.CloseAsync(tab.Session.SessionId);
-
-        Update(s =>
+        catch (Exception ex)
         {
-            var remaining = s.Tabs.Where(t => t.Id != tabId).ToList();
-            var active = s.ActiveTabId == tabId
-                ? remaining.LastOrDefault()?.Id
-                : s.ActiveTabId;
-            return s with { Tabs = remaining, ActiveTabId = active };
-        });
+            // A failed pre-close drain must keep the live connection retryable.
+            lock (_gate)
+            {
+                tab.IsClosing = false;
+                _closing.Remove(tab.Id);
+                completion.TrySetException(ex);
+            }
+        }
     }
 
     /// <summary>

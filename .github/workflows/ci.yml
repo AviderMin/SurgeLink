@@ -1,0 +1,45 @@
+name: Code checks
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  verify:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Repository and localization checks
+        run: |
+          python tools/check-repository.py
+          if ($LASTEXITCODE -ne 0) { throw 'Repository check failed.' }
+          python tools/check-ui-localization.py
+          if ($LASTEXITCODE -ne 0) { throw 'Localization check failed.' }
+      - name: Release tooling regression checks
+        run: |
+          python -m unittest discover -s tools/tests -p test_release_notes.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Release notes tests failed.' }
+          ./tools/tests/test-release-tag.ps1
+      - name: Unit and conformance tests
+        run: dotnet test SurgeLink.slnx -c Release -p:Platform=x64 -m:1 --nologo
+      - name: Desktop build
+        run: dotnet build src/SurgeLink.App -c Release -p:Platform=x64 --no-restore -warnaserror

@@ -16,6 +16,10 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly AgentGateway _gateway = new();
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _accessChanges = new(1, 1);
+    private long _stopGeneration;
+    private bool _disposed;
+    private Task? _disposeTask;
     private readonly Dictionary<Guid, EventHandler> _humanHandlers = new();
     private readonly Dictionary<string, string> _labels = new(StringComparer.Ordinal);
     private readonly Queue<AgentActivity> _activity = new();
@@ -64,61 +68,83 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
 
     public async Task SetAccessAsync(WorkspaceTab tab, AgentAccessMode mode)
     {
+        if (mode == AgentAccessMode.None)
+        {
+            lock (_gate) _stopGeneration++;
+            try { await RevokeAsync(tab, "revoked"); }
+            catch (Exception ex) { ReportError(ex); }
+            return;
+        }
+        long generation;
+        lock (_gate) { if (_disposed) return; generation = _stopGeneration; }
+        var revision = tab.Terminal?.ReadScreen().InputRevision;
+        await _accessChanges.WaitAsync();
         try
         {
             if (GetMode(tab.Id) == mode) return;
-            var revision = tab.Terminal?.ReadScreen().InputRevision;
             await RevokeAsync(tab, "revoked");
-            if (mode == AgentAccessMode.None) return;
-            if (!_workspace.Snapshot.Tabs.Contains(tab) || tab.State != ConnectionState.Connected || tab.IsClosing) return;
-            if (mode == AgentAccessMode.Control && (tab.Terminal is null || tab.Terminal.IsClosed
-                || tab.Terminal.ReadScreen().InputRevision != revision)) return;
-            _server ??= new AgentPipeServer(AgentEndpoint.ForProcess(Environment.ProcessId), _gateway);
-            var handle = _gateway.GrantSession(tab.Id.ToString(), tab.Title, tab.Session, null,
-                terminal: tab.Terminal, allowControl: mode == AgentAccessMode.Control,
-                activate: (view, ct) => ActivateAsync(tab, view, ct),
-                isActive: () => _workspace.Snapshot.ActiveTabId == tab.Id);
             lock (_gate)
             {
+                if (_disposed || generation != _stopGeneration || !_workspace.Snapshot.Tabs.Contains(tab)
+                    || tab.State != ConnectionState.Connected || tab.IsClosing
+                    || tab.Terminal?.ReadScreen().InputRevision != revision) return;
+                if (mode == AgentAccessMode.Control && (tab.Terminal is null || tab.Terminal.IsClosed)) return;
+                _server ??= new AgentPipeServer(AgentEndpoint.ForProcess(Environment.ProcessId), _gateway);
+                var handle = _gateway.GrantSession(tab.Id.ToString(), tab.Title, tab.Session, null,
+                    terminal: tab.Terminal, allowControl: mode == AgentAccessMode.Control,
+                    activate: (view, ct) => ActivateAsync(tab, view, ct),
+                    isActive: () => _workspace.Snapshot.ActiveTabId == tab.Id);
                 _labels[handle] = tab.Title;
                 _handles[tab.Id] = handle;
                 _error = null;
                 if (mode == AgentAccessMode.Control && tab.Terminal is { } terminal)
                 {
-                    EventHandler handler = (_, _) => { _ = RevokeAsync(tab, "human_input"); };
+                    EventHandler handler = (_, _) => { _ = RevokeForHumanAsync(tab); };
                     _humanHandlers[tab.Id] = handler;
                     terminal.UserInput += handler;
                 }
             }
+            // Input may land between the earlier revision check and event subscription.
+            // Once subscribed, subsequent input revokes through the handler as usual.
+            if (mode == AgentAccessMode.Control && tab.Terminal?.ReadScreen().InputRevision != revision)
+            {
+                await RevokeAsync(tab, "human_input");
+                return;
+            }
             Record(tab.Title, "access", mode == AgentAccessMode.Control ? "control_enabled" : "read_enabled");
         }
         catch (Exception ex) { ReportError(ex); }
+        finally { _accessChanges.Release(); }
     }
 
     public async Task StopAllAsync()
     {
+        lock (_gate) _stopGeneration++;
         // Invoke all revocations before waiting: one slow transport must not retain other handles.
-        await Task.WhenAll(_workspace.Snapshot.Tabs.Select(tab => RevokeAsync(tab, "revoked"))).ConfigureAwait(false);
+        try { await Task.WhenAll(_workspace.Snapshot.Tabs.Select(tab => RevokeAsync(tab, "revoked"))).ConfigureAwait(false); }
+        catch (Exception ex) { ReportError(ex); throw; }
+    }
+
+    private async Task RevokeForHumanAsync(WorkspaceTab tab)
+    {
+        try { await RevokeAsync(tab, "human_input").ConfigureAwait(false); }
+        catch (Exception ex) { ReportError(ex); }
     }
 
     private async Task RevokeAsync(WorkspaceTab tab, string reason)
     {
-        try
+        var shared = IsShared(tab.Id);
+        string? oldHandle;
+        lock (_gate)
         {
-            var shared = IsShared(tab.Id);
-            string? oldHandle;
-            lock (_gate)
-            {
-                _handles.Remove(tab.Id, out oldHandle);
-                if (_humanHandlers.Remove(tab.Id, out var handler) && tab.Terminal is { } terminal)
-                    terminal.UserInput -= handler;
-            }
-            var drain = _gateway.RevokeAsync(tab.Id.ToString());
-            if (shared) Record(tab.Title, "access", reason);
-            await drain.ConfigureAwait(false);
-            if (oldHandle is not null) lock (_gate) _labels.Remove(oldHandle);
+            _handles.Remove(tab.Id, out oldHandle);
+            if (_humanHandlers.Remove(tab.Id, out var handler) && tab.Terminal is { } terminal)
+                terminal.UserInput -= handler;
         }
-        catch (Exception ex) { ReportError(ex); }
+        var drain = _gateway.RevokeAsync(tab.Id.ToString());
+        if (shared) Record(tab.Title, "access", reason);
+        await drain.ConfigureAwait(false);
+        if (oldHandle is not null) lock (_gate) _labels.Remove(oldHandle);
     }
 
     private async Task ActivateAsync(WorkspaceTab tab, string view, CancellationToken ct)
@@ -200,11 +226,23 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         return installed;
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        _workspace.SessionClosing -= OnSessionClosingAsync;
-        await StopAllAsync().ConfigureAwait(false);
-        if (_server is not null) await _server.DisposeAsync().ConfigureAwait(false);
-        _gateway.OperationCompleted -= OnOperationCompleted;
+        lock (_gate)
+        {
+            _disposed = true;
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+        }
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        try { await StopAllAsync().ConfigureAwait(false); }
+        finally
+        {
+            _workspace.SessionClosing -= OnSessionClosingAsync;
+            try { if (_server is not null) await _server.DisposeAsync().ConfigureAwait(false); }
+            finally { _gateway.OperationCompleted -= OnOperationCompleted; }
+        }
     }
 }

@@ -15,7 +15,7 @@ namespace SurgeLink.App.Services;
 /// thread, and exposed as read-only properties. Adding a protocol is one
 /// <c>Protocols.Register(...)</c> line in <see cref="Create"/>.
 /// </summary>
-public sealed class AppServices
+public sealed class AppServices : IAsyncDisposable
 {
     private AppServices(
         ILoggerFactory loggerFactory,
@@ -81,6 +81,35 @@ public sealed class AppServices
     public AgentWorkspaceService Agent { get; }
 
     private static readonly object InitializationGate = new();
+    private readonly object _disposeGate = new();
+    private Task? _disposeTask;
+
+    public ValueTask DisposeAsync()
+    {
+        lock (_disposeGate) return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        Interaction.CancelAll();
+        var failures = new List<Exception>();
+        try
+        {
+            try { await Agent.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception ex) { failures.Add(ex); }
+            foreach (var tab in Workspace.Snapshot.Tabs)
+            {
+                try { await Workspace.CloseAsync(tab.Id).ConfigureAwait(false); }
+                catch (Exception ex) { failures.Add(ex); }
+            }
+        }
+        finally
+        {
+            try { if (Sessions is IAsyncDisposable disposable) await disposable.DisposeAsync().ConfigureAwait(false); }
+            finally { Logs.Dispose(); }
+        }
+        if (failures.Count > 0) throw new AggregateException("Application cleanup failed.", failures);
+    }
 
     /// <summary>
     /// Creates the graph on the UI thread during application startup. Components

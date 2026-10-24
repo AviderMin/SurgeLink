@@ -22,7 +22,7 @@ implementation.
         +------------------+-------------------+
                            |
                   +--------v---------+        +---------------------+
-                  |  SurgeLink.Core  |<-------|  SurgeLink.Terminal |   engine, no UI
+                  |  SurgeLink.Core  |        |  SurgeLink.Terminal |   independent engine, no UI
                   +------------------+        +---------------------+
 ```
 
@@ -35,6 +35,10 @@ Rules:
    cell grid out.
 3. Protocols depend on Core only. They never reference WinUI or Reactor types.
 4. `SurgeLink.App` depends on Core, Terminal and the protocol assemblies it wants to ship.
+5. `SurgeLink.Agent` depends on Core and exposes scoped access to existing connections.
+   `SurgeLink.Cli` and `SurgeLink.AgentHost` (MCP) call its current-user named pipe contract.
+   The desktop provides terminal automation through `TerminalBridge`; the caller's Agent app
+   owns execution policy. See [Agent CLI contract](AGENT-CLI.md).
 
 ## Connection lifecycle
 
@@ -48,10 +52,13 @@ UI (session editor, sidebar)
           starts the shell channel
 ```
 
-`WorkspaceStore` is the single source of truth the UI renders from. It publishes an immutable
+`WorkspaceStore` is the single source of truth the UI renders from. It publishes a
 `WorkspaceSnapshot` (profiles, open tabs, active tab, search text) and every component reads it
 through Reactor's `UseExternalStore`. Session state events from background threads are marshalled
 with `IUiDispatcher.Post` before the snapshot is replaced.
+The snapshot record is replaced, but its `WorkspaceTab` instances contain mutable runtime
+state. Do not treat a captured tab as a historical immutable value. Concurrent close callers
+share one completion task; pre-close access drains finish before terminal/transport disposal.
 
 ## Capability model
 
@@ -121,7 +128,10 @@ visible while reading the terminal or the file browser.
   the UI thread).
 - The terminal emulator is *not* internally locked: callers serialise on `SyncRoot`. The bridge
   is the only writer, the renderer the only reader.
-- All `async` protocol APIs take a `CancellationToken` and must not throw on cancellation.
+- Async protocol APIs take a `CancellationToken` and normally propagate
+  `OperationCanceledException`. Callers distinguish cancellation from transport failure.
+  Cancellation cannot undo bytes already sent to a remote terminal; an uncertain input result
+  requires reading current output rather than blindly replaying a command.
 
 ## Persistence and secrets
 
@@ -133,7 +143,25 @@ visible while reading the terminal or the file browser.
 | Settings | `settings.json` | plain |
 | Logs | `logs/surge-yyyyMMdd.log` | plain |
 
-All stores write atomically (temp file + replace) through `AtomicJsonFile`.
+Stores write unique temporary files, flush them and replace the destination through
+`AtomicJsonFile`. Read/modify/write operations acquire a persistent sibling `.lock` file,
+read the latest disk state and then publish the change. Lock acquisition has a five-second
+limit. Do not remove a live lock file. Read-only loads tolerate malformed JSON for startup;
+incremental mutations fail on malformed/unreadable data rather than overwrite it as an empty
+store. Back up and repair a corrupt file before retrying. `ISessionStore.Save` is an explicit
+whole-document replacement; concurrent whole-document edits still have last-writer semantics.
+
+Remote writes stage into unique sibling files and commit through the protocol's rename
+operation. The text editor retains the original encoding and raw-byte SHA-256 baseline,
+revalidating before staging and before commit. Writers sharing one file-system instance are
+serialized. SFTP does not provide server-side compare-and-swap: an external edit between the
+last check and rename remains possible. Failed staging cleanup is best effort when disconnected.
+Transfer queue shutdown waits up to ten seconds; transport disposal then interrupts remaining
+I/O. This is a bounded shutdown policy, not a guarantee that all remote cleanup has completed.
+
+SSH internal command capture drains stdout/stderr concurrently and rejects output above
+8 MiB/2 MiB respectively. Limits apply to captured data; SSH.NET also owns transient receive
+buffers. Large listings fail explicitly rather than returning incomplete directory contents.
 
 ## Host key verification
 

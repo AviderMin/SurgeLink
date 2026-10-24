@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 
 namespace SurgeLink.Core.Storage;
 
@@ -12,20 +13,19 @@ public static class AtomicJsonFile
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
 
-    /// <summary>Reads <paramref name="path"/>, returning <paramref name="fallback"/> on any failure.</summary>
-    public static T Read<T>(string path, T fallback)
+    /// <summary>Reads a document. Mutations must disable error tolerance to avoid overwriting unreadable data.</summary>
+    public static T Read<T>(string path, T fallback, bool tolerateErrors = true)
     {
         try
         {
-            if (!File.Exists(path))
-            {
-                return fallback;
-            }
-
-            using var stream = File.OpenRead(path);
-            return JsonSerializer.Deserialize<T>(stream, SerializerOptions) ?? fallback;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            var value = JsonSerializer.Deserialize<T>(stream, SerializerOptions);
+            if (value is null && !tolerateErrors) throw new JsonException("The stored document is null.");
+            return value ?? fallback;
         }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException)
+        catch (FileNotFoundException) { return fallback; }
+        catch (DirectoryNotFoundException) { return fallback; }
+        catch (Exception ex) when (tolerateErrors && (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException))
         {
             return fallback;
         }
@@ -40,12 +40,36 @@ public static class AtomicJsonFile
             Directory.CreateDirectory(directory);
         }
 
-        var temp = path + ".tmp";
-        using (var stream = File.Create(temp))
+        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
         {
-            JsonSerializer.Serialize(stream, value, SerializerOptions);
+            using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                JsonSerializer.Serialize(stream, value, SerializerOptions);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temp, path, overwrite: true);
         }
+        finally
+        {
+            try { File.Delete(temp); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+    }
 
-        File.Move(temp, path, overwrite: true);
+    /// <summary>Coordinates synchronous read/modify/write across store instances and desktop processes.</summary>
+    public static TResult WithExclusiveAccess<TResult>(string path, Func<TResult> mutate)
+    {
+        var fullPath = Path.GetFullPath(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        var started = Stopwatch.StartNew();
+        FileStream lease;
+        while (true)
+        {
+            try { lease = new FileStream(fullPath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); break; }
+            catch (IOException) when (started.Elapsed < TimeSpan.FromSeconds(5)) { Thread.Sleep(20); }
+        }
+        // Keep the lock file: deleting it could let another process lock a different inode.
+        using (lease) return mutate();
     }
 }

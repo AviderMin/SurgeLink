@@ -28,10 +28,16 @@ public sealed class EncryptedCredentialStore : ICredentialStore
     {
         _path = path;
         _protector = protector;
-        _file = AtomicJsonFile.Read(path, new CredentialFile());
-        _file.Profiles = (_file.Profiles ?? new Dictionary<string, Entry>())
+        _file = ReadFile();
+    }
+
+    private CredentialFile ReadFile(bool tolerateErrors = true)
+    {
+        var file = AtomicJsonFile.Read(_path, new CredentialFile(), tolerateErrors);
+        file.Profiles = (file.Profiles ?? new Dictionary<string, Entry>())
             .Where(pair => pair.Value is not null)
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        return file;
     }
 
     /// <inheritdoc />
@@ -39,6 +45,7 @@ public sealed class EncryptedCredentialStore : ICredentialStore
     {
         lock (_gate)
         {
+            _file = ReadFile();
             if (!_file.Profiles.TryGetValue(profileId, out var entry))
             {
                 return null;
@@ -57,14 +64,19 @@ public sealed class EncryptedCredentialStore : ICredentialStore
     {
         lock (_gate)
         {
-            var next = new CredentialFile { Profiles = new(_file.Profiles, StringComparer.Ordinal) };
-            next.Profiles[profileId] = new Entry
+            var entry = new Entry
             {
                 Password = Protect(credential.Password),
                 Passphrase = Protect(credential.PrivateKeyPassphrase),
             };
-            AtomicJsonFile.Write(_path, next);
-            _file = next;
+            AtomicJsonFile.WithExclusiveAccess(_path, () =>
+            {
+                var next = ReadFile(tolerateErrors: false);
+                next.Profiles[profileId] = entry;
+                AtomicJsonFile.Write(_path, next);
+                _file = next;
+                return true;
+            });
         }
     }
 
@@ -73,13 +85,13 @@ public sealed class EncryptedCredentialStore : ICredentialStore
     {
         lock (_gate)
         {
-            if (!_file.Profiles.ContainsKey(profileId)) { return; }
-            var next = new CredentialFile { Profiles = new(_file.Profiles, StringComparer.Ordinal) };
-            if (next.Profiles.Remove(profileId))
+            AtomicJsonFile.WithExclusiveAccess(_path, () =>
             {
-                AtomicJsonFile.Write(_path, next);
+                var next = ReadFile(tolerateErrors: false);
+                if (next.Profiles.Remove(profileId)) AtomicJsonFile.Write(_path, next);
                 _file = next;
-            }
+                return true;
+            });
         }
     }
 

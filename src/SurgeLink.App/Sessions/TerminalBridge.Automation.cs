@@ -60,7 +60,12 @@ public sealed partial class TerminalBridge
             }
             RaiseInvalidated();
             if (bytes.Length == 0) throw new ArgumentException("Terminal input is empty.");
-            var revision = Interlocked.Increment(ref _inputRevision);
+            // Human input can arrive while encoding waits for the screen lock.
+            // Reserve the observed revision atomically before the transport write.
+            ct.ThrowIfCancellationRequested();
+            var revision = expectedRevision + 1;
+            if (Interlocked.CompareExchange(ref _inputRevision, revision, expectedRevision) != expectedRevision)
+                throw new TerminalInputConflictException();
             var outputCursor = _output.Cursor;
             try { await _remote.WriteAsync(bytes, ct).ConfigureAwait(false); }
             catch (Exception ex) { throw new TerminalInputUnknownException(ex); }

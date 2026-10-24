@@ -217,10 +217,12 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             var token = lifetime.Token;
             try
             {
-                var bytes = (document.Current ?? throw new InvalidOperationException("No loaded document.")).Encode(snapshot);
-                if (bytes.Length > MaximumEditorBytes) { throw new IOException(Str.T("sftp.editor.tooLarge", "This file is too large for the built-in text editor.")); }
-                await RemoteFileWrite.WriteAsync(props.FileSystem, target.FullPath, bytes.Length, null, true,
-                    (stream, ct) => stream.WriteAsync(bytes, ct).AsTask(), token).ConfigureAwait(true);
+                var baseline = document.Current ?? throw new InvalidOperationException("No loaded document.");
+                if ((long)baseline.Encoding.GetByteCount(snapshot) + baseline.Encoding.GetPreamble().Length > MaximumEditorBytes)
+                    throw new IOException(Str.T("sftp.editor.tooLarge", "This file is too large for the built-in text editor."));
+                var savedDocument = await RemoteTextEdit.SaveAsync(props.FileSystem, target.FullPath,
+                    baseline, snapshot, MaximumEditorBytes, token).ConfigureAwait(true);
+                document.Current = savedDocument;
                 // Edits made while the write was in flight remain dirty.
                 if (!token.IsCancellationRequested)
                 {
@@ -229,6 +231,10 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 }
             }
             catch (OperationCanceledException) { }
+            catch (RemoteFileConflictException)
+            {
+                setError(Str.T("sftp.editor.conflict", "The remote file changed after loading. Keep your edits and reload before saving."));
+            }
             catch (Exception exception)
             {
                 if (!token.IsCancellationRequested) { setError(exception.Message); }
@@ -450,7 +456,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                     .Grid(column: 1),
                 TextBlock(Str.F("sftp.editor.characters", "{0} characters", characterCount))
                     .Foreground(Theme.SecondaryText)
-                    .Grid(column: 2)) with { ColumnSpacing = AppTheme.SpacingL })
+                    .Grid(column: 2)) with
+        { ColumnSpacing = AppTheme.SpacingL })
             .Padding(AppTheme.SpacingL, AppTheme.SpacingS, AppTheme.SpacingL, AppTheme.SpacingM)
             .VAlign(VerticalAlignment.Center);
 

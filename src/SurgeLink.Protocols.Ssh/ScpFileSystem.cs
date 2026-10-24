@@ -16,6 +16,7 @@ namespace SurgeLink.Protocols.Ssh;
 /// </summary>
 internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
 {
+    private readonly object _lifecycleGate = new();
     private static readonly Regex ListingPattern = new(
         @"^([bcdlps-])([rwxStTs-]{9})\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(.+)$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -277,12 +278,16 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         await RunAsync(
                 runner,
-                "mv " + Quote(source) + " " + Quote(destination),
+                BuildRenameCommand(source, destination),
                 "rename",
                 source,
                 cancellationToken)
             .ConfigureAwait(false);
     }
+
+    internal static string BuildRenameCommand(string source, string destination) =>
+        "mv -nT -- " + Quote(source) + " " + Quote(destination)
+        + " && test ! -e " + Quote(source) + " && test ! -L " + Quote(source);
 
     /// <inheritdoc />
     public async Task SetPermissionsAsync(string path, int unixMode, CancellationToken cancellationToken)
@@ -300,28 +305,31 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        SshClient? commandClient;
+        ScpClient? scpClient;
+        lock (_lifecycleGate)
         {
-            return;
+            if (_disposed != 0) return ValueTask.CompletedTask;
+            Volatile.Write(ref _disposed, 1);
+            commandClient = Interlocked.Exchange(ref _commandClient, null);
+            scpClient = Interlocked.Exchange(ref _scpClient, null);
+            _runner = null;
         }
-
-        var commandClient = Interlocked.Exchange(ref _commandClient, null);
         if (commandClient is not null)
         {
             DisposeClient(commandClient);
         }
 
-        var scpClient = Interlocked.Exchange(ref _scpClient, null);
         if (scpClient is not null)
         {
             DisposeClient(scpClient);
         }
 
-        _connectLock.Dispose();
-        _transferLock.Dispose();
+        // Do not dispose semaphores still referenced by queued/in-flight operations.
         GC.SuppressFinalize(this);
+        return ValueTask.CompletedTask;
     }
 
     internal async Task UploadFileAsync(
@@ -418,9 +426,18 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
             }
 
             var runner = new SshCommandRunner(client, _options.Encoding, _options.CommandTimeout);
-            _commandClient = client;
-            _runner = runner;
-            return runner;
+            lock (_lifecycleGate)
+            {
+                if (_disposed == 0 && !cancellationToken.IsCancellationRequested)
+                {
+                    _commandClient = client;
+                    _runner = runner;
+                    return runner;
+                }
+            }
+            DisposeClient(client);
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new ObjectDisposedException(nameof(ScpFileSystem));
         }
         finally
         {
@@ -481,8 +498,17 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 throw SshErrorMapper.Map(exception, $"connect SCP transfer to {_factory.Endpoint}");
             }
 
-            _scpClient = client;
-            return client;
+            lock (_lifecycleGate)
+            {
+                if (_disposed == 0 && !cancellationToken.IsCancellationRequested)
+                {
+                    _scpClient = client;
+                    return client;
+                }
+            }
+            DisposeClient(client);
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new ObjectDisposedException(nameof(ScpFileSystem));
         }
         finally
         {

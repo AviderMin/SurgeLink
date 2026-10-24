@@ -11,6 +11,20 @@ namespace SurgeLink.Agent.Tests;
 public sealed class AgentGatewayTests
 {
     [Fact]
+    public async Task FailingAuditObserverCannotLoseOperationResponseOrSkipOtherObservers()
+    {
+        var gateway = new AgentGateway();
+        var recorded = 0;
+        gateway.OperationCompleted += (_, _, _) => throw new IOException("observer failed");
+        gateway.OperationCompleted += (_, _, _) => recorded++;
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession(), () => "screen");
+        Assert.True((await gateway.ExecuteAsync(new("terminal.screen", handle), default)).Success);
+        Assert.True((await gateway.ExecuteAsync(new("sessions.info", handle), default)).Success);
+        Assert.Equal(2, recorded);
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Fact]
     public async Task UnsharedSessionsAreInvisibleAndRandomHandlesCannotBeUsed()
     {
         var gateway = new AgentGateway((_, _) => throw new InvalidOperationException("No approval expected"));
@@ -90,9 +104,28 @@ public sealed class AgentGatewayTests
         await monitor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var revoking = gateway.RevokeAsync("tab");
         Assert.False(revoking.IsCompleted);
+        Assert.Same(revoking, gateway.RevokeAsync("tab"));
+        Assert.Throws<InvalidOperationException>(() => gateway.GrantSession("tab", "Demo", new TestSession(), null));
         monitor.Finish.SetResult(new SystemSnapshot());
         await revoking.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("cancelled", (await pending).ErrorCode);
+    }
+
+    [Fact]
+    public async Task ThrowingCancellationCallbackStillWaitsForRunningOperation()
+    {
+        var monitor = new BlockingMonitor { ThrowOnCancellation = true };
+        var gateway = new AgentGateway();
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { Monitor = monitor }, null);
+        var pending = gateway.ExecuteAsync(new("monitor.snapshot", handle), default);
+        await monitor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var revoking = gateway.RevokeAsync("tab");
+        Assert.False(revoking.IsCompleted);
+        Assert.Same(revoking, gateway.RevokeAsync("tab"));
+        monitor.Finish.TrySetResult(new SystemSnapshot());
+        await Assert.ThrowsAsync<AggregateException>(() => revoking.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("cancelled", (await pending).ErrorCode);
+        Assert.False(gateway.IsShared("tab"));
     }
 
     [Fact]
@@ -217,10 +250,16 @@ public sealed class AgentGatewayTests
 
     private sealed class BlockingMonitor : IRemoteSystemMonitor
     {
+        public bool ThrowOnCancellation { get; init; }
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<SystemSnapshot> Finish { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TimeSpan RecommendedInterval => TimeSpan.FromSeconds(1);
-        public Task<SystemSnapshot> SampleAsync(CancellationToken cancellationToken) { Started.SetResult(); return Finish.Task; }
+        public async Task<SystemSnapshot> SampleAsync(CancellationToken cancellationToken)
+        {
+            using var registration = ThrowOnCancellation ? cancellationToken.Register(() => throw new IOException("callback failed")) : default;
+            Started.SetResult();
+            return await Finish.Task;
+        }
         public Task<IReadOnlyList<RemoteProcessInfo>> GetTopProcessesAsync(int maxCount, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

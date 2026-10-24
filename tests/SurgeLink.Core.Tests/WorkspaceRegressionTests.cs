@@ -11,6 +11,28 @@ namespace SurgeLink.Core.Tests;
 public sealed class WorkspaceRegressionTests
 {
     [Fact]
+    public async Task FailedPrecloseDrainLeavesConnectionOpenAndRetryable()
+    {
+        using var temp = new TempDirectory();
+        var catalog = new ProtocolCatalog(); catalog.Register(new FakeProtocolPlugin());
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
+            new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var tab = await workspace.OpenAsync(SessionProfile.New("fake", "host.test", 22, "alice"), null, default);
+        var attempts = 0;
+        workspace.SessionClosing += _ => ++attempts == 1 ? Task.FromException(new IOException("drain failed")) : Task.CompletedTask;
+        await Assert.ThrowsAsync<IOException>(() => workspace.CloseAsync(tab.Id));
+        Assert.False(tab.IsClosing);
+        Assert.Equal(0, ((FakeProtocolSession)tab.Session).DisposeCount);
+        Assert.Same(tab, Assert.Single(workspace.Snapshot.Tabs));
+        await workspace.CloseAsync(tab.Id);
+        Assert.Equal(1, ((FakeProtocolSession)tab.Session).DisposeCount);
+        Assert.Empty(workspace.Snapshot.Tabs);
+    }
+
+    [Fact]
     public async Task ClosingRevokesAndDrainsExternalAccessBeforeDisposingConnection()
     {
         using var temp = new TempDirectory();
@@ -35,6 +57,7 @@ public sealed class WorkspaceRegressionTests
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, ((FakeProtocolSession)tab.Session).DisposeCount);
         Assert.False(close.IsCompleted);
+        Assert.Same(close, workspace.CloseAsync(tab.Id));
         drain.SetResult();
         await close.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(1, ((FakeProtocolSession)tab.Session).DisposeCount);

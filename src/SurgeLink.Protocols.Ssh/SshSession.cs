@@ -40,6 +40,7 @@ public sealed class SshSession : IProtocolSession
     private OsAwareMonitor? _monitor;
     private int _remoteOperatingSystem = (int)RemoteOperatingSystem.Unknown;
     private int _disposed;
+    private TaskCompletionSource? _disposeCompletion;
 
     /// <summary>Creates a session over an already connected client.</summary>
     internal SshSession(
@@ -102,6 +103,7 @@ public sealed class SshSession : IProtocolSession
 
             lock (_gate)
             {
+                if (IsDisposed) return null;
                 return _terminal ??= new SshTerminal(_client, _options, _logger);
             }
         }
@@ -119,6 +121,7 @@ public sealed class SshSession : IProtocolSession
 
             lock (_gate)
             {
+                if (IsDisposed) return null;
                 return _fileSystem ??= new SshFileSystem(_factory, _options, _logger);
             }
         }
@@ -136,6 +139,7 @@ public sealed class SshSession : IProtocolSession
 
             lock (_gate)
             {
+                if (IsDisposed) return null;
                 return _monitor ??= new OsAwareMonitor(_runner.RunAsync, GetRemoteOperatingSystemAsync, _logger);
             }
         }
@@ -159,18 +163,35 @@ public sealed class SshSession : IProtocolSession
 
         lock (_gate)
         {
+            if (IsDisposed) return Task.FromResult(_hostInfo);
+            if (_hostInfoTask?.IsCanceled == true) _hostInfoTask = null;
             return _hostInfoTask ??= ProbeHostInfoAsync(cancellationToken);
         }
     }
 
     /// <summary>Closes every capability and the underlying SSH client; safe to call twice.</summary>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        lock (_gate)
         {
-            return;
+            if (_disposeCompletion is null)
+            {
+                Volatile.Write(ref _disposed, 1);
+                _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _ = CompleteDisposalAsync(_disposeCompletion);
+            }
+            return new ValueTask(_disposeCompletion.Task);
         }
+    }
 
+    private async Task CompleteDisposalAsync(TaskCompletionSource completion)
+    {
+        try { await DisposeCoreAsync().ConfigureAwait(false); completion.TrySetResult(); }
+        catch (Exception ex) { completion.TrySetException(ex); }
+    }
+
+    private async Task DisposeCoreAsync()
+    {
         SetState(ConnectionState.Disconnecting);
 
         SshTerminal? terminal;

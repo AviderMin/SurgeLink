@@ -26,6 +26,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
     private readonly SshConnectionFactory _factory;
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _connectLock = new(1, 1);
+    private readonly object _lifecycleGate = new();
 
     private SftpClient? _client;
     private string? _homeDirectory;
@@ -305,25 +306,20 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
     /// <summary>Closes the SFTP connection; safe to call twice.</summary>
     public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        SftpClient? client;
+        lock (_lifecycleGate)
         {
-            return ValueTask.CompletedTask;
+            if (_disposed != 0) return ValueTask.CompletedTask;
+            Volatile.Write(ref _disposed, 1);
+            client = _client;
+            _client = null;
         }
-
-        var client = Interlocked.Exchange(ref _client, null);
         if (client is not null)
         {
             DisposeClient(client);
         }
 
-        try
-        {
-            _connectLock.Dispose();
-        }
-        catch (ObjectDisposedException)
-        {
-            // Already disposed.
-        }
+        // Waiting/in-flight connects still own this semaphore; let it be collected with the facade.
 
         GC.SuppressFinalize(this);
         return ValueTask.CompletedTask;
@@ -359,15 +355,18 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
             }
 
             var client = await ConnectClientAsync(cancellationToken).ConfigureAwait(false);
-            if (IsDisposed)
+            lock (_lifecycleGate)
             {
-                DisposeClient(client);
-                throw new ObjectDisposedException(nameof(SftpFileSystem));
+                if (!IsDisposed && !cancellationToken.IsCancellationRequested)
+                {
+                    _client = client;
+                    _homeDirectory = TryGetWorkingDirectory(client);
+                    return client;
+                }
             }
-
-            _client = client;
-            _homeDirectory = TryGetWorkingDirectory(client);
-            return client;
+            DisposeClient(client);
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new ObjectDisposedException(nameof(SftpFileSystem));
         }
         finally
         {

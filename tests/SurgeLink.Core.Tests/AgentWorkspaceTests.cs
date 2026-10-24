@@ -12,6 +12,43 @@ namespace SurgeLink.Core.Tests;
 public sealed class AgentWorkspaceTests
 {
     [Fact]
+    public async Task StopAllInvalidatesAccessChangeWaitingForAnInFlightWrite()
+    {
+        using var temp = new TempDirectory();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var remote = new AutomationRemote { BeforeWrite = (_, _) => { entered.TrySetResult(); return new ValueTask(release.Task); } };
+        var plugin = new FakeProtocolPlugin { SessionFactory = _ => new FakeProtocolSession(new("fake", "Fake", 0, SessionCapabilities.Terminal)) { Terminal = remote } };
+        var catalog = new ProtocolCatalog(); catalog.Register(plugin);
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
+            new AutomationDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var tab = await workspace.OpenAsync(SessionProfile.New("fake", "host.test", 22, "alice"), null, default);
+        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance);
+        await service.SetAccessAsync(tab, AgentAccessMode.Control);
+        var client = new AgentClient(AgentEndpoint.ForProcess(Environment.ProcessId));
+        var listed = await client.SendAsync(new("sessions.list"));
+        var handle = Assert.Single(listed.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
+        var send = client.SendAsync(new("terminal.text", handle, Text: "pending", ExpectedInputRevision: 0, OperationId: "pending"));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var changing = service.SetAccessAsync(tab, AgentAccessMode.Observe);
+            var stop = service.StopAllAsync();
+            Assert.False(changing.IsCompleted);
+            Assert.False(stop.IsCompleted);
+            release.TrySetResult();
+            await Task.WhenAll(changing, stop).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(AgentAccessMode.None, service.GetMode(tab.Id));
+            _ = await send;
+        }
+        finally { release.TrySetResult(); }
+        await workspace.CloseAsync(tab.Id);
+    }
+
+    [Fact]
     public async Task ControlUsesExistingVisibleTerminalAndHumanTypingRevokesHandle()
     {
         using var temp = new TempDirectory();

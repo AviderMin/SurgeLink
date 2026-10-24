@@ -30,12 +30,47 @@ internal sealed class SshCommandRunner
 
         using var sshCommand = _client.CreateCommand(command, _encoding);
         sshCommand.CommandTimeout = _timeout;
-        await sshCommand.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+        var execution = sshCommand.ExecuteAsync(cancellationToken);
+        // Drain both SDK pipes while the command runs instead of buffering all output
+        // inside SSH.NET until exit. Never return a silently truncated listing/probe.
+        var output = ReadBoundedOutputAsync(sshCommand.OutputStream, _encoding, 8 * 1024 * 1024, cancellationToken);
+        var error = ReadBoundedOutputAsync(sshCommand.ExtendedOutputStream, _encoding, 2 * 1024 * 1024, cancellationToken);
+        var pending = new List<Task> { execution, output, error };
+        try
+        {
+            while (pending.Count > 0)
+            {
+                var finished = await Task.WhenAny(pending).ConfigureAwait(false);
+                await finished.ConfigureAwait(false);
+                pending.Remove(finished);
+            }
+            return new SshCommandResult(command, await output.ConfigureAwait(false), await error.ConfigureAwait(false), sshCommand.ExitStatus);
+        }
+        catch
+        {
+            // Closing this command unblocks the other pipe reader and settles ExecuteAsync.
+            sshCommand.Dispose();
+            try { await Task.WhenAll(execution, output, error).ConfigureAwait(false); }
+            catch (Exception) { /* Preserve the original limit/transport/cancellation failure. */ }
+            throw;
+        }
+    }
 
-        return new SshCommandResult(
-            command,
-            sshCommand.Result ?? string.Empty,
-            sshCommand.Error ?? string.Empty,
-            sshCommand.ExitStatus);
+    internal static async Task<string> ReadBoundedOutputAsync(Stream input, Encoding encoding, int maximumBytes, CancellationToken ct)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumBytes);
+        using var captured = new MemoryStream();
+        var buffer = new byte[Math.Min(81920, maximumBytes)];
+        while (true)
+        {
+            var remaining = maximumBytes - (int)captured.Length + 1;
+            var count = await input.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), ct).ConfigureAwait(false);
+            if (count == 0) break;
+            if (captured.Length + count > maximumBytes) throw new IOException("SSH command output exceeds the capture limit.");
+            captured.Write(buffer, 0, count);
+        }
+        ct.ThrowIfCancellationRequested();
+        using var reader = new StreamReader(new MemoryStream(captured.ToArray(), writable: false), encoding, detectEncodingFromByteOrderMarks: true);
+        return await reader.ReadToEndAsync(ct).ConfigureAwait(false);
     }
 }

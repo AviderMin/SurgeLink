@@ -39,11 +39,8 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
 
         async void StopAll()
         {
-            if (busy.Current) return;
-            busy.Current = true;
-            setWorking(true);
             try { await agent.StopAllAsync(); }
-            finally { busy.Current = false; setWorking(false); }
+            catch (Exception ex) { CrashLog.Write("AgentStop", ex); }
         }
 
         void Copy(string text)
@@ -126,7 +123,7 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
                         BodyStrong(Str.T("shell.agent.sessions", "Session access")),
                         VStack(AppTheme.SpacingS, sessions)),
                     Button(Str.T("shell.agent.stopAll", "Stop all Agent access"), StopAll)
-                        .IsEnabled(!working && agent.HasAccess)
+                        .IsEnabled(agent.HasAccess)
                         .AutomationName(Str.T("shell.agent.stopAll", "Stop all Agent access")).AutomationId("AgentStopAll"),
                     VStack(AppTheme.SpacingS,
                         BodyStrong(Str.T("shell.agent.activity", "Recent activity")),

@@ -13,7 +13,10 @@ public sealed class JsonSessionStore : ISessionStore
     public JsonSessionStore(string path)
     {
         _path = path;
-        _profiles = AtomicJsonFile.Read(path, new List<SessionProfile>())
+        _profiles = ReadProfiles();
+    }
+
+    private List<SessionProfile> ReadProfiles(bool tolerateErrors = true) => AtomicJsonFile.Read(_path, new List<SessionProfile>(), tolerateErrors)
             .Where(profile => profile is not null
                 && !string.IsNullOrWhiteSpace(profile.Id)
                 && !string.IsNullOrWhiteSpace(profile.ProtocolId)
@@ -21,13 +24,13 @@ public sealed class JsonSessionStore : ISessionStore
             .Select(profile => profile.Options is null
                 ? profile with { Options = new Dictionary<string, string>() } : profile)
             .ToList();
-    }
 
     /// <inheritdoc />
     public IReadOnlyList<SessionProfile> Load()
     {
         lock (_gate)
         {
+            _profiles = ReadProfiles();
             return _profiles.ToList();
         }
     }
@@ -38,7 +41,7 @@ public sealed class JsonSessionStore : ISessionStore
         lock (_gate)
         {
             var next = profiles.ToList();
-            AtomicJsonFile.Write(_path, next);
+            AtomicJsonFile.WithExclusiveAccess(_path, () => { AtomicJsonFile.Write(_path, next); return true; });
             _profiles = next;
         }
     }
@@ -48,19 +51,23 @@ public sealed class JsonSessionStore : ISessionStore
     {
         lock (_gate)
         {
-            var next = _profiles.ToList();
-            var index = next.FindIndex(p => string.Equals(p.Id, profile.Id, StringComparison.Ordinal));
-            if (index >= 0)
+            AtomicJsonFile.WithExclusiveAccess(_path, () =>
             {
-                next[index] = profile;
-            }
-            else
-            {
-                next.Add(profile);
-            }
+                var next = ReadProfiles(tolerateErrors: false);
+                var index = next.FindIndex(p => string.Equals(p.Id, profile.Id, StringComparison.Ordinal));
+                if (index >= 0)
+                {
+                    next[index] = profile;
+                }
+                else
+                {
+                    next.Add(profile);
+                }
 
-            AtomicJsonFile.Write(_path, next);
-            _profiles = next;
+                AtomicJsonFile.Write(_path, next);
+                _profiles = next;
+                return true;
+            });
         }
     }
 
@@ -69,15 +76,18 @@ public sealed class JsonSessionStore : ISessionStore
     {
         lock (_gate)
         {
-            var next = _profiles.ToList();
-            var removed = next.RemoveAll(p => string.Equals(p.Id, profileId, StringComparison.Ordinal)) > 0;
-            if (removed)
+            return AtomicJsonFile.WithExclusiveAccess(_path, () =>
             {
-                AtomicJsonFile.Write(_path, next);
-                _profiles = next;
-            }
+                var next = ReadProfiles(tolerateErrors: false);
+                var removed = next.RemoveAll(p => string.Equals(p.Id, profileId, StringComparison.Ordinal)) > 0;
+                if (removed)
+                {
+                    AtomicJsonFile.Write(_path, next);
+                    _profiles = next;
+                }
 
-            return removed;
+                return removed;
+            });
         }
     }
 }

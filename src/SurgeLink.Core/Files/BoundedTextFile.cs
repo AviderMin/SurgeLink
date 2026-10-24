@@ -1,4 +1,5 @@
 using System.Text;
+using System.Security.Cryptography;
 
 namespace SurgeLink.Core.Files;
 
@@ -38,12 +39,12 @@ public static class BoundedTextFile
         { encoding = new UnicodeEncoding(true, true, true); offset = 2; }
         var text = encoding.GetString(bytes, offset, bytes.Length - offset);
         if (text.Contains('\0')) { throw new IOException("Binary files cannot be opened in the text editor."); }
-        return new TextFileDocument(text, encoding);
+        return new TextFileDocument(text, encoding, Convert.ToHexString(SHA256.HashData(bytes)));
     }
 }
 
 /// <summary>Editable text and its file encoding, including the original BOM policy.</summary>
-public sealed record TextFileDocument(string Text, Encoding Encoding)
+public sealed record TextFileDocument(string Text, Encoding Encoding, string? Sha256 = null)
 {
     /// <summary>Encodes edited text using the original format.</summary>
     public byte[] Encode(string text) => [.. Encoding.GetPreamble(), .. Encoding.GetBytes(text)];

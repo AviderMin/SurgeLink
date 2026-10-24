@@ -256,7 +256,11 @@ internal sealed class MainShell : Component
                 }
             }
 
-            await workspace.CloseAsync(tab.Id);
+            try { await workspace.CloseAsync(tab.Id); }
+            catch (Exception ex)
+            {
+                await ShowConnectionErrorAsync(Str.T("shell.error.closeFailed", "Could not close the session"), ex);
+            }
         }
 
         void CloseActiveTab()

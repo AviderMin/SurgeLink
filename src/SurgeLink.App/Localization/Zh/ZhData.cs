@@ -7,6 +7,7 @@ public static class ZhData
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         // ---- SFTP: toolbar -------------------------------------------------
+        ["sftp.editor.conflict"] = "远程文件在加载后已被修改。请保留当前编辑内容，重新加载后再保存。",
         ["sftp.editor.waitForSave"] = "请等待当前操作完成后再关闭窗口。",
         ["sftp.editor.sessionClosed"] = "会话已关闭，请在关闭窗口前复制并保留未保存的文本。",
         ["sftp.editor.discardTitle"] = "放弃未保存的更改？",

@@ -103,7 +103,7 @@ public sealed class InteractionService
     public async Task<HostKeyDecision> RequestHostKeyTrustAsync(HostKeyChallenge challenge, CancellationToken cancellationToken)
     {
         var pending = Enqueue(InteractionKind.HostKey, challenge, cancellationToken);
-        var result = await pending.Result.ConfigureAwait(false);
+        var result = await AwaitAnswerAsync(pending, cancellationToken).ConfigureAwait(false);
         return result as HostKeyDecision ?? HostKeyDecision.Reject;
     }
 
@@ -111,7 +111,7 @@ public sealed class InteractionService
     public async Task<string?> RequestSecretAsync(SecretRequest request, CancellationToken cancellationToken)
     {
         var pending = Enqueue(InteractionKind.Secret, request, cancellationToken);
-        var result = await pending.Result.ConfigureAwait(false);
+        var result = await AwaitAnswerAsync(pending, cancellationToken).ConfigureAwait(false);
         return result as string;
     }
 
@@ -119,7 +119,7 @@ public sealed class InteractionService
     public async Task<bool> RequestConfirmationAsync(ConfirmationRequest request, CancellationToken cancellationToken)
     {
         var pending = Enqueue(InteractionKind.Confirmation, request, cancellationToken);
-        var result = await pending.Result.ConfigureAwait(false);
+        var result = await AwaitAnswerAsync(pending, cancellationToken).ConfigureAwait(false);
         return result is true;
     }
 
@@ -127,7 +127,7 @@ public sealed class InteractionService
     public async Task<string?> RequestTextAsync(TextRequest request, CancellationToken cancellationToken)
     {
         var pending = Enqueue(InteractionKind.Text, request, cancellationToken);
-        var result = await pending.Result.ConfigureAwait(false);
+        var result = await AwaitAnswerAsync(pending, cancellationToken).ConfigureAwait(false);
         return result as string;
     }
 
@@ -147,6 +147,7 @@ public sealed class InteractionService
 
     private PendingInteraction Enqueue(InteractionKind kind, object request, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var pending = new PendingInteraction(kind, request, cancellationToken);
         lock (_gate)
         {
@@ -155,6 +156,22 @@ public sealed class InteractionService
 
         RaiseChanged();
         return pending;
+    }
+
+    private async Task<object?> AwaitAnswerAsync(PendingInteraction pending, CancellationToken ct)
+    {
+        using var registration = ct.Register(() =>
+        {
+            var removed = false;
+            lock (_gate)
+            {
+                // The native host closes an already-current popup using its own token binding.
+                // Waiting prompts can be removed immediately without ever displaying them.
+                if (!ReferenceEquals(_queue.First?.Value, pending)) removed = _queue.Remove(pending);
+            }
+            if (removed) { pending.Cancel(); RaiseChanged(); }
+        });
+        return await pending.Result.WaitAsync(ct).ConfigureAwait(false);
     }
 
     /// <summary>Removes the head of the queue; called by the dialog host once it is closed.</summary>

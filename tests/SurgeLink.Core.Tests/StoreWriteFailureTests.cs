@@ -20,9 +20,9 @@ public sealed class StoreWriteFailureTests
         var original = SessionProfile.New("ssh", "example.test", 22, "user");
         store.Upsert(original);
         var before = File.ReadAllText(path);
-        Directory.CreateDirectory(path + ".tmp");
+        using var blockedReplace = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
 
-        Assert.Throws<UnauthorizedAccessException>(() =>
+        var error = Record.Exception(() =>
         {
             switch (operation)
             {
@@ -32,8 +32,9 @@ public sealed class StoreWriteFailureTests
                 case "delete": store.Delete(original.Id); break;
             }
         });
+        Assert.True(error is IOException or UnauthorizedAccessException);
 
-        Assert.Equal(original, Assert.Single(store.Load()));
+        Assert.Equivalent(original, Assert.Single(store.Load()));
         Assert.Equal(before, File.ReadAllText(path));
     }
 
@@ -47,13 +48,14 @@ public sealed class StoreWriteFailureTests
         var store = new EncryptedCredentialStore(path, new FakeSecretProtector());
         store.Save("profile", new StoredCredential { Password = "original" });
         var before = File.ReadAllText(path);
-        Directory.CreateDirectory(path + ".tmp");
+        using var blockedReplace = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
 
-        Assert.Throws<UnauthorizedAccessException>(() =>
+        var error = Record.Exception(() =>
         {
             if (delete) { store.Delete("profile"); }
             else { store.Save("profile", new StoredCredential { Password = "changed" }); }
         });
+        Assert.True(error is IOException or UnauthorizedAccessException);
 
         Assert.Equal("original", store.Get("profile")?.Password);
         Assert.Equal(before, File.ReadAllText(path));
@@ -69,18 +71,21 @@ public sealed class StoreWriteFailureTests
         var store = new JsonHostKeyStore(path);
         var original = new KnownHostEntry
         {
-            Endpoint = "example.test:22", Algorithm = "ssh-ed25519",
-            FingerprintSha256 = "SHA256:original", TrustedUtc = DateTimeOffset.UtcNow,
+            Endpoint = "example.test:22",
+            Algorithm = "ssh-ed25519",
+            FingerprintSha256 = "SHA256:original",
+            TrustedUtc = DateTimeOffset.UtcNow,
         };
         store.Save(original);
         var before = File.ReadAllText(path);
-        Directory.CreateDirectory(path + ".tmp");
+        using var blockedReplace = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
 
-        Assert.Throws<UnauthorizedAccessException>(() =>
+        var error = Record.Exception(() =>
         {
             if (remove) { store.Remove(original.Endpoint); }
             else { store.Save(original with { FingerprintSha256 = "SHA256:changed" }); }
         });
+        Assert.True(error is IOException or UnauthorizedAccessException);
 
         Assert.True(store.TryGetFingerprint(original.Endpoint, out var entry));
         Assert.Equal(original, entry);

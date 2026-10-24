@@ -52,6 +52,6 @@ public static class Program
                 }
             });
 
-        AppServices.Current?.Agent.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        AppServices.Current?.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 }

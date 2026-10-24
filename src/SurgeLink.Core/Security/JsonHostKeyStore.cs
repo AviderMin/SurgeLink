@@ -21,6 +21,7 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     {
         lock (_gate)
         {
+            _entries = Load(_path);
             if (_entries.TryGetValue(endpoint, out var found))
             {
                 entry = found;
@@ -37,12 +38,14 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     {
         lock (_gate)
         {
-            var next = new Dictionary<string, KnownHostEntry>(_entries, StringComparer.OrdinalIgnoreCase)
+            AtomicJsonFile.WithExclusiveAccess(_path, () =>
             {
-                [entry.Endpoint] = entry,
-            };
-            Persist(next);
-            _entries = next;
+                var next = Load(_path, tolerateErrors: false);
+                next[entry.Endpoint] = entry;
+                Persist(next);
+                _entries = next;
+                return true;
+            });
         }
     }
 
@@ -51,15 +54,14 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     {
         lock (_gate)
         {
-            var next = new Dictionary<string, KnownHostEntry>(_entries, StringComparer.OrdinalIgnoreCase);
-            if (!next.Remove(endpoint))
+            return AtomicJsonFile.WithExclusiveAccess(_path, () =>
             {
-                return false;
-            }
-
-            Persist(next);
-            _entries = next;
-            return true;
+                var next = Load(_path, tolerateErrors: false);
+                if (!next.Remove(endpoint)) return false;
+                Persist(next);
+                _entries = next;
+                return true;
+            });
         }
     }
 
@@ -68,6 +70,7 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     {
         lock (_gate)
         {
+            _entries = Load(_path);
             return _entries.Values.OrderBy(e => e.Endpoint, StringComparer.Ordinal).ToList();
         }
     }
@@ -75,9 +78,9 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     private void Persist(Dictionary<string, KnownHostEntry> entries) =>
         AtomicJsonFile.Write(_path, entries.Values.OrderBy(e => e.Endpoint, StringComparer.Ordinal).ToList());
 
-    private static Dictionary<string, KnownHostEntry> Load(string path)
+    private static Dictionary<string, KnownHostEntry> Load(string path, bool tolerateErrors = true)
     {
-        var list = AtomicJsonFile.Read(path, new List<KnownHostEntry>());
+        var list = AtomicJsonFile.Read(path, new List<KnownHostEntry>(), tolerateErrors);
         var map = new Dictionary<string, KnownHostEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in list)
         {

@@ -10,6 +10,8 @@ public sealed class AgentPipeServer : IAsyncDisposable
     private readonly AgentGateway _gateway;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Task _run;
+    private readonly object _disposeGate = new();
+    private Task? _disposeTask;
 
     public AgentPipeServer(string pipeName, AgentGateway gateway)
     {
@@ -40,15 +42,26 @@ public sealed class AgentPipeServer : IAsyncDisposable
                 }
             }
             catch (Exception ex) when (ex is IOException or JsonException or OperationCanceledException) { }
-            finally { if (_pipe.IsConnected) _pipe.Disconnect(); }
+            finally
+            {
+                try { if (_pipe.IsConnected) _pipe.Disconnect(); }
+                catch (IOException) { /* A client may disappear between the state check and disconnect. */ }
+            }
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        await _shutdown.CancelAsync().ConfigureAwait(false);
-        await _run.ConfigureAwait(false);
-        await _pipe.DisposeAsync().ConfigureAwait(false);
-        _shutdown.Dispose();
+        lock (_disposeGate) return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        try
+        {
+            try { await _shutdown.CancelAsync().ConfigureAwait(false); }
+            finally { await _run.ConfigureAwait(false); }
+        }
+        finally { await _pipe.DisposeAsync().ConfigureAwait(false); _shutdown.Dispose(); }
     }
 }

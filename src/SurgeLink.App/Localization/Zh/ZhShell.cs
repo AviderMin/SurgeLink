@@ -7,6 +7,7 @@ public static class ZhShell
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["shell.agent.title"] = "Agent",
+        ["shell.error.closeFailed"] = "无法关闭会话",
         ["shell.agent.tabControlled"] = "Agent 已接管此会话",
         ["shell.agent.tabAccessible"] = "{0}，Agent 已接管",
         ["shell.agent.close"] = "关闭 Agent 面板",

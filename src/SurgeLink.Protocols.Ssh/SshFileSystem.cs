@@ -18,6 +18,7 @@ internal sealed class SshFileSystem : IRemoteFileSystem, IAsyncDisposable
     private readonly ILogger _logger;
     private readonly SftpFileSystem _sftp;
     private readonly SemaphoreSlim _switchLock = new(1, 1);
+    private readonly object _lifecycleGate = new();
     private ScpFileSystem? _scp;
     private int _disposed;
 
@@ -87,19 +88,20 @@ internal sealed class SshFileSystem : IRemoteFileSystem, IAsyncDisposable
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        ScpFileSystem? scp;
+        lock (_lifecycleGate)
         {
-            return;
+            if (_disposed != 0) return;
+            Volatile.Write(ref _disposed, 1);
+            scp = Interlocked.Exchange(ref _scp, null);
         }
-
-        var scp = Interlocked.Exchange(ref _scp, null);
         if (scp is not null)
         {
             await scp.DisposeAsync().ConfigureAwait(false);
         }
 
         await _sftp.DisposeAsync().ConfigureAwait(false);
-        _switchLock.Dispose();
+        // A fallback waiter may still release the switch semaphore after transport closure.
         GC.SuppressFinalize(this);
     }
 
@@ -138,16 +140,18 @@ internal sealed class SshFileSystem : IRemoteFileSystem, IAsyncDisposable
             await _switchLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                scp = _scp;
-                if (scp is null)
+                lock (_lifecycleGate)
                 {
-                    _logger.LogInformation(
-                        exception,
-                        "SFTP is unavailable for this server; switching the file system to SCP fallback.");
-                    scp = new ScpFileSystem(_factory, _options, _logger);
-                    Volatile.Write(ref _scp, scp);
-                    await _sftp.DisposeAsync().ConfigureAwait(false);
+                    ObjectDisposedException.ThrowIf(_disposed != 0, this);
+                    scp = _scp;
+                    if (scp is null)
+                    {
+                        _logger.LogInformation(exception, "SFTP is unavailable; switching the file system to SCP fallback.");
+                        scp = new ScpFileSystem(_factory, _options, _logger);
+                        Volatile.Write(ref _scp, scp);
+                    }
                 }
+                await _sftp.DisposeAsync().ConfigureAwait(false);
             }
             finally
             {

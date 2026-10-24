@@ -111,13 +111,18 @@ public sealed class AppSettingsStore : IAppSettingsStore
         ArgumentNullException.ThrowIfNull(mutate);
         lock (_gate)
         {
-            var next = Normalize(mutate(_current));
+            var next = AtomicJsonFile.WithExclusiveAccess(_path, () =>
+            {
+                var latest = Normalize(AtomicJsonFile.Read(_path, _current, tolerateErrors: false));
+                var updated = Normalize(mutate(latest));
+                if (updated != latest) AtomicJsonFile.Write(_path, updated);
+                return updated;
+            });
             if (next == _current)
             {
                 return;
             }
 
-            AtomicJsonFile.Write(_path, next);
             _current = next;
         }
 

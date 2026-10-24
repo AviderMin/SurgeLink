@@ -13,6 +13,7 @@ public sealed partial class AgentGateway
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, Grant> _grants = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCompletionSource> _revocations = new(StringComparer.Ordinal);
     private readonly Func<AgentFileAccess, CancellationToken, Task<bool>> _confirmFile;
 
     public AgentGateway(Func<AgentFileAccess, CancellationToken, Task<bool>>? confirmFile = null) =>
@@ -26,6 +27,7 @@ public sealed partial class AgentGateway
     {
         lock (_gate)
         {
+            if (_revocations.ContainsKey(connectionKey)) throw new InvalidOperationException("Previous access is still draining.");
             if (session.State != ConnectionState.Connected)
                 throw new InvalidOperationException("Only connected sessions can be shared.");
             var existing = _grants.Values.FirstOrDefault(g => g.ConnectionKey == connectionKey);
@@ -52,20 +54,39 @@ public sealed partial class AgentGateway
         }
     }
 
-    public async Task RevokeAsync(string connectionKey)
+    public Task RevokeAsync(string connectionKey)
     {
         Grant[] removed;
+        TaskCompletionSource completion;
         lock (_gate)
         {
+            if (_revocations.TryGetValue(connectionKey, out var pending)) return pending.Task;
             removed = _grants.Values.Where(g => g.ConnectionKey == connectionKey).ToArray();
+            if (removed.Length == 0) return Task.CompletedTask;
             foreach (var grant in removed) _grants.Remove(grant.Info.Handle);
+            completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _revocations.Add(connectionKey, completion);
         }
+        _ = DrainRevokedAsync(connectionKey, removed, completion);
+        return completion.Task;
+    }
+
+    private async Task DrainRevokedAsync(string connectionKey, Grant[] removed, TaskCompletionSource completion)
+    {
+        var failures = new List<Exception>();
         foreach (var grant in removed)
         {
-            await grant.Lifetime.CancelAsync().ConfigureAwait(false);
-            // Wait for an in-flight read before allowing the desktop to dispose the transport.
+            try { await grant.Lifetime.CancelAsync().ConfigureAwait(false); }
+            catch (Exception ex) { failures.Add(ex); }
+            // Every waiter shares this drain, including close/stop racing with a human takeover.
             await grant.Serial.WaitAsync().ConfigureAwait(false);
             grant.Serial.Release();
+        }
+        lock (_gate)
+        {
+            _revocations.Remove(connectionKey);
+            if (failures.Count == 0) completion.TrySetResult();
+            else completion.TrySetException(failures);
         }
     }
 
@@ -82,7 +103,10 @@ public sealed partial class AgentGateway
         // Never log arbitrary caller-supplied strings or file/terminal payloads.
         var auditMethod = IsKnownMethod(request.Method) ? request.Method : "unknown";
         var auditHandle = request.Session is { Length: 48 } handle && handle.All(char.IsAsciiHexDigit) ? handle : null;
-        OperationCompleted?.Invoke(auditMethod, auditHandle, result.ErrorCode ?? "ok");
+        if (OperationCompleted is { } completed)
+            foreach (Action<string, string?, string> handler in completed.GetInvocationList())
+                try { handler(auditMethod, auditHandle, result.ErrorCode ?? "ok"); }
+                catch (Exception) { /* Observers must not turn an accepted PTY write into a lost acknowledgement. */ }
         return result;
     }
 

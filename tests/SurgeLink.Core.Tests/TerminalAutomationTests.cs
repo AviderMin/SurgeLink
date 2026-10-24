@@ -153,6 +153,28 @@ public sealed class TerminalAutomationTests
     }
 
     private static TerminalBridge Create(AutomationRemote remote) => new(remote, new AutomationDispatcher(), NullLogger.Instance);
+
+    [Fact]
+    public async Task HumanInputWhileAgentWaitsForEmulatorInvalidatesAgentWrite()
+    {
+        var remote = new AutomationRemote();
+        await using var bridge = Create(remote);
+        Task? pending = null;
+        var worker = new Thread(() => pending = bridge.SendTextAsync("agent", false, 0, default));
+        try
+        {
+            lock (bridge.Emulator.SyncRoot)
+            {
+                worker.Start();
+                Assert.True(SpinWait.SpinUntil(() => (worker.ThreadState & System.Threading.ThreadState.WaitSleepJoin) != 0, TimeSpan.FromSeconds(5)));
+                bridge.SendText("human");
+            }
+        }
+        finally { if (worker.IsAlive) Assert.True(worker.Join(TimeSpan.FromSeconds(5))); }
+        await Assert.ThrowsAsync<TerminalInputConflictException>(() => pending!);
+        await bridge.SendKeyAsync("Enter", bridge.ReadScreen().InputRevision, default);
+        Assert.Equal(new[] { "human", "\r" }, remote.Writes);
+    }
 }
 
 internal sealed class AutomationDispatcher : IUiDispatcher

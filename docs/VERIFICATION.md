@@ -23,9 +23,12 @@ dotnet test tests/SurgeLink.Core.Tests                  # stores, catalog, sessi
 dotnet test tests/SurgeLink.Protocols.Conformance       # protocol conformance kit, Demo fixture
 dotnet test tests/SurgeLink.Protocols.Telnet.Tests      # Telnet codec and loopback transport
 dotnet test tests/SurgeLink.Protocols.Serial.Tests      # serial options and fake-device lifecycle
+dotnet test tests/SurgeLink.Agent.Tests                 # gateway, IPC, CLI and MCP contracts
 ```
 
 The full suite is offline; use actual test output for current counts.
+The SCP rename command test uses Git Bash on Windows or `/bin/sh` on Unix and skips if that
+shell is unavailable. It checks existing-file/directory refusal and quoted path handling.
 Use `dotnet test SurgeLink.slnx -c Release -p:Platform=x64 -m:1` to run the entire
 suite sequentially. Performance smoke tests have a 200 ms budget, so avoid running
 builds or live monitoring sessions at the same time when measuring them.
