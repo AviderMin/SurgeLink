@@ -15,7 +15,8 @@ internal sealed record TitleBarProps(
     Action ToggleSidebar,
     Action NewSession,
     Action OpenSettings,
-    Action ShowAbout);
+    Action ShowAbout,
+    Action ToggleAgent);
 
 /// <summary>
 /// The Windows title bar: app name, connected server count and
@@ -37,6 +38,8 @@ internal static class TitleBarView
                     ? ProgressRing().Width(16).Height(16)
                         .AutomationName(Str.T("shell.titleBar.busy", "Working"))
                     : Empty(),
+                IconButton("\uE99A", Str.T("shell.agent.title", "Agent"), "G", props.ToggleAgent)
+                    .AutomationId("AgentButton"),
                 IconButton("\uE700", Str.T("shell.titleBar.toggleSidebar", "Toggle sidebar"), "B", props.ToggleSidebar),
                 IconButton("\uE710", Str.T("shell.titleBar.newSession", "New session"), "N", props.NewSession),
                 IconButton("\uE713", Str.T("shell.titleBar.settings", "Settings"), "S", props.OpenSettings),
@@ -56,6 +59,13 @@ internal static class TitleBarView
     private static Element IconButton(string glyph, string label, string accessKey, Action onClick) =>
         Button(Icon(FontIcon(glyph, fontSize: 14)), onClick)
             .SubtleButton()
+            .Width(32).Height(32).MinWidth(32).MinHeight(32)
+            .Padding(0)
+            .Set(button =>
+            {
+                button.HorizontalContentAlignment = HorizontalAlignment.Center;
+                button.VerticalContentAlignment = VerticalAlignment.Center;
+            })
             .ToolTip(Str.F("shell.titleBar.shortcut", "{0} (Alt+{1})", label, accessKey))
             .AutomationName(label)
             .AccessKey(accessKey)

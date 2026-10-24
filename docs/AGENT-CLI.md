@@ -1,160 +1,221 @@
-# Agent CLI v1
+# Agent, CLI and shared terminal control
 
-SurgeLink exposes existing desktop connections through a local, read-only CLI.
-`SurgeLink.Agent` owns versioned DTOs, the gateway, framed named-pipe transport and
-shared client. `SurgeLink.Cli` is a thin command adapter. `SurgeLink.AgentHost` exposes
-the same operations over MCP stdio using the official C# SDK. It calls `AgentClient`
-directly, without spawning the CLI or loading SSH implementations.
+All Agent UI lives behind the robot button immediately left of the four existing
+title-bar actions (Alt+G). The five buttons share the Settings button's subtle
+style, 32×32 hit target, 14px icons and 8px spacing. The non-modal Agent panel stays
+above the workspace without resizing or remounting the terminal.
 
-## Try it
+## Desktop access
 
-Build the desktop and CLI with .NET 10 on Windows:
+1. Open a connection, or use the offline Demo.
+2. Open the title-bar robot panel.
+3. Choose **Allow reading** or **Control terminal** for the desired connection.
+4. Copy the MCP configuration or CLI command from that same panel.
+5. Use the panel's per-session Stop or Stop all actions to revoke access.
+
+Reading exposes host facts, the visible screen, retained incremental terminal
+output, metrics, directory listings and text files. Control additionally exposes
+PTY text/key input and selecting that tab's terminal/files/monitor view. Agent
+input selects the target terminal and returns its viewport to the live position,
+so commands and output appear in the same terminal the user sees. No second SSH
+shell, saved credentials or background exec channel is created.
+
+Execution policy belongs to the external Agent application. After desktop access
+is enabled, SurgeLink does not classify commands or prompt for individual commands
+or file reads. The scope is local programs under the same Windows user, not an
+authenticated individual Agent. Terminal commands have the remote account's
+permissions. Per-client pairing remains future work.
+
+Human typing, pasting or sending a terminal key immediately revokes that terminal's
+Agent handle before queuing the human input. Writes are serialized, and an Agent
+paste plus optional Enter is one transport write. Stop prevents further Agent
+input; it does not terminate an already running remote command. The user can
+send Ctrl+C deliberately in the terminal.
+
+## Build and CLI
+
+Build on Windows with .NET 10:
 
 ```powershell
 dotnet build SurgeLink.slnx -c Debug -p:Platform=x64
 ```
 
-Start the desktop, open an SSH or offline Demo connection, then select **Allow CLI
-access** in that session's header and read the consent dialog. Hover over the button
-to see the desktop process ID. In a separate PowerShell window:
+The panel copies an absolute CLI path and explicit desktop PID. A source solution
+build normally places the CLI in src/SurgeLink.Cli/bin/Debug/net10.0; a direct
+project build with Platform=x64 adds x64 after bin. Release installers include
+cli/surgelink-cli.exe and agent/surgelink-agent-host.exe, each self-contained.
+
+Example after allowing terminal control in the desktop:
 
 ```powershell
 $cli = '.\src\SurgeLink.Cli\bin\Debug\net10.0\surgelink-cli.exe'
 & $cli sessions list --json
-# Copy a handle from data[].handle into $sessionHandle.
-$sessionHandle = '<handle>'
-& $cli sessions info --session $sessionHandle --json
-& $cli terminal screen --session $sessionHandle --json
-& $cli monitor snapshot --session $sessionHandle --json
-& $cli files list --session $sessionHandle --path /home/demo --json
-& $cli files read --session $sessionHandle --path /home/demo/demo.txt --json
+$sessionHandle = '<handle from data[].handle>'
+$screen = & $cli terminal screen --session $sessionHandle --json | ConvertFrom-Json
+$operation = [guid]::NewGuid().ToString('N')
+$sendArguments = @(
+    'terminal', 'send', '--session', $sessionHandle,
+    '--text', 'echo hello', '--submit',
+    '--revision', [string]$screen.data.inputRevision,
+    '--operation-id', $operation, '--json'
+)
+& $cli @sendArguments
+
+# Keep the pre-input cursor to read all output that may arrive during the write.
+& $cli terminal output --session $sessionHandle --cursor $screen.data.outputCursor --json
 ```
 
-Both file commands require separate desktop confirmation. For multiple running
-desktops, add `--instance <desktop-process-id>`. Without this option exactly one
-process named `SurgeLink` must be running. The CLI does not launch the desktop.
-Release packaging includes the self-contained executable at `cli/surgelink-cli.exe`
-under the install/package directory; it is not automatically added to PATH.
+To retry an uncertain transport request, reuse the exact sendArguments array.
+Do not make a new operation ID merely because the response was lost. For a new key
+or command, obtain a fresh screen/revision and use a fresh operation ID.
 
-If building the CLI project directly with `-p:Platform=x64`, its executable is under
-`bin/x64/Debug/net10.0/`. Solution builds may map portable projects to AnyCPU instead.
+Other commands:
 
-## Connect an MCP client
-
-Release packaging includes `agent/surgelink-agent-host.exe`, separately from the CLI
-and desktop dependencies. For development, publish it into a known directory:
-
-```powershell
-dotnet publish src/SurgeLink.AgentHost -c Release -r win-x64 --self-contained true -o artifacts/agent-host
+```text
+surgelink-cli sessions list [--instance PID] [--json]
+surgelink-cli sessions info --session HANDLE
+surgelink-cli sessions activate --session HANDLE [--view terminal|files|monitor]
+surgelink-cli terminal screen --session HANDLE
+surgelink-cli terminal output --session HANDLE [--cursor N]
+surgelink-cli terminal send --session HANDLE --text TEXT [--submit] --revision N --operation-id ID
+surgelink-cli terminal key --session HANDLE --key Ctrl+C --revision N --operation-id ID
+surgelink-cli monitor snapshot --session HANDLE
+surgelink-cli files list --session HANDLE --path REMOTE_PATH
+surgelink-cli files read --session HANDLE --path REMOTE_PATH
 ```
 
-Configure a client supporting local MCP stdio, using the actual absolute executable
-path. A typical client configuration is:
+Every command accepts --instance PID and --json. Without --instance exactly one
+desktop process named SurgeLink must be running. The CLI never launches the desktop.
+Results are always one JSON envelope: success, data, errorCode, message. Help is plain
+text. Exit codes: 0 success, 2 usage, 3 unavailable/transport timeout, 4 rejected or
+failed operation, 130 Ctrl+C cancellation.
+
+## MCP
+
+Copy MCP configuration from the robot panel; it contains an absolute executable
+path and the current desktop PID. A typical stdio client configuration is:
 
 ```json
 {
   "mcpServers": {
     "surgelink": {
-      "command": "D:\\Projects\\Github\\SurgeLink\\artifacts\\agent-host\\surgelink-agent-host.exe",
-      "args": []
+      "command": "C:\\Users\\<user>\\AppData\\Local\\Programs\\SurgeLink\\agent\\surgelink-agent-host.exe",
+      "args": ["--instance", "12345"]
     }
   }
 }
 ```
 
-For multiple desktop instances use `"args": ["--instance", "12345"]`, replacing the
-PID with the one displayed by the desktop. Open a connection and allow CLI access in
-the desktop before asking the agent to use it. Configure the client's tool timeout
-to at least 70 seconds if it normally times out sooner, to allow desktop file approval.
-MCP does not open connections or approve desktop dialogs on the user's behalf.
+Use the actual path/PID. Refresh the configuration after restarting the desktop.
+An empty args array enables automatic discovery when only one desktop is running.
 
-The tools are `list_sessions`, `get_session_info`, `read_terminal`,
-`get_system_snapshot`, `list_directory`, `read_text_file`. All except `list_sessions`
-require a `session` handle; the file tools also require `path`. Results contain the
-same JSON envelope as the CLI in both text and structured content; failures set
-MCP `isError`. Read-only annotations are hints; enforcement stays in the gateway.
-stdout contains only MCP messages. The SDK dependency is isolated in AgentHost;
-the central Logging.Abstractions patch is updated to 10.0.13 to satisfy SDK 2.3.0.
+The tools are list_sessions, get_session_info, read_terminal, read_terminal_output,
+send_terminal_text, send_terminal_key, select_session, get_system_snapshot,
+list_directory and read_text_file. The write tools and select_session require a
+control grant. Read-only tool annotations are hints; gateway enforcement decides
+which capabilities the shared handle permits.
 
-## Contract
+Example send_terminal_text arguments:
 
-Requests use contract `version: 1`, `method`, optional `session` and optional `path`.
-Methods: `sessions.list`, `sessions.info`, `terminal.screen`, `monitor.snapshot`,
-`files.list`, `files.read`. Unknown methods/versions are rejected.
-
-Every command emits one JSON response with `success`, `data`, `errorCode`, `message`.
-`--json` is accepted for explicit scripts; JSON is also the default. Help is plain text.
-The terminal result identifies `source: "screen"`: it is the current emulator viewport,
-not command history or evidence of command completion. It is capped at 32,768 UTF-16
-code units with a `truncated` flag. File reads accept strict Unicode text up to 128 KiB
-of actual bytes; larger/binary files fail. Directory results contain at most 500
-entries and a `truncated` flag (the existing protocol still collects the full listing).
-
-Exit codes:
-
-| Code | Meaning |
-| --- | --- |
-| 0 | Success |
-| 2 | Invalid command or arguments |
-| 3 | Desktop unavailable, transport failure or client timeout |
-| 4 | Gateway rejected the request or operation failed |
-| 130 | Local Ctrl+C cancellation |
-
-Gateway errors include `session_unavailable`, `version_mismatch`, `unknown_method`,
-`unsupported`, `invalid_path`, `denied`, `cancelled`, `read_failed`, `operation_failed`
-and `output_limit`. CLI errors include `usage`, `desktop_unavailable`, `timeout` and
-`cancelled`. Remote error text and payloads are not included in operation logs.
-
-## Access and lifecycle
-
-- Each desktop listens at `SurgeLink.Agent.v1.<PID>` after first consent. The pipe
-  uses `CurrentUserOnly`, first-instance ownership, a 1 MiB frame bound and a serial
-  request loop. It remains available with an empty session list after all grants
-  are revoked. There is no TCP listener or credential store in the CLI.
-- The trust boundary is the Windows user, **not individual AI applications**.
-  Every local program under that user can discover/use shared handles. This v1
-  does not claim client pairing or per-agent identity. Do not share a connection
-  if this scope is too broad; per-client pairing is a later extension.
-- Random session handles are process-local and bound to one open tab/connection.
-  Revocation removes the handle, cancels pending work and drains active operations.
-  `WorkspaceStore.SessionClosing` performs that drain before disposing protocol
-  resources. New connections and re-sharing get new handles; grants are not persisted.
-- File approval binds to the exact requested operation and path for one call.
-  Paths follow the protocol's normal semantics, including symlinks; there is no
-  claim of a remote path sandbox. Rejection performs no remote file I/O.
-- Requests have a cooperative 60-second server deadline (including approval),
-  a 2-second reply budget, a 3-second client connection timeout and a 65-second overall client deadline.
-  Revocation/teardown waits for an uncooperative protocol call to finish instead
-  of disposing resources beneath it. Ctrl+C stops the local client; because v1
-  has one request per connection, it does not immediately cancel remote work.
-- Terminal/file contents are untrusted data and can contain secrets or malicious
-  instructions. Agent integrations must treat them as observations, not authority.
-  UI privacy masking does not redact these payloads. No model provider is contacted
-  by SurgeLink itself.
-
-## Validation and next steps
-
-```powershell
-dotnet test tests/SurgeLink.Agent.Tests -c Release -p:Platform=x64
-dotnet test tests/SurgeLink.Core.Tests -c Release -p:Platform=x64
+```json
+{
+  "session": "<shared handle>",
+  "text": "echo hello",
+  "submit": true,
+  "expectedInputRevision": 0,
+  "operationId": "echo-hello-1"
+}
 ```
 
-Tests cover invisible unshared sessions, expired handles, rejection without file
-I/O, per-request approval, revocation/draining, actual-byte limits, malformed frames,
-named-pipe round trips, CLI argument validation, the real CLI executable and an SDK
-MCP client launching the real stdio host, discovering tools and reading/revoking a
-shared session through IPC. Desktop consent and real SSH remain separate runtime
-checks; the new button's layout was inspected in a running offline Demo session.
+Get expectedInputRevision from read_terminal immediately before input.
+send_terminal_key uses key instead of text/submit. Supported keys include Enter,
+Tab, Escape, Backspace, Space, arrows, Home, End, PageUp, PageDown, Insert, Delete,
+F1–F12, letters/digits and Ctrl/Alt/Shift combinations. Encoding follows the current
+terminal modes, including application cursor keys and bracketed paste.
 
-Verification on 2026-10-24: solution Debug build passed with zero warnings/errors;
-all 978 Release tests passed (36 Agent/CLI/MCP, 230 Core, 58 conformance, 32 serial,
-321 SSH, 16 Telnet, 285 terminal). Repository and UI-localization checks reported
-zero findings. `tools/package-exe.ps1 -PublishOnly` successfully produced an x64
-self-contained desktop payload containing both CLI and MCP executables. Actual
-installer/APPX installation, ARM64 devices, desktop consent interaction and a real
-SSH-backed Agent workflow were not exercised in this run.
+Structured content and text both contain the same JSON envelope. Tool failures
+set MCP isError. stdout carries only MCP messages. The SDK stays in AgentHost;
+both entry points call AgentClient and the same desktop gateway.
 
-Next: per-client pairing and an activity panel.
-Command execution needs an independent, bounded SSH exec capability, operation IDs
-and cancellation/outcome semantics. This version exposes no shell execution, terminal
-input, file mutations, local file paths or connection creation.
+## Input and observation contract
+
+The additive JSON contract remains version 1. Old read-only clients remain valid.
+
+- terminal.screen includes text, dimensions, cursor, terminal modes, viewportOffset,
+  inputRevision, outputCursor, isClosed, truncated and source=screen. It reads the
+  actual visible viewport, capped at 32,768 UTF-16 units.
+- terminal.output takes an optional cursor and returns text, cursor, oldestCursor,
+  latestCursor, gap and hasMore. Cursors count decoded UTF-16 units, not bytes or
+  commands. Output retains ANSI escapes, decodes UTF-8 across incoming chunks,
+  retains at most 131,072 units and pages at most 16,384 units without splitting
+  surrogate pairs. A history gap is explicit; future/negative cursors fail.
+- terminal.text and terminal.key require a control grant, expectedInputRevision
+  and operationId. Text is capped at 16,384 units; submit defaults to false.
+- Every human or Agent input changes inputRevision. A stale revision returns
+  input_conflict before writing. Human input also revokes the desktop control grant.
+- Operation IDs are 1–128 ASCII letters/digits/dots/dashes/underscores. Exact retries
+  under the same shared handle replay the acknowledgement; different arguments
+  with the same ID return operation_conflict. The gateway retains at most 1,024
+  input records per handle without eviction; at that limit, stop and re-enable
+  control for a fresh handle.
+- A successful write returns status=input_sent, operationId, inputRevision,
+  outputCursor, acceptedBytes, submitted and commandCompletionKnown=false.
+  Its outputCursor is captured before the PTY write to avoid skipping a fast reply.
+  This acknowledges a transport write, not remote completion or an exit code.
+- If a write may have partially happened, input_outcome_unknown is remembered
+  for that operation. Observe the terminal; do not automatically resend under a
+  new ID. Terminal mode, shell prompts and incremental output remain observations,
+  never a guaranteed command boundary.
+- sessions.activate takes view=terminal/files/monitor and requires control access.
+  Input also selects its target terminal automatically. Real terminal dimensions
+  are managed by the visible UI, rather than an independent Agent resize.
+- Files accept strict Unicode text up to 128 KiB of actual bytes. Directory results
+  contain at most 500 entries and truncated; existing protocols still collect the
+  full listing before this result bound. Paths and symlinks use server semantics,
+  without a separate path sandbox.
+
+Error codes additionally include control_required, invalid_arguments, input_conflict,
+operation_conflict, operation_limit, input_outcome_unknown, terminal_unavailable and
+invalid_cursor, alongside existing session_unavailable, unsupported, cancelled,
+read_failed, version_mismatch, unknown_method, output_limit and operation_failed.
+
+## Lifecycle and implementation
+
+SurgeLink.Agent owns immutable DTOs, gateway, bounded framing and shared client.
+SurgeLink.Cli and SurgeLink.AgentHost are adapters; neither owns SSH credentials or
+references protocol implementations. ITerminalAutomation is implemented by the
+existing TerminalBridge. The gateway invokes a UI dispatcher adapter to select
+authorized tabs/views before writing.
+
+Named pipes use CurrentUserOnly, first-instance ownership and a 1 MiB frame limit.
+The current transport serves requests serially. Server requests have a cooperative
+60s deadline and 2s reply budget; clients have a 3s connection timeout and 65s total
+deadline. Ctrl+C stops the local CLI request; it does not itself send Ctrl+C to the
+remote PTY or immediately cancel all work after a client disconnects.
+
+Grants and input records are process-local and bound to one open connection.
+Changing access mode renews the handle. Session closing removes/cancels grants and
+drains outstanding operations before disposing the transport. An uncooperative
+protocol call is drained instead of disposing resources beneath it.
+
+The panel shows recent bounded activity without copying commands or terminal/file
+payloads. Those payloads may contain secrets or malicious instructions. UI privacy
+masking does not redact the API payload. SurgeLink does not contact an AI provider;
+the external Agent application controls policy and any provider transmission.
+
+## Verification
+
+Run the full offline suite with:
+
+```powershell
+dotnet test SurgeLink.slnx -c Release -p:Platform=x64 -m:1
+python tools/check-ui-localization.py
+python tools/check-repository.py
+```
+
+Coverage includes actual CLI and SDK stdio-host processes, permission scopes,
+operation replay/conflicts, ambiguous writes, ordered PTY input, manual takeover,
+desktop tab selection, streaming Unicode/output gaps and unchanged protocol tests.
+The robot placement, empty panel and Demo panel layout are inspected in the running
+desktop. Real SSH/Telnet/serial device control and ARM64 remain separate integration
+checks.

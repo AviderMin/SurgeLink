@@ -22,6 +22,17 @@ public sealed class CliProcessTests
         Assert.Equal(2, invalid.ExitCode);
         using var error = JsonDocument.Parse(invalid.Output);
         Assert.Equal("usage", error.RootElement.GetProperty("errorCode").GetString());
+
+        var terminal = new TerminalControlTests.TestAutomation();
+        var handle = gateway.GrantSession("tab", "Test", new AgentGatewayTests.TestSession(), null, terminal, true);
+        var inputArgs = new[] { "terminal", "send", "--instance", Environment.ProcessId.ToString(), "--session", handle,
+            "--text", "echo visible", "--submit", "--revision", "0", "--operation-id", "cli-write" };
+        var sent = await RunAsync(inputArgs);
+        Assert.Equal(0, sent.ExitCode);
+        using var receipt = JsonDocument.Parse(sent.Output);
+        Assert.Equal("input_sent", receipt.RootElement.GetProperty("data").GetProperty("status").GetString());
+        Assert.Equal(0, (await RunAsync(inputArgs)).ExitCode);
+        Assert.Equal(1, terminal.Writes);
     }
 
     private static async Task<(int ExitCode, string Output)> RunAsync(params string[] arguments)

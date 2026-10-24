@@ -15,10 +15,13 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SurgeLink.Core\SurgeLink.Core.csproj" />
     <ProjectReference Include="..\..\src\SurgeLink.Terminal\SurgeLink.Terminal.csproj" />
+    <ProjectReference Include="..\..\src\SurgeLink.Agent\SurgeLink.Agent.csproj" />
+    <Compile Include="..\..\src\SurgeLink.App\Services\AgentWorkspaceService.cs" Link="AppLogic\AgentWorkspaceService.cs" />
     <Compile Include="..\..\src\SurgeLink.App\Services\AddressMasker.cs" Link="AppLogic\AddressMasker.cs" />
     <!-- Exercise UI-independent workspace ownership with the actual application sources. -->
     <Compile Include="..\..\src\SurgeLink.App\Sessions\WorkspaceStore.cs" Link="AppLogic\WorkspaceStore.cs" />
     <Compile Include="..\..\src\SurgeLink.App\Sessions\TerminalBridge.cs" Link="AppLogic\TerminalBridge.cs" />
+    <Compile Include="..\..\src\SurgeLink.App\Sessions\TerminalBridge.Automation.cs" Link="AppLogic\TerminalBridge.Automation.cs" />
     <Compile Include="..\..\src\SurgeLink.App\Services\IUiDispatcher.cs" Link="AppLogic\IUiDispatcher.cs" />
     <Compile Include="..\..\src\SurgeLink.App\Services\ModalQueue.cs" Link="AppLogic\ModalQueue.cs" />
     <Compile Include="..\..\src\SurgeLink.App\Services\AppSettings.cs" Link="AppLogic\AppSettings.cs" />

@@ -68,6 +68,7 @@ internal sealed class MainShell : Component
         var (settingsRequest, setSettingsRequest) = UseState(0);
         var (aboutOpen, setAboutOpen) = UseState(false);
         var (aboutRequest, setAboutRequest) = UseState(0);
+        var (agentOpen, setAgentOpen) = UseState(false);
         var shellModal = UseRef<string?>(null);
         var connectPending = UseRef(false);
         var connectionCancellation = UseRef<CancellationTokenSource?>(null);
@@ -314,7 +315,8 @@ internal sealed class MainShell : Component
             () => setPaneOpen(!paneOpen),
             () => OpenEditor(SessionEditorMode.Create, null),
             OpenSettings,
-            ShowAbout));
+            ShowAbout,
+            () => setAgentOpen(!agentOpen)));
 
         // Sidebar -------------------------------------------------------------
         var sidebar = Component<SidebarView, SidebarProps>(new SidebarProps(
@@ -415,6 +417,11 @@ internal sealed class MainShell : Component
                 titleBar.Grid(row: 0),
                 navigation.Grid(row: 1),
                 statusBar.Grid(row: 2),
+                agentOpen
+                    ? Component<AgentPanel, AgentPanelProps>(new AgentPanelProps(() => setAgentOpen(false)))
+                        .HAlign(HorizontalAlignment.Right).Width(360).Margin(AppTheme.SpacingM)
+                        .Grid(row: 1).WithKey("agent-panel")
+                    : Empty(),
                 editorOverlay.Grid(row: 0, rowSpan: 3),
                 settingsOverlay.Grid(row: 0, rowSpan: 3),
                 aboutOverlay.Grid(row: 0, rowSpan: 3),

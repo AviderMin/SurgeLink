@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using SurgeLink.Core.Files;
 using SurgeLink.Core.Sessions;
+using SurgeLink.Core.Terminal;
 
 namespace SurgeLink.Agent;
 
@@ -8,17 +9,20 @@ namespace SurgeLink.Agent;
 /// Owns opt-in access to existing desktop connections. It never creates connections or reads credentials.
 /// A grant is process-local, refers to exactly one connection, and is drained before that connection closes.
 /// </summary>
-public sealed class AgentGateway
+public sealed partial class AgentGateway
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, Grant> _grants = new(StringComparer.Ordinal);
     private readonly Func<AgentFileAccess, CancellationToken, Task<bool>> _confirmFile;
 
-    public AgentGateway(Func<AgentFileAccess, CancellationToken, Task<bool>> confirmFile) => _confirmFile = confirmFile;
+    public AgentGateway(Func<AgentFileAccess, CancellationToken, Task<bool>>? confirmFile = null) =>
+        _confirmFile = confirmFile ?? ((_, _) => Task.FromResult(true));
 
     public event Action<string, string?, string>? OperationCompleted;
 
-    public string GrantSession(string connectionKey, string label, IProtocolSession session, Func<string>? readScreen)
+    public string GrantSession(string connectionKey, string label, IProtocolSession session, Func<string>? readScreen,
+        ITerminalAutomation? terminal = null, bool allowControl = false,
+        Func<string, CancellationToken, Task>? activate = null, Func<bool>? isActive = null)
     {
         lock (_gate)
         {
@@ -27,9 +31,9 @@ public sealed class AgentGateway
             var existing = _grants.Values.FirstOrDefault(g => g.ConnectionKey == connectionKey);
             if (existing is not null) return existing.Info.Handle;
             var info = new AgentSessionInfo(Convert.ToHexString(RandomNumberGenerator.GetBytes(24)), label,
-                session.Protocol.Id, session.HostInfo, readScreen is not null,
-                session.FileSystem is not null, session.Monitor is not null);
-            _grants.Add(info.Handle, new Grant(connectionKey, info, session, readScreen));
+                session.Protocol.Id, session.HostInfo, readScreen is not null || terminal is not null,
+                session.FileSystem is not null, session.Monitor is not null, allowControl && terminal is not null);
+            _grants.Add(info.Handle, new Grant(connectionKey, info, session, readScreen, terminal, activate, isActive));
             return info.Handle;
         }
     }
@@ -37,6 +41,15 @@ public sealed class AgentGateway
     public bool IsShared(string connectionKey)
     {
         lock (_gate) return _grants.Values.Any(g => g.ConnectionKey == connectionKey);
+    }
+
+    public AgentAccessMode GetMode(string connectionKey)
+    {
+        lock (_gate)
+        {
+            var grant = _grants.Values.FirstOrDefault(g => g.ConnectionKey == connectionKey);
+            return grant is null ? AgentAccessMode.None : grant.Info.TerminalControl ? AgentAccessMode.Control : AgentAccessMode.Observe;
+        }
     }
 
     public async Task RevokeAsync(string connectionKey)
@@ -67,8 +80,7 @@ public sealed class AgentGateway
         catch (Exception)
         { result = AgentResponse.Error("operation_failed", "The operation failed. Check the desktop connection."); }
         // Never log arbitrary caller-supplied strings or file/terminal payloads.
-        var auditMethod = request.Method is "sessions.list" or "sessions.info" or "terminal.screen"
-            or "monitor.snapshot" or "files.list" or "files.read" ? request.Method : "unknown";
+        var auditMethod = IsKnownMethod(request.Method) ? request.Method : "unknown";
         var auditHandle = request.Session is { Length: 48 } handle && handle.All(char.IsAsciiHexDigit) ? handle : null;
         OperationCompleted?.Invoke(auditMethod, auditHandle, result.ErrorCode ?? "ok");
         return result;
@@ -81,10 +93,10 @@ public sealed class AgentGateway
         if (request.Method == "sessions.list")
         {
             lock (_gate) return AgentResponse.Ok(_grants.Values
-                .Where(g => g.Session.State == ConnectionState.Connected).Select(g => g.Info).ToArray());
+                .Where(g => g.Session.State == ConnectionState.Connected).Select(g => g.Info with { IsActive = g.IsActive?.Invoke() ?? false }).ToArray());
         }
-        if (request.Method is not ("sessions.info" or "terminal.screen" or "monitor.snapshot" or "files.list" or "files.read"))
-            return AgentResponse.Error("unknown_method", "Unknown read-only operation.");
+        if (!IsKnownMethod(request.Method))
+            return AgentResponse.Error("unknown_method", "Unknown Agent operation.");
         Grant? grant;
         lock (_gate) _grants.TryGetValue(request.Session ?? "", out grant);
         if (grant is null) return AgentResponse.Error("session_unavailable", "The session is not shared or its handle has expired.");
@@ -96,14 +108,31 @@ public sealed class AgentGateway
             ct.ThrowIfCancellationRequested();
             if (grant.Session.State != ConnectionState.Connected)
                 return AgentResponse.Error("session_unavailable", "The session is disconnected.");
+            if (request.Method is "terminal.text" or "terminal.key")
+                return await ExecuteInputAsync(grant, request, ct).ConfigureAwait(false);
             AgentResponse result;
             switch (request.Method)
             {
-                case "sessions.info": result = AgentResponse.Ok(grant.Info); break;
+                case "sessions.info": result = AgentResponse.Ok(grant.Info with { IsActive = grant.IsActive?.Invoke() ?? false }); break;
+                case "sessions.activate":
+                    if (!grant.Info.TerminalControl) return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel first.");
+                    var view = request.View ?? "terminal";
+                    if (view is not ("terminal" or "files" or "monitor")) return AgentResponse.Error("invalid_arguments", "View must be terminal, files or monitor.");
+                    if (grant.Activate is null) throw new NotSupportedException();
+                    await grant.Activate(view, ct).ConfigureAwait(false);
+                    result = AgentResponse.Ok(new { activated = true, view });
+                    break;
                 case "terminal.screen":
+                    if (grant.Terminal is not null) { result = AgentResponse.Ok(grant.Terminal.ReadScreen()); break; }
                     if (grant.ReadScreen is null) throw new NotSupportedException();
                     var screen = grant.ReadScreen();
                     result = AgentResponse.Ok(new { source = "screen", text = screen[..Math.Min(screen.Length, 32768)], truncated = screen.Length > 32768 });
+                    break;
+                case "terminal.output":
+                    if (grant.Terminal is null) throw new NotSupportedException();
+                    if (request.Cursor is < 0) return AgentResponse.Error("invalid_cursor", "The output cursor must be non-negative.");
+                    try { result = AgentResponse.Ok(grant.Terminal.ReadOutput(request.Cursor)); }
+                    catch (ArgumentOutOfRangeException) { return AgentResponse.Error("invalid_cursor", "The cursor is ahead of this terminal's output."); }
                     break;
                 case "monitor.snapshot":
                     result = AgentResponse.Ok(await (grant.Session.Monitor ?? throw new NotSupportedException()).SampleAsync(ct).ConfigureAwait(false));
@@ -136,12 +165,21 @@ public sealed class AgentGateway
         finally { grant.Serial.Release(); }
     }
 
-    private sealed class Grant(string connectionKey, AgentSessionInfo info, IProtocolSession session, Func<string>? readScreen)
+    private static bool IsKnownMethod(string method) => method is "sessions.list" or "sessions.info" or "sessions.activate"
+        or "terminal.screen" or "terminal.output" or "terminal.text" or "terminal.key"
+        or "monitor.snapshot" or "files.list" or "files.read";
+
+    private sealed class Grant(string connectionKey, AgentSessionInfo info, IProtocolSession session, Func<string>? readScreen,
+        ITerminalAutomation? terminal, Func<string, CancellationToken, Task>? activate, Func<bool>? isActive)
     {
         public string ConnectionKey { get; } = connectionKey;
         public AgentSessionInfo Info { get; } = info;
         public IProtocolSession Session { get; } = session;
         public Func<string>? ReadScreen { get; } = readScreen;
+        public ITerminalAutomation? Terminal { get; } = terminal;
+        public Func<string, CancellationToken, Task>? Activate { get; } = activate;
+        public Func<bool>? IsActive { get; } = isActive;
+        public Dictionary<string, (string Fingerprint, AgentResponse Response)> Inputs { get; } = new(StringComparer.Ordinal);
         public CancellationTokenSource Lifetime { get; } = new();
         public SemaphoreSlim Serial { get; } = new(1, 1);
     }

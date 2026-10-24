@@ -38,7 +38,7 @@ public sealed class McpAdapterTests
         });
         await using var client = await McpClient.CreateAsync(transport, cancellationToken: timeout.Token);
         var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
-        Assert.Equal(6, tools.Count);
+        Assert.Equal(10, tools.Count);
         Assert.Contains(tools, t => t.Name == "read_terminal");
         var list = await client.CallToolAsync("list_sessions", cancellationToken: timeout.Token);
         Assert.NotEqual(true, list.IsError);
@@ -49,5 +49,34 @@ public sealed class McpAdapterTests
         var expired = await client.CallToolAsync("read_terminal", new Dictionary<string, object?> { ["session"] = handle }, cancellationToken: timeout.Token);
         Assert.True(expired.IsError);
         Assert.Equal("session_unavailable", expired.StructuredContent!.Value.GetProperty("errorCode").GetString());
+    }
+
+    [Fact]
+    public async Task StdioHostWritesThroughPtyCapabilityAndReplaysWithoutDuplicateInput()
+    {
+        var terminal = new TerminalControlTests.TestAutomation();
+        var gateway = new AgentGateway();
+        var handle = gateway.GrantSession("tab", "Test", new AgentGatewayTests.TestSession(), null, terminal, true);
+        var instance = System.Security.Cryptography.RandomNumberGenerator.GetInt32(1000000, int.MaxValue);
+        await using var desktop = new AgentPipeServer(AgentEndpoint.ForProcess(instance), gateway);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await using var client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+        {
+            Name = "SurgeLink control test", Command = "dotnet",
+            Arguments = [typeof(McpAdapter).Assembly.Location, "--instance", instance.ToString()],
+        }), cancellationToken: timeout.Token);
+        var arguments = new Dictionary<string, object?>
+        {
+            ["session"] = handle, ["text"] = "echo test", ["submit"] = true,
+            ["expectedInputRevision"] = 0L, ["operationId"] = "mcp-write",
+        };
+        var sent = await client.CallToolAsync("send_terminal_text", arguments, cancellationToken: timeout.Token);
+        Assert.NotEqual(true, sent.IsError);
+        Assert.Equal("input_sent", sent.StructuredContent!.Value.GetProperty("data").GetProperty("status").GetString());
+        Assert.NotEqual(true, (await client.CallToolAsync("send_terminal_text", arguments, cancellationToken: timeout.Token)).IsError);
+        Assert.Equal(1, terminal.Writes);
+        arguments["expectedInputRevision"] = "wrong-type";
+        Assert.True((await client.CallToolAsync("send_terminal_text", arguments, cancellationToken: timeout.Token)).IsError);
+        Assert.Equal(1, terminal.Writes);
     }
 }

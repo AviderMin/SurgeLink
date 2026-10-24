@@ -4,8 +4,10 @@ using SurgeLink.Core.Sessions;
 
 namespace SurgeLink.Agent;
 
-/// <summary>Versioned read-only operations shared by CLI and future MCP adapters.</summary>
-public sealed record AgentRequest(string Method, string? Session = null, string? Path = null, int Version = 1);
+/// <summary>Versioned operations shared by CLI and MCP adapters.</summary>
+public sealed record AgentRequest(string Method, string? Session = null, string? Path = null, int Version = 1,
+    string? Text = null, bool Submit = false, string? Key = null, long? Cursor = null,
+    long? ExpectedInputRevision = null, string? OperationId = null, string? View = null);
 
 public sealed record AgentResponse(bool Success, JsonElement? Data = null, string? ErrorCode = null, string? Message = null)
 {
@@ -14,7 +16,9 @@ public sealed record AgentResponse(bool Success, JsonElement? Data = null, strin
 }
 
 public sealed record AgentSessionInfo(string Handle, string Label, string Protocol, RemoteHostInfo Host,
-    bool Terminal, bool Files, bool Monitor);
+    bool Terminal, bool Files, bool Monitor, bool TerminalControl = false, bool IsActive = false);
+
+public enum AgentAccessMode { None, Observe, Control }
 
 public sealed record AgentFileAccess(string Label, string Operation, string Path);
 

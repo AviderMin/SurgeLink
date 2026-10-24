@@ -18,16 +18,25 @@ and private-key passphrases are protected using Windows DPAPI for the current
 Windows user. Private key files remain at the location selected by the user.
 SurgeLink does not copy them into saved profiles.
 
-Optional local CLI access is disabled for every connection until the user explicitly
-shares it in the desktop. Sharing allows programs running as the same Windows user
-to read that connection's label, host information, visible terminal screen and system
-metrics. Directory listings and file reads require confirmation for each request.
+Optional Agent/CLI access is disabled for every connection until the user enables
+reading or terminal control in the title-bar Agent panel. Reading allows programs
+running as the same Windows user to read that connection's label, host information,
+visible screen, retained incremental output, metrics, directory listings and text
+files. Terminal control additionally allows selecting the shared tab/view and writing
+text or key sequences into the same interactive terminal the user sees. Such input
+can execute commands and modify the remote system with the connected account's
+permissions. Execution policy and command approval belong to the external Agent
+application; SurgeLink does not prompt for individual commands or file reads after
+access is enabled. Typing in a controlled terminal revokes Agent access. Stopping
+access prevents further Agent input; it does not itself terminate remote commands.
 Terminal and file contents may contain secrets. SurgeLink does not select or contact
 an AI model provider; external agents receiving this data may send it to their own
 providers according to their configuration. Desktop privacy masking does not redact
 the CLI payload. Sharing is held only in memory and ends on revocation or connection
 closure; reconnecting requires new consent. Local operation logs record the method,
-opaque session handle and result, without terminal/file payloads.
+opaque session handle and result, without commands or terminal/file payloads. The
+Agent panel retains a bounded in-memory activity history; input deduplication records
+are held only for the lifetime of the current shared handle.
 
 Diagnostic logs and crash reports are stored locally and can contain hostnames,
 usernames, paths and remote error details. They are not automatically sent to

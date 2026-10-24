@@ -10,7 +10,7 @@ namespace SurgeLink.App.Sessions;
 /// the screen buffer, coalesces repaint notifications onto the UI thread and
 /// turns UI input back into byte sequences.
 /// </summary>
-public sealed class TerminalBridge : IAsyncDisposable
+public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomation
 {
     private readonly IRemoteTerminal _remote;
     private readonly IUiDispatcher _dispatcher;
@@ -39,6 +39,9 @@ public sealed class TerminalBridge : IAsyncDisposable
     /// <summary>Raised on the UI thread when the remote shell exits.</summary>
     public event EventHandler? Closed;
 
+    /// <summary>Raised before a human input is queued, so external control can be revoked immediately.</summary>
+    public event EventHandler? UserInput;
+
     /// <summary>True once the remote side closed the channel.</summary>
     public bool IsClosed => Volatile.Read(ref _closed) != 0;
 
@@ -63,7 +66,8 @@ public sealed class TerminalBridge : IAsyncDisposable
     {
         if (!string.IsNullOrEmpty(text))
         {
-            Send(TerminalInputEncoder.EncodeText(text, Emulator.Modes));
+            MarkUserInput();
+            lock (Emulator.SyncRoot) Send(TerminalInputEncoder.EncodeText(text, Emulator.Modes));
         }
     }
 
@@ -72,16 +76,19 @@ public sealed class TerminalBridge : IAsyncDisposable
     {
         if (!string.IsNullOrEmpty(text))
         {
-            Send(TerminalInputEncoder.EncodePaste(text, Emulator.Modes));
+            MarkUserInput();
+            lock (Emulator.SyncRoot) Send(TerminalInputEncoder.EncodePaste(text, Emulator.Modes));
         }
     }
 
     /// <summary>Encodes and sends a key press.</summary>
     public void SendKey(int virtualKey, bool control = false, bool alt = false, bool shift = false)
     {
-        var bytes = TerminalInputEncoder.EncodeKey(virtualKey, control, alt, shift, Emulator.Modes);
+        byte[]? bytes;
+        lock (Emulator.SyncRoot) bytes = TerminalInputEncoder.EncodeKey(virtualKey, control, alt, shift, Emulator.Modes);
         if (bytes is { Length: > 0 })
         {
+            MarkUserInput();
             Send(bytes);
         }
     }
@@ -114,7 +121,9 @@ public sealed class TerminalBridge : IAsyncDisposable
     {
         try
         {
-            await _remote.WriteAsync(bytes).ConfigureAwait(false);
+            await _inputGate.WaitAsync().ConfigureAwait(false);
+            try { if (!IsClosed) await _remote.WriteAsync(bytes).ConfigureAwait(false); }
+            finally { _inputGate.Release(); }
         }
         catch (Exception ex)
         {
@@ -128,6 +137,7 @@ public sealed class TerminalBridge : IAsyncDisposable
     {
         lock (Emulator.SyncRoot)
         {
+            _output.Append(e.Data.Span);
             Emulator.Feed(e.Data.Span);
         }
 
@@ -171,9 +181,12 @@ public sealed class TerminalBridge : IAsyncDisposable
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
+        Interlocked.Exchange(ref _closed, 1);
         Emulator.ResponseRequested -= OnResponseRequested;
         _remote.OutputReceived -= OnOutputReceived;
         _remote.Closed -= OnRemoteClosed;
-        await _remote.DisposeAsync().ConfigureAwait(false);
+        await _inputGate.WaitAsync().ConfigureAwait(false);
+        try { await _remote.DisposeAsync().ConfigureAwait(false); }
+        finally { _inputGate.Release(); }
     }
 }

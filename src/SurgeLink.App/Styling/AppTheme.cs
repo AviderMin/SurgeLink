@@ -32,6 +32,9 @@ public static class AppTheme
     /// <summary>Control corner radius.</summary>
     public const double ControlRadius = 4;
 
+    /// <summary>Opaque theme surface for overlays above terminal content, including High Contrast.</summary>
+    public static ThemeRef PanelBackground { get; } = new("SolidBackgroundFillColorBaseBrush");
+
     /// <summary>Sidebar width when expanded.</summary>
     public const double SidebarWidth = 300;
 

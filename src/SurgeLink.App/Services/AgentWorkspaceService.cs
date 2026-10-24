@@ -1,37 +1,57 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using SurgeLink.Agent;
-using SurgeLink.App.Localization;
 using SurgeLink.App.Sessions;
 using SurgeLink.Core.Sessions;
 
 namespace SurgeLink.App.Services;
 
-/// <summary>UI-owned consent and adapter to the independent Agent gateway.</summary>
+public sealed record AgentActivity(long Id, DateTimeOffset Time, string Session, string Operation, string Outcome);
+
+/// <summary>Desktop access scope and visible PTY adapter. Execution policy belongs to the calling Agent.</summary>
 public sealed class AgentWorkspaceService : IAsyncDisposable
 {
     private readonly WorkspaceStore _workspace;
-    private readonly InteractionService _interaction;
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger _logger;
-    private readonly AgentGateway _gateway;
+    private readonly AgentGateway _gateway = new();
+    private readonly object _gate = new();
+    private readonly Dictionary<Guid, EventHandler> _humanHandlers = new();
+    private readonly Dictionary<string, string> _labels = new(StringComparer.Ordinal);
+    private readonly Queue<AgentActivity> _activity = new();
+    private readonly Dictionary<Guid, string> _handles = new();
+    private static readonly JsonSerializerOptions ConfigJson = new() { WriteIndented = true };
     private AgentPipeServer? _server;
     private long _revision;
+    private long _activityId;
+    private string? _error;
 
-    public AgentWorkspaceService(WorkspaceStore workspace, InteractionService interaction, IUiDispatcher dispatcher, ILogger logger)
+    public AgentWorkspaceService(WorkspaceStore workspace, IUiDispatcher dispatcher, ILogger logger)
     {
         _workspace = workspace;
-        _interaction = interaction;
         _dispatcher = dispatcher;
         _logger = logger;
-        _gateway = new AgentGateway(ConfirmFileAsync);
-        _gateway.OperationCompleted += (method, handle, outcome) =>
-            _logger.LogInformation("Agent operation {Method} session {Handle}: {Outcome}", method, handle, outcome);
+        _gateway.OperationCompleted += OnOperationCompleted;
         workspace.SessionClosing += OnSessionClosingAsync;
+        McpHostPath = LocateExecutable("agent", "SurgeLink.AgentHost", "surgelink-agent-host.exe");
+        CliPath = LocateExecutable("cli", "SurgeLink.Cli", "surgelink-cli.exe");
     }
 
     public long Revision => Interlocked.Read(ref _revision);
     public event EventHandler? Changed;
-    public bool IsShared(Guid tabId) => _gateway.IsShared(tabId.ToString());
+    public string McpHostPath { get; }
+    public string CliPath { get; }
+    public string? Error { get { lock (_gate) return _error; } }
+    public IReadOnlyList<AgentActivity> Activity { get { lock (_gate) return _activity.Reverse().ToArray(); } }
+    public AgentAccessMode GetMode(Guid tabId) => _gateway.GetMode(tabId.ToString());
+    public bool IsShared(Guid tabId) => GetMode(tabId) != AgentAccessMode.None;
+    public bool HasAccess => _workspace.Snapshot.Tabs.Any(t => IsShared(t.Id));
+
+    public string McpConfiguration => JsonSerializer.Serialize(new
+    {
+        mcpServers = new { surgelink = new { command = McpHostPath, args = new[] { "--instance", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) } } },
+    }, ConfigJson);
+
     public Action Subscribe(Action listener)
     {
         EventHandler handler = (_, _) => listener();
@@ -39,63 +59,116 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         return () => Changed -= handler;
     }
 
-    public async Task ToggleAsync(WorkspaceTab tab)
+    public async Task SetAccessAsync(WorkspaceTab tab, AgentAccessMode mode)
     {
         try
         {
-            if (IsShared(tab.Id))
+            if (GetMode(tab.Id) == mode) return;
+            var revision = tab.Terminal?.ReadScreen().InputRevision;
+            await RevokeAsync(tab, "revoked");
+            if (mode == AgentAccessMode.None) return;
+            if (!_workspace.Snapshot.Tabs.Contains(tab) || tab.State != ConnectionState.Connected || tab.IsClosing) return;
+            if (mode == AgentAccessMode.Control && (tab.Terminal is null || tab.Terminal.IsClosed
+                || tab.Terminal.ReadScreen().InputRevision != revision)) return;
+            _server ??= new AgentPipeServer(AgentEndpoint.ForProcess(Environment.ProcessId), _gateway);
+            var handle = _gateway.GrantSession(tab.Id.ToString(), tab.Title, tab.Session, null,
+                terminal: tab.Terminal, allowControl: mode == AgentAccessMode.Control,
+                activate: (view, ct) => ActivateAsync(tab, view, ct),
+                isActive: () => _workspace.Snapshot.ActiveTabId == tab.Id);
+            lock (_gate)
             {
-                await _gateway.RevokeAsync(tab.Id.ToString());
-                _logger.LogInformation("Agent sharing revoked for tab {TabId}", tab.Id);
+                _labels[handle] = tab.Title;
+                _handles[tab.Id] = handle;
+                _error = null;
+                if (mode == AgentAccessMode.Control && tab.Terminal is { } terminal)
+                {
+                    EventHandler handler = (_, _) => { _ = RevokeAsync(tab, "human_input"); };
+                    _humanHandlers[tab.Id] = handler;
+                    terminal.UserInput += handler;
+                }
             }
-            else
-            {
-                var allowed = await _interaction.RequestConfirmationAsync(new ConfirmationRequest(
-                    Str.T("shell.agent.enableTitle", "Allow local CLI access"),
-                    Str.F("shell.agent.enableBody", "Allow programs running as your Windows user to read session '{0}', including its host information, terminal screen and system metrics? File requests require separate confirmation. Contents may contain secrets and an external agent may send them to its model provider. Access ends when you revoke it or close this connection. Desktop instance: {1}.", tab.Title, Environment.ProcessId),
-                    Str.T("shell.agent.allow", "Allow access")), CancellationToken.None);
-                if (!allowed) return;
-                if (!_workspace.Snapshot.Tabs.Contains(tab) || tab.State != ConnectionState.Connected || tab.IsClosing) return;
-                _server ??= new AgentPipeServer(AgentEndpoint.ForProcess(Environment.ProcessId), _gateway);
-                _gateway.GrantSession(tab.Id.ToString(), tab.Title, tab.Session, tab.Terminal is { } terminal
-                    ? () => { lock (terminal.Emulator.SyncRoot) return terminal.Emulator.GetVisibleText(); }
-                    : null);
-                _logger.LogInformation("Agent sharing enabled for tab {TabId}", tab.Id);
-            }
-            Notify();
+            Record(tab.Title, "access", mode == AgentAccessMode.Control ? "control_enabled" : "read_enabled");
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Could not change Agent sharing");
-            await _interaction.ShowErrorAsync(Str.T("shell.agent.errorTitle", "CLI access unavailable"),
-                Str.T("shell.agent.errorBody", "Could not change CLI access. Check the application log and try again."));
-        }
+        catch (Exception ex) { ReportError(ex); }
     }
 
-    private async Task<bool> ConfirmFileAsync(AgentFileAccess access, CancellationToken ct)
+    public async Task StopAllAsync()
     {
-        // Marshal translation and dialog creation to the UI thread as localization state is UI-owned.
-        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _dispatcher.Post(async () =>
+        // Invoke all revocations before waiting: one slow transport must not retain other handles.
+        await Task.WhenAll(_workspace.Snapshot.Tabs.Select(tab => RevokeAsync(tab, "revoked"))).ConfigureAwait(false);
+    }
+
+    private async Task RevokeAsync(WorkspaceTab tab, string reason)
+    {
+        try
+        {
+            var shared = IsShared(tab.Id);
+            string? oldHandle;
+            lock (_gate)
+            {
+                _handles.Remove(tab.Id, out oldHandle);
+                if (_humanHandlers.Remove(tab.Id, out var handler) && tab.Terminal is { } terminal)
+                    terminal.UserInput -= handler;
+            }
+            var drain = _gateway.RevokeAsync(tab.Id.ToString());
+            if (shared) Record(tab.Title, "access", reason);
+            await drain.ConfigureAwait(false);
+            if (oldHandle is not null) lock (_gate) _labels.Remove(oldHandle);
+        }
+        catch (Exception ex) { ReportError(ex); }
+    }
+
+    private async Task ActivateAsync(WorkspaceTab tab, string view, CancellationToken ct)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _dispatcher.Post(() =>
         {
             try
             {
                 ct.ThrowIfCancellationRequested();
-                var allowed = await _interaction.RequestConfirmationAsync(new ConfirmationRequest(
-                    Str.T("shell.agent.fileTitle", "Allow CLI file access"),
-                    Str.F("shell.agent.fileBody", "Session: {0}\nOperation: {1}\nRemote path: {2}\n\nAllow this one request? Symbolic links may resolve to another location. The result is returned to a local program and may be sent to an AI provider.", access.Label, access.Operation, access.Path),
-                    Str.T("shell.agent.allow", "Allow access")), ct).WaitAsync(ct);
-                completion.TrySetResult(allowed);
+                if (tab.IsClosing || !_workspace.Snapshot.Tabs.Contains(tab)) throw new InvalidOperationException("Connection is closing.");
+                var kind = view switch
+                {
+                    "terminal" when tab.Terminal is not null => SessionViewKind.Terminal,
+                    "files" when tab.Session.FileSystem is not null => SessionViewKind.Files,
+                    "monitor" when tab.Session.Monitor is not null => SessionViewKind.Monitor,
+                    _ => throw new NotSupportedException(),
+                };
+                _workspace.Activate(tab.Id);
+                _workspace.SetView(tab.Id, kind);
+                completion.TrySetResult();
             }
             catch (OperationCanceledException) { completion.TrySetCanceled(ct); }
             catch (Exception ex) { completion.TrySetException(ex); }
         });
-        return await completion.Task.WaitAsync(ct).ConfigureAwait(false);
+        await completion.Task.WaitAsync(ct).ConfigureAwait(false);
     }
 
-    private async Task OnSessionClosingAsync(WorkspaceTab tab)
+    private Task OnSessionClosingAsync(WorkspaceTab tab) => RevokeAsync(tab, "connection_closed");
+
+    private void OnOperationCompleted(string method, string? handle, string outcome)
     {
-        await _gateway.RevokeAsync(tab.Id.ToString()).ConfigureAwait(false);
+        string label;
+        lock (_gate) label = handle is not null && _labels.TryGetValue(handle, out var name) ? name : "";
+        // Payloads/commands are visible in the PTY, never copied into logs or the activity history.
+        _logger.LogInformation("Agent operation {Method} session {Handle}: {Outcome}", method, handle, outcome);
+        Record(label, method, outcome);
+    }
+
+    private void Record(string label, string method, string outcome)
+    {
+        lock (_gate)
+        {
+            _activity.Enqueue(new(++_activityId, DateTimeOffset.UtcNow, label, method, outcome));
+            while (_activity.Count > 20) _activity.Dequeue();
+        }
+        Notify();
+    }
+
+    private void ReportError(Exception error)
+    {
+        _logger.LogError(error, "Agent access failed");
+        lock (_gate) _error = "access_failed";
         Notify();
     }
 
@@ -105,11 +178,29 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         _dispatcher.Post(() => Changed?.Invoke(this, EventArgs.Empty));
     }
 
+    private static string LocateExecutable(string installedFolder, string project, string executable)
+    {
+        var installed = Path.Combine(AppContext.BaseDirectory, installedFolder, executable);
+        if (File.Exists(installed)) return installed;
+        for (var root = new DirectoryInfo(AppContext.BaseDirectory); root is not null; root = root.Parent)
+        {
+            if (!File.Exists(Path.Combine(root.FullName, "SurgeLink.slnx"))) continue;
+            foreach (var config in new[] { "Debug", "Release" })
+                foreach (var platform in new[] { "", "x64", "ARM64" })
+                {
+                    var candidate = Path.Combine(root.FullName, "src", project, "bin", platform, config, "net10.0", executable);
+                    if (File.Exists(candidate)) return candidate;
+                }
+            break;
+        }
+        return installed;
+    }
+
     public async ValueTask DisposeAsync()
     {
         _workspace.SessionClosing -= OnSessionClosingAsync;
-        foreach (var tab in _workspace.Snapshot.Tabs)
-            await _gateway.RevokeAsync(tab.Id.ToString()).ConfigureAwait(false);
+        await StopAllAsync().ConfigureAwait(false);
         if (_server is not null) await _server.DisposeAsync().ConfigureAwait(false);
+        _gateway.OperationCompleted -= OnOperationCompleted;
     }
 }
