@@ -177,9 +177,15 @@ public sealed class AgentGatewayTests
         var pending = gateway.ExecuteAsync(new("monitor.snapshot", handle), default);
         await monitor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var revoking = gateway.RevokeAsync("tab");
-        Assert.False(revoking.IsCompleted);
-        Assert.Same(revoking, gateway.RevokeAsync("tab"));
-        monitor.Finish.TrySetResult(new SystemSnapshot());
+        try
+        {
+            // CancelAsync dispatches callbacks later. Completing the operation first
+            // could dispose its registration before the throwing callback ever runs.
+            await monitor.CancellationCallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(revoking.IsCompleted);
+            Assert.Same(revoking, gateway.RevokeAsync("tab"));
+        }
+        finally { monitor.Finish.TrySetResult(new SystemSnapshot()); }
         await Assert.ThrowsAsync<AggregateException>(() => revoking.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal("cancelled", (await pending).ErrorCode);
         Assert.False(gateway.IsShared("tab"));
@@ -308,12 +314,17 @@ public sealed class AgentGatewayTests
     private sealed class BlockingMonitor : IRemoteSystemMonitor
     {
         public bool ThrowOnCancellation { get; init; }
+        public TaskCompletionSource CancellationCallbackEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<SystemSnapshot> Finish { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TimeSpan RecommendedInterval => TimeSpan.FromSeconds(1);
         public async Task<SystemSnapshot> SampleAsync(CancellationToken cancellationToken)
         {
-            using var registration = ThrowOnCancellation ? cancellationToken.Register(() => throw new IOException("callback failed")) : default;
+            using var registration = ThrowOnCancellation ? cancellationToken.Register(() =>
+            {
+                CancellationCallbackEntered.TrySetResult();
+                throw new IOException("callback failed");
+            }) : default;
             Started.SetResult();
             return await Finish.Task;
         }
