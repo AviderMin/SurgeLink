@@ -73,7 +73,6 @@ public sealed class WorkspaceFailureTests
     private sealed class FailingStore(SessionProfile? profile = null) : ISessionStore
     {
         public IReadOnlyList<SessionProfile> Load() => profile is null ? [] : [profile];
-        public void Save(IReadOnlyList<SessionProfile> profiles) => throw new IOException("disk full");
         public void Upsert(SessionProfile profile) => throw new IOException("disk full");
         public bool Delete(string profileId) => false;
     }

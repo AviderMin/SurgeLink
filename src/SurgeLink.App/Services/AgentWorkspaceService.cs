@@ -14,7 +14,9 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     private readonly WorkspaceStore _workspace;
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger _logger;
-    private readonly AgentGateway _gateway = new();
+    // The desktop's Allow reading/Control grant includes file reads. Per-operation
+    // execution policy belongs to the external Agent app; no extra desktop prompt.
+    private readonly AgentGateway _gateway = new((_, _) => Task.FromResult(true));
     private readonly object _gate = new();
     private readonly SemaphoreSlim _accessChanges = new(1, 1);
     private long _stopGeneration;

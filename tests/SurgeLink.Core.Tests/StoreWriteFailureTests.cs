@@ -8,7 +8,6 @@ namespace SurgeLink.Core.Tests;
 public sealed class StoreWriteFailureTests
 {
     [Theory]
-    [InlineData("save")]
     [InlineData("update")]
     [InlineData("insert")]
     [InlineData("delete")]
@@ -26,7 +25,6 @@ public sealed class StoreWriteFailureTests
         {
             switch (operation)
             {
-                case "save": store.Save([]); break;
                 case "update": store.Upsert(original with { Name = "changed" }); break;
                 case "insert": store.Upsert(original with { Id = "another" }); break;
                 case "delete": store.Delete(original.Id); break;

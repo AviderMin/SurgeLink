@@ -148,8 +148,10 @@ Stores write unique temporary files, flush them and replace the destination thro
 read the latest disk state and then publish the change. Lock acquisition has a five-second
 limit. Do not remove a live lock file. Read-only loads tolerate malformed JSON for startup;
 incremental mutations fail on malformed/unreadable data rather than overwrite it as an empty
-store. Back up and repair a corrupt file before retrying. `ISessionStore.Save` is an explicit
-whole-document replacement; concurrent whole-document edits still have last-writer semantics.
+store. Strict JSON parse failures are wrapped in `IOException`, retaining the original
+`JsonException`, so UI persistence-error handlers can display them without an unhandled
+exception. Back up and repair a corrupt file before retrying. `ISessionStore` exposes only
+incremental Upsert/Delete operations; its unused whole-set Save API has been removed.
 
 Remote writes stage into unique sibling files and commit through the protocol's rename
 operation. The text editor retains the original encoding and raw-byte SHA-256 baseline,

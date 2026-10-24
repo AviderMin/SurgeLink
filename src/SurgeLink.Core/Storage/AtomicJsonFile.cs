@@ -25,6 +25,10 @@ public static class AtomicJsonFile
         }
         catch (FileNotFoundException) { return fallback; }
         catch (DirectoryNotFoundException) { return fallback; }
+        catch (JsonException ex) when (!tolerateErrors)
+        {
+            throw new IOException($"Stored JSON file '{Path.GetFileName(path)}' is invalid. Restore or repair the file before saving.", ex);
+        }
         catch (Exception ex) when (tolerateErrors && (ex is IOException or JsonException or UnauthorizedAccessException or NotSupportedException))
         {
             return fallback;

@@ -8,9 +8,6 @@ public interface ISessionStore
     /// <summary>Loads every saved profile, newest first is not implied.</summary>
     IReadOnlyList<SessionProfile> Load();
 
-    /// <summary>Replaces the whole profile set.</summary>
-    void Save(IReadOnlyList<SessionProfile> profiles);
-
     /// <summary>Adds or replaces one profile.</summary>
     void Upsert(SessionProfile profile);
 

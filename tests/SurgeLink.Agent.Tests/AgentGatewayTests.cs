@@ -11,6 +11,19 @@ namespace SurgeLink.Agent.Tests;
 public sealed class AgentGatewayTests
 {
     [Theory]
+    [InlineData("files.list")]
+    [InlineData("files.read")]
+    public async Task DefaultGatewayDeniesFileAccessWithoutAnExplicitHostPolicy(string method)
+    {
+        var gateway = new AgentGateway();
+        var files = new CountingFiles();
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null);
+        Assert.Equal("denied", (await gateway.ExecuteAsync(new(method, handle, "/private/config"), default)).ErrorCode);
+        Assert.Equal(0, files.ReadCount);
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task RevocationIsObservedBeforeLinkedCancellationCallbacksRun(bool monitoring)
@@ -107,7 +120,7 @@ public sealed class AgentGatewayTests
     }
 
     [Fact]
-    public async Task EveryFileOperationNeedsItsOwnApproval()
+    public async Task InjectedFilePolicyIsEvaluatedForEveryOperation()
     {
         var approvals = 0;
         var gateway = new AgentGateway((_, _) => Task.FromResult(++approvals == 1));

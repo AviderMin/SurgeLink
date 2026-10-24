@@ -102,32 +102,6 @@ public sealed class JsonSessionStoreTests
     }
 
     [Fact]
-    public void SaveReplacesWholeSetAndPreservesOrder()
-    {
-        using var temp = new TempDirectory();
-        var store = new JsonSessionStore(temp.File("sessions.json"));
-
-        store.Save(new[] { Profile("b", "B"), Profile("a", "A") });
-        Assert.Equal(new[] { "b", "a" }, store.Load().Select(p => p.Id));
-
-        store.Save(new[] { Profile("c", "C") });
-        Assert.Equal(new[] { "c" }, store.Load().Select(p => p.Id));
-    }
-
-    [Fact]
-    public void SaveEmptyListClearsStore()
-    {
-        using var temp = new TempDirectory();
-        var store = new JsonSessionStore(temp.File("sessions.json"));
-        store.Upsert(Profile());
-
-        store.Save(Array.Empty<SessionProfile>());
-
-        Assert.Empty(store.Load());
-        Assert.Empty(new JsonSessionStore(temp.File("sessions.json")).Load());
-    }
-
-    [Fact]
     public void DeleteRemovesProfileAndPersists()
     {
         using var temp = new TempDirectory();

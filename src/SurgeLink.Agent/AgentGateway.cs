@@ -16,8 +16,9 @@ public sealed partial class AgentGateway
     private readonly Dictionary<string, TaskCompletionSource> _revocations = new(StringComparer.Ordinal);
     private readonly Func<AgentFileAccess, CancellationToken, Task<bool>> _confirmFile;
 
+    /// <summary>File access is denied unless the host explicitly supplies an authorization policy.</summary>
     public AgentGateway(Func<AgentFileAccess, CancellationToken, Task<bool>>? confirmFile = null) =>
-        _confirmFile = confirmFile ?? ((_, _) => Task.FromResult(true));
+        _confirmFile = confirmFile ?? ((_, _) => Task.FromResult(false));
 
     public event Action<string, string?, string>? OperationCompleted;
 
@@ -164,12 +165,13 @@ public sealed partial class AgentGateway
                 default:
                     if (string.IsNullOrWhiteSpace(request.Path) || request.Path.Length > 4096 || request.Path.Any(char.IsControl))
                         return AgentResponse.Error("invalid_path", "Supply a remote path without control characters (maximum 4096 characters).");
-                    // No claim of path sandboxing: each exact path/operation requires desktop approval.
-                    // This also covers directory listings and symlinks, which may resolve outside a lexical root.
+                    // Evaluate the host policy for every exact path and operation. The desktop
+                    // explicitly allows reads within a shared connection; this is not a path sandbox
+                    // or a per-read prompt. Symlinks may resolve outside a lexical root.
                     var approved = await _confirmFile(new AgentFileAccess(grant.Info.Label, request.Method, request.Path), ct).ConfigureAwait(false);
                     ThrowIfCancelled(grant, ct);
                     if (!approved)
-                        return AgentResponse.Error("denied", "File access was declined in the desktop.");
+                        return AgentResponse.Error("denied", "File access was declined by the host policy.");
                     var files = grant.Session.FileSystem ?? throw new NotSupportedException();
                     if (request.Method == "files.list")
                     {

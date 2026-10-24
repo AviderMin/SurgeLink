@@ -11,6 +11,35 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class AgentWorkspaceTests
 {
+    [Theory]
+    [InlineData(AgentAccessMode.Observe)]
+    [InlineData(AgentAccessMode.Control)]
+    public async Task DesktopGrantExplicitlyIncludesFileReadingUntilRevoked(AgentAccessMode mode)
+    {
+        using var temp = new TempDirectory();
+        var catalog = new ProtocolCatalog(); catalog.Register(new SurgeLink.Protocols.Demo.DemoProtocolPlugin());
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
+            new AutomationDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var tab = await workspace.OpenAsync(SessionProfile.New("demo", "demo", 0, "demo"), null, default);
+        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance);
+        Assert.Equal(AgentAccessMode.None, service.GetMode(tab.Id));
+        await service.SetAccessAsync(tab, mode);
+        var client = new AgentClient(AgentEndpoint.ForProcess(Environment.ProcessId));
+        var sessions = await client.SendAsync(new("sessions.list"));
+        var handle = Assert.Single(sessions.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
+        Assert.True((await client.SendAsync(new("files.list", handle, "/home/demo"))).Success);
+        var read = await client.SendAsync(new("files.read", handle, "/home/demo/demo.txt"));
+        Assert.True(read.Success);
+        Assert.Contains("Hello from", read.Data!.Value.GetProperty("text").GetString());
+        await service.StopAllAsync();
+        Assert.Equal("session_unavailable", (await client.SendAsync(new("files.list", handle, "/home/demo"))).ErrorCode);
+        Assert.Equal("session_unavailable", (await client.SendAsync(new("files.read", handle, "/home/demo/demo.txt"))).ErrorCode);
+        await workspace.CloseAsync(tab.Id);
+    }
+
     [Fact]
     public async Task StopAllInvalidatesAccessChangeWaitingForAnInFlightWrite()
     {

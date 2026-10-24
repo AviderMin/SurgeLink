@@ -12,17 +12,20 @@ namespace SurgeLink.Core.Tests;
 public sealed class AuditRegressionTests
 {
     [Theory]
-    [InlineData("sessions")]
-    [InlineData("credentials")]
-    [InlineData("hostkeys")]
-    [InlineData("settings")]
-    public void UpdatingCorruptStorageDoesNotReplaceOriginalEvidence(string kind)
+    [InlineData("sessions", "{unfinished")]
+    [InlineData("credentials", "{unfinished")]
+    [InlineData("hostkeys", "{unfinished")]
+    [InlineData("settings", "{unfinished")]
+    [InlineData("sessions", "null")]
+    [InlineData("credentials", "null")]
+    [InlineData("hostkeys", "null")]
+    [InlineData("settings", "null")]
+    public void UpdatingCorruptStorageDoesNotReplaceOriginalEvidence(string kind, string corrupt)
     {
         using var temp = new TempDirectory();
         var path = temp.File("store.json");
-        const string corrupt = "{unfinished";
         File.WriteAllText(path, corrupt);
-        Assert.Throws<System.Text.Json.JsonException>(() =>
+        var error = Assert.Throws<IOException>(() =>
         {
             switch (kind)
             {
@@ -32,6 +35,8 @@ public sealed class AuditRegressionTests
                 case "settings": new AppSettingsStore(path).Update(s => s with { TerminalFontSize = 18 }); break;
             }
         });
+        Assert.IsType<System.Text.Json.JsonException>(error.InnerException);
+        Assert.Contains("store.json", error.Message, StringComparison.Ordinal);
         Assert.Equal(corrupt, File.ReadAllText(path));
     }
 

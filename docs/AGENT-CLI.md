@@ -31,6 +31,13 @@ or file reads. The scope is local programs under the same Windows user, not an
 authenticated individual Agent. Terminal commands have the remote account's
 permissions. Per-client pairing remains future work.
 
+This grant is not a remote path sandbox: file listing and bounded text reading can
+access any path allowed by the remote account, including paths outside a project.
+The standalone `AgentGateway` denies file access by default. The desktop explicitly
+supplies the policy that permits reads for a connection after the user enables
+Allow reading or Control terminal; revocation invalidates its handle. An injected
+host policy is evaluated for every file operation and need not display a dialog.
+
 Human typing, pasting or sending a terminal key immediately revokes that terminal's
 Agent handle before queuing the human input. Writes are serialized, and an Agent
 paste plus optional Enter is one transport write. Stop prevents further Agent

@@ -36,17 +36,6 @@ public sealed class JsonSessionStore : ISessionStore
     }
 
     /// <inheritdoc />
-    public void Save(IReadOnlyList<SessionProfile> profiles)
-    {
-        lock (_gate)
-        {
-            var next = profiles.ToList();
-            AtomicJsonFile.WithExclusiveAccess(_path, () => { AtomicJsonFile.Write(_path, next); return true; });
-            _profiles = next;
-        }
-    }
-
-    /// <inheritdoc />
     public void Upsert(SessionProfile profile)
     {
         lock (_gate)
