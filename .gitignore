@@ -102,3 +102,4 @@ known-hosts.json
 
 !/packaging/SurgeLink.iss
 !/packaging/Languages/
+%SystemDrive%/
