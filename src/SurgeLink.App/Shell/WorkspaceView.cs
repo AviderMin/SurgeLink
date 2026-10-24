@@ -17,7 +17,8 @@ internal sealed record WorkspaceProps(
     Action<SessionProfile> Connect,
     Action<WorkspaceTab> CloseTab,
     Action<WorkspaceTab> ActivateTab,
-    Action OpenDemo);
+    Action OpenDemo,
+    IReadOnlySet<Guid> AgentControlledTabs);
 
 /// <summary>
 /// The content area: one tab per open session, or a friendly empty state when
@@ -74,7 +75,8 @@ internal static class WorkspaceView
                     item.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                     item.VerticalContentAlignment = VerticalAlignment.Stretch;
                     SessionTabHeader.Apply(item, tab.Title,
-                        tab.Session.HostInfo?.OperatingSystem ?? tab.Profile.DetectedOperatingSystem);
+                        tab.Session.HostInfo?.OperatingSystem ?? tab.Profile.DetectedOperatingSystem,
+                        props.AgentControlledTabs.Contains(tab.Id));
                 }
             })
             .IsAddTabButtonVisible(true)

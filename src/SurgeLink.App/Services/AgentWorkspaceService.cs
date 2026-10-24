@@ -23,6 +23,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     private static readonly JsonSerializerOptions ConfigJson = new() { WriteIndented = true };
     private AgentPipeServer? _server;
     private long _revision;
+    private long _accessRevision;
     private long _activityId;
     private string? _error;
 
@@ -38,6 +39,8 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     }
 
     public long Revision => Interlocked.Read(ref _revision);
+    /// <summary>Only access changes invalidate tab indicators; ordinary Agent requests do not.</summary>
+    public long AccessRevision => Interlocked.Read(ref _accessRevision);
     public event EventHandler? Changed;
     public string McpHostPath { get; }
     public string CliPath { get; }
@@ -157,6 +160,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
 
     private void Record(string label, string method, string outcome)
     {
+        if (method == "access") Interlocked.Increment(ref _accessRevision);
         lock (_gate)
         {
             _activity.Enqueue(new(++_activityId, DateTimeOffset.UtcNow, label, method, outcome));

@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Markup;
 using SurgeLink.App.Components;
+using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.Core.Sessions;
 
@@ -14,13 +15,14 @@ internal static class SessionTabHeader
 {
     private sealed class Header
     {
-        public Grid Layout { get; } = new() { VerticalAlignment = VerticalAlignment.Center, ColumnSpacing = 8 };
+        public Grid Layout { get; } = new() { VerticalAlignment = VerticalAlignment.Center };
         public Viewbox IconHost { get; } = new()
         {
             Width = 16,
             Height = 16,
             Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
             VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
         };
         public TextBlock Title { get; } = new()
         {
@@ -29,21 +31,35 @@ internal static class SessionTabHeader
             TextWrapping = TextWrapping.NoWrap,
         };
         public string? IconKey;
+        public FontIcon AgentIcon { get; } = new()
+        {
+            Glyph = "\uE99A",
+            FontSize = 14,
+            Width = 16,
+            Height = 16,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = true,
+        };
 
         public Header()
         {
-            Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
+            Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             Grid.SetColumn(Title, 1);
+            Grid.SetColumn(AgentIcon, 2);
             AutomationProperties.SetAccessibilityView(IconHost, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
             Layout.Children.Add(IconHost);
             Layout.Children.Add(Title);
+            Layout.Children.Add(AgentIcon);
         }
     }
 
     private static readonly ConditionalWeakTable<TabViewItem, Header> Headers = new();
 
-    public static void Apply(TabViewItem item, string title, string? operatingSystem)
+    public static void Apply(TabViewItem item, string title, string? operatingSystem, bool agentControlled = false)
     {
         var header = Headers.GetValue(item, _ => new Header());
         PrivacyDisplay.Apply(header.Title, title);
@@ -60,8 +76,16 @@ internal static class SessionTabHeader
                 : new FontIcon { Glyph = "\uE774", FontSize = 16 };
             header.IconKey = key;
         }
+        var status = agentControlled ? Str.T("shell.agent.tabControlled", "Agent is controlling this session") : string.Empty;
+        header.AgentIcon.Visibility = agentControlled ? Visibility.Visible : Visibility.Collapsed;
+        AutomationProperties.SetName(header.AgentIcon, status);
+        AutomationProperties.SetAutomationId(header.AgentIcon, "SessionAgentIndicator");
+        ToolTipService.SetToolTip(header.AgentIcon, status);
         if (!ReferenceEquals(item.Header, header.Layout)) { item.Header = header.Layout; }
-        AutomationProperties.SetName(item, PrivacyDisplay.Mask(title));
-        ToolTipService.SetToolTip(item, title);
+        AutomationProperties.SetName(item, agentControlled
+            ? Str.F("shell.agent.tabAccessible", "{0}, controlled by Agent", PrivacyDisplay.Mask(title))
+            : PrivacyDisplay.Mask(title));
+        AutomationProperties.SetHelpText(item, status);
+        ToolTipService.SetToolTip(item, agentControlled ? title + "\n" + status : title);
     }
 }

@@ -7,6 +7,8 @@ public static class ZhShell
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["shell.agent.title"] = "Agent",
+        ["shell.agent.tabControlled"] = "Agent 已接管此会话",
+        ["shell.agent.tabAccessible"] = "{0}，Agent 已接管",
         ["shell.agent.close"] = "关闭 Agent 面板",
         ["shell.agent.description"] = "让你的 Agent 直接操作当前可见的终端，执行策略由 Agent 应用负责。",
         ["shell.agent.scope"] = "访问范围为当前 Windows 用户下的本机程序。在受控终端中手动输入即可接管，并撤销 Agent 访问。",

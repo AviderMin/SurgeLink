@@ -1,9 +1,14 @@
 # Agent, CLI and shared terminal control
 
-All Agent UI lives behind the robot button immediately left of the four existing
+Agent setup and controls live behind the robot button immediately left of the four existing
 title-bar actions (Alt+G). The five buttons share the Settings button's subtle
 style, 32×32 hit target, 14px icons and 8px spacing. The non-modal Agent panel stays
 above the workspace without resizing or remounting the terminal.
+
+Tabs with terminal control enabled show a small robot after the session title,
+before the native close button. Hovering identifies the session as controlled by
+Agent; the accessible tab name includes that status. Read-only sessions show no
+control indicator. Revocation, human takeover or disconnection removes it.
 
 ## Desktop access
 

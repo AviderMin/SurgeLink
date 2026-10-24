@@ -25,8 +25,11 @@ public sealed class AgentWorkspaceTests
             new AutomationDispatcher(), NullLogger<WorkspaceStore>.Instance);
         var tab = await workspace.OpenAsync(SessionProfile.New("fake", "host.test", 22, "alice"), null, default);
         await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance);
+        var initialAccessRevision = service.AccessRevision;
         await service.SetAccessAsync(tab, AgentAccessMode.Control);
         Assert.Equal(AgentAccessMode.Control, service.GetMode(tab.Id));
+        Assert.True(service.AccessRevision > initialAccessRevision);
+        var controlAccessRevision = service.AccessRevision;
         var client = new AgentClient(AgentEndpoint.ForProcess(Environment.ProcessId));
         var listed = await client.SendAsync(new("sessions.list"));
         var handle = Assert.Single(listed.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
@@ -37,8 +40,10 @@ public sealed class AgentWorkspaceTests
         Assert.Equal("echo hello\r", Assert.Single(remote.Writes));
         remote.Emit("echo hello\r\nhello\r\n$ ");
         Assert.Contains("hello", (await client.SendAsync(new("terminal.screen", handle))).Data!.Value.GetProperty("text").GetString());
+        Assert.Equal(controlAccessRevision, service.AccessRevision);
         tab.Terminal!.SendText("human");
         Assert.Equal(AgentAccessMode.None, service.GetMode(tab.Id));
+        Assert.True(service.AccessRevision > controlAccessRevision);
         Assert.Equal("session_unavailable", (await client.SendAsync(new("terminal.key", handle, Key: "Enter", ExpectedInputRevision: 2, OperationId: "old-control"))).ErrorCode);
         Assert.Contains(service.Activity, a => a.Outcome == "human_input");
         Assert.Equal(new[] { "echo hello\r", "human" }, remote.Writes);

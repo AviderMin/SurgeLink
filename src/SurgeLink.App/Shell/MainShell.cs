@@ -2,6 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SurgeLink.Agent;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.App.Sessions;
@@ -46,6 +47,7 @@ internal sealed class MainShell : Component
         var workspace = services.Workspace;
         var snapshot = UseExternalStore(workspace.Subscribe, () => workspace.Snapshot);
         var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
+        _ = UseExternalStore(services.Agent.Subscribe, () => services.Agent.AccessRevision);
 
         // Subscribe for translated shell text without remounting stateful workspaces.
         var localization = services.Localization;
@@ -335,7 +337,11 @@ internal sealed class MainShell : Component
             Connect,
             CloseTab,
             tab => workspace.Activate(tab.Id),
-            OpenDemo));
+            OpenDemo,
+            snapshot.Tabs.Where(tab => tab.State == ConnectionState.Connected && !tab.IsClosing
+                    && tab.Terminal is { IsClosed: false }
+                    && services.Agent.GetMode(tab.Id) == AgentAccessMode.Control)
+                .Select(tab => tab.Id).ToHashSet()));
 
         Element BuildContent() => Grid(
             columns: [GridSize.Star()],
