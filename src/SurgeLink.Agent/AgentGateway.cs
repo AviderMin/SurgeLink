@@ -15,19 +15,25 @@ public sealed partial class AgentGateway
     private readonly Dictionary<string, Grant> _grants = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCompletionSource> _revocations = new(StringComparer.Ordinal);
     private readonly Func<AgentFileAccess, CancellationToken, Task<bool>> _confirmFile;
+    private readonly TimeProvider _timeProvider;
 
     /// <summary>File access is denied unless the host explicitly supplies an authorization policy.</summary>
-    public AgentGateway(Func<AgentFileAccess, CancellationToken, Task<bool>>? confirmFile = null) =>
+    public AgentGateway(Func<AgentFileAccess, CancellationToken, Task<bool>>? confirmFile = null, TimeProvider? timeProvider = null)
+    {
         _confirmFile = confirmFile ?? ((_, _) => Task.FromResult(false));
+        _timeProvider = timeProvider ?? TimeProvider.System;
+    }
 
     public event Action<string, string?, string>? OperationCompleted;
 
     public string GrantSession(string connectionKey, string label, IProtocolSession session, Func<string>? readScreen,
         ITerminalAutomation? terminal = null, bool allowControl = false,
-        Func<string, CancellationToken, Task>? activate = null, Func<bool>? isActive = null)
+        Func<string, CancellationToken, Task>? activate = null, Func<bool>? isActive = null, AgentSessionTarget? target = null)
     {
         lock (_gate)
         {
+            if (target is not null && (target.SessionId != session.SessionId || string.IsNullOrWhiteSpace(target.Server)))
+                throw new ArgumentException("Target must identify this connection and its server/device.", nameof(target));
             if (_revocations.ContainsKey(connectionKey)) throw new InvalidOperationException("Previous access is still draining.");
             if (session.State != ConnectionState.Connected)
                 throw new InvalidOperationException("Only connected sessions can be shared.");
@@ -35,7 +41,7 @@ public sealed partial class AgentGateway
             if (existing is not null) return existing.Info.Handle;
             var info = new AgentSessionInfo(Convert.ToHexString(RandomNumberGenerator.GetBytes(24)), label,
                 session.Protocol.Id, session.HostInfo, readScreen is not null || terminal is not null,
-                session.FileSystem is not null, session.Monitor is not null, allowControl && terminal is not null);
+                session.FileSystem is not null, session.Monitor is not null, allowControl && terminal is not null, Target: target);
             _grants.Add(info.Handle, new Grant(connectionKey, info, session, readScreen, terminal, activate, isActive));
             return info.Handle;
         }
@@ -138,6 +144,7 @@ public sealed partial class AgentGateway
             AgentResponse result;
             switch (request.Method)
             {
+                case "sessions.check": result = CheckSession(grant); break;
                 case "sessions.info": result = AgentResponse.Ok(grant.Info with { IsActive = grant.IsActive?.Invoke() ?? false }); break;
                 case "sessions.activate":
                     if (!grant.Info.TerminalControl) return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel first.");
@@ -200,7 +207,7 @@ public sealed partial class AgentGateway
         ct.ThrowIfCancellationRequested();
     }
 
-    private static bool IsKnownMethod(string method) => method is "sessions.list" or "sessions.info" or "sessions.activate"
+    private static bool IsKnownMethod(string method) => method is "sessions.list" or "sessions.info" or "sessions.activate" or "sessions.check"
         or "terminal.screen" or "terminal.output" or "terminal.text" or "terminal.key"
         or "monitor.snapshot" or "files.list" or "files.read";
 
@@ -215,7 +222,29 @@ public sealed partial class AgentGateway
         public Func<string, CancellationToken, Task>? Activate { get; } = activate;
         public Func<bool>? IsActive { get; } = isActive;
         public Dictionary<string, (string Fingerprint, AgentResponse Response)> Inputs { get; } = new(StringComparer.Ordinal);
+        public SessionCheck? Check { get; set; }
         public CancellationTokenSource Lifetime { get; } = new();
         public SemaphoreSlim Serial { get; } = new(1, 1);
+    }
+
+    private sealed record SessionCheck(string Token, DateTimeOffset ExpiresUtc, long InputRevision, bool IsActive);
+
+    private AgentResponse CheckSession(Grant grant)
+    {
+        if (grant.Info.Target is null) return AgentResponse.Error("session_context_unavailable", "The host must supply the connection target before terminal control.");
+        if (grant.Terminal is null) throw new NotSupportedException();
+        var screen = grant.Terminal.ReadScreen();
+        if (screen.IsClosed) return AgentResponse.Error("terminal_unavailable", "The terminal is closed.");
+        var active = grant.IsActive?.Invoke() ?? false;
+        var expires = _timeProvider.GetUtcNow().AddMinutes(2);
+        var check = new SessionCheck(Convert.ToHexString(RandomNumberGenerator.GetBytes(24)), expires, screen.InputRevision, active);
+        grant.Check = check;
+        return AgentResponse.Ok(new
+        {
+            session = grant.Info with { IsActive = active }, connectionState = grant.Session.State,
+            usernameSource = "configured_login", effectiveShellUser = (string?)null,
+            screen, checkToken = check.Token, expiresUtc = expires,
+            instruction = "Verify server, port, session ID, configured login and current screen against your intended target. Effective user after su, nested SSH or containers is unknown. Use this checkToken and screen.inputRevision for one new terminal input; repeat Check Sessions before each new operation.",
+        });
     }
 }

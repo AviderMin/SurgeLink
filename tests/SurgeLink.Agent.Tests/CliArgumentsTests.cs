@@ -9,17 +9,19 @@ public sealed class CliArgumentsTests
     public void SharedTerminalInputCarriesRevisionAndStableOperationId()
     {
         var input = CliArguments.Parse(["terminal", "send", "--session", "h", "--text", "--literal text", "--submit",
-            "--revision", "8", "--operation-id", "write-1"]);
+            "--revision", "8", "--operation-id", "write-1", "--check-token", "checked"]);
         Assert.Equal("terminal.text", input.Request.Method);
         Assert.Equal("--literal text", input.Request.Text);
         Assert.Equal(8, input.Request.ExpectedInputRevision);
         Assert.Equal("write-1", input.Request.OperationId);
+        Assert.Equal("checked", input.Request.CheckToken);
         Assert.True(input.Request.Submit);
     }
 
     [Theory]
     [InlineData("terminal send --session h --text command --operation-id x")]
     [InlineData("terminal key --session h --key Enter --revision 0")]
+    [InlineData("terminal send --session h --text command --revision 0 --operation-id x")]
     [InlineData("terminal screen --session h --submit")]
     [InlineData("terminal output --session h --cursor -1")]
     [InlineData("sessions info --session h --view files")]
@@ -28,6 +30,7 @@ public sealed class CliArgumentsTests
 
     [Theory]
     [InlineData("sessions", "info", "sessions.info")]
+    [InlineData("sessions", "check", "sessions.check")]
     [InlineData("terminal", "screen", "terminal.screen")]
     [InlineData("monitor", "snapshot", "monitor.snapshot")]
     public void SessionCommandsHaveExplicitHandleAndInstance(string command, string subcommand, string method)

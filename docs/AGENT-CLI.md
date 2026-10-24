@@ -44,6 +44,31 @@ paste plus optional Enter is one transport write. Stop prevents further Agent
 input; it does not terminate an already running remote command. The user can
 send Ctrl+C deliberately in the terminal.
 
+## Mandatory Check Sessions before terminal input
+
+Every **new** text/key operation must first call `check_sessions` (MCP) or
+`sessions check --session HANDLE` (CLI). Inspect `session.target.server`, `port`,
+`sessionId`, `username`, `connectionState`, active state and `screen` against the
+intended target. The target identity comes from the open connection, not a subsequently
+edited saved profile. `usernameSource=configured_login` is the connection login;
+`effectiveShellUser=null` deliberately makes no claim about identity after `su`,
+nested SSH or entering containers. The check sends no probing command into the PTY.
+
+The server returns a random `checkToken`, `expiresUtc` and `screen.inputRevision`.
+Pass that token as `checkToken` / `--check-token` and the revision with the input.
+A token expires after two minutes and is consumed by one new input. A newer check
+replaces the older check for that handle. Revocation/reconnection, an input revision
+change or a change in the target's active state makes the old check unusable.
+The gateway rejects missing/stale checks with `session_check_required` before writing.
+Exact retries of an already recorded operation retain the original token/arguments
+and return the stored acknowledgement, even after its token expires.
+
+This enforces the check step, not an Agent's understanding of the target. It does
+not establish shell readiness or command completion, nor replace the external
+Agent application's execution policy. Older write clients need the updated CLI/MCP
+host; restart the MCP connection so its tool schemas/instructions refresh. Read-only
+clients continue to work.
+
 ## Build and CLI
 
 Build on Windows with .NET 10:
@@ -63,34 +88,39 @@ Example after allowing terminal control in the desktop:
 $cli = '.\src\SurgeLink.Cli\bin\Debug\net10.0\surgelink-cli.exe'
 & $cli sessions list --json
 $sessionHandle = '<handle from data[].handle>'
-$screen = & $cli terminal screen --session $sessionHandle --json | ConvertFrom-Json
+$check = & $cli sessions check --session $sessionHandle --json | ConvertFrom-Json
+if (-not $check.success) { throw $check.message }
+$check.data.session.target # Verify this is the intended server/session/login.
+$check.data.screen.text    # Inspect current terminal context before continuing.
+$screen = $check.data.screen
 $operation = [guid]::NewGuid().ToString('N')
 $sendArguments = @(
     'terminal', 'send', '--session', $sessionHandle,
     '--text', 'echo hello', '--submit',
-    '--revision', [string]$screen.data.inputRevision,
-    '--operation-id', $operation, '--json'
+    '--revision', [string]$screen.inputRevision,
+    '--operation-id', $operation, '--check-token', $check.data.checkToken, '--json'
 )
 & $cli @sendArguments
 
 # Keep the pre-input cursor to read all output that may arrive during the write.
-& $cli terminal output --session $sessionHandle --cursor $screen.data.outputCursor --json
+& $cli terminal output --session $sessionHandle --cursor $screen.outputCursor --json
 ```
 
 To retry an uncertain transport request, reuse the exact sendArguments array.
 Do not make a new operation ID merely because the response was lost. For a new key
-or command, obtain a fresh screen/revision and use a fresh operation ID.
+or command, run Check Sessions again and use a fresh operation ID.
 
 Other commands:
 
 ```text
 surgelink-cli sessions list [--instance PID] [--json]
 surgelink-cli sessions info --session HANDLE
+surgelink-cli sessions check --session HANDLE
 surgelink-cli sessions activate --session HANDLE [--view terminal|files|monitor]
 surgelink-cli terminal screen --session HANDLE
 surgelink-cli terminal output --session HANDLE [--cursor N]
-surgelink-cli terminal send --session HANDLE --text TEXT [--submit] --revision N --operation-id ID
-surgelink-cli terminal key --session HANDLE --key Ctrl+C --revision N --operation-id ID
+surgelink-cli terminal send --session HANDLE --text TEXT [--submit] --revision N --operation-id ID --check-token TOKEN
+surgelink-cli terminal key --session HANDLE --key Ctrl+C --revision N --operation-id ID --check-token TOKEN
 surgelink-cli monitor snapshot --session HANDLE
 surgelink-cli files list --session HANDLE --path REMOTE_PATH
 surgelink-cli files read --session HANDLE --path REMOTE_PATH
@@ -121,7 +151,7 @@ path and the current desktop PID. A typical stdio client configuration is:
 Use the actual path/PID. Refresh the configuration after restarting the desktop.
 An empty args array enables automatic discovery when only one desktop is running.
 
-The tools are list_sessions, get_session_info, read_terminal, read_terminal_output,
+The tools are list_sessions, get_session_info, check_sessions, read_terminal, read_terminal_output,
 send_terminal_text, send_terminal_key, select_session, get_system_snapshot,
 list_directory and read_text_file. The write tools and select_session require a
 control grant. Read-only tool annotations are hints; gateway enforcement decides
@@ -135,11 +165,13 @@ Example send_terminal_text arguments:
   "text": "echo hello",
   "submit": true,
   "expectedInputRevision": 0,
-  "operationId": "echo-hello-1"
+  "operationId": "echo-hello-1",
+  "checkToken": "<token from check_sessions>"
 }
 ```
 
-Get expectedInputRevision from read_terminal immediately before input.
+Call check_sessions immediately before each new input. Verify the target and screen,
+then pass its checkToken and screen.inputRevision as expectedInputRevision.
 send_terminal_key uses key instead of text/submit. Supported keys include Enter,
 Tab, Escape, Backspace, Space, arrows, Home, End, PageUp, PageDown, Insert, Delete,
 F1–F12, letters/digits and Ctrl/Alt/Shift combinations. Encoding follows the current
@@ -162,9 +194,11 @@ The additive JSON contract remains version 1. Old read-only clients remain valid
   retains at most 131,072 units and pages at most 16,384 units without splitting
   surrogate pairs. A history gap is explicit; future/negative cursors fail.
 - terminal.text and terminal.key require a control grant, expectedInputRevision
-  and operationId. Text is capped at 16,384 units; submit defaults to false.
+  from sessions.check, its single-use checkToken and operationId. Text is capped at
+  16,384 units; submit defaults to false.
 - Every human or Agent input changes inputRevision. A stale revision returns
-  input_conflict before writing. Human input also revokes the desktop control grant.
+  session_check_required when it invalidates a check, or input_conflict if it races
+  with the final PTY write. Human input also revokes the desktop control grant.
 - Operation IDs are 1–128 ASCII letters/digits/dots/dashes/underscores. Exact retries
   under the same shared handle replay the acknowledgement; different arguments
   with the same ID return operation_conflict. The gateway retains at most 1,024
@@ -186,7 +220,8 @@ The additive JSON contract remains version 1. Old read-only clients remain valid
   full listing before this result bound. Paths and symlinks use server semantics,
   without a separate path sandbox.
 
-Error codes additionally include control_required, invalid_arguments, input_conflict,
+Error codes additionally include session_check_required, session_context_unavailable,
+control_required, invalid_arguments, input_conflict,
 operation_conflict, operation_limit, input_outcome_unknown, terminal_unavailable and
 invalid_cursor, alongside existing session_unavailable, unsupported, cancelled,
 read_failed, version_mismatch, unknown_method, output_limit and operation_failed.

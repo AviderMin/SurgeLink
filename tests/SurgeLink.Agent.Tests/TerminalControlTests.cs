@@ -23,9 +23,9 @@ public sealed class TerminalControlTests
         var terminal = new TestAutomation();
         var gateway = new AgentGateway();
         var selected = 0;
-        var handle = gateway.GrantSession("tab", "Test", new AgentGatewayTests.TestSession(), null, terminal, true,
+        var handle = GrantControl(gateway, terminal,
             (_, _) => { selected++; return Task.CompletedTask; });
-        var input = Input(handle);
+        var input = await CheckedInputAsync(gateway, handle);
         var first = await gateway.ExecuteAsync(input, default);
         var retry = await gateway.ExecuteAsync(input, default);
         Assert.True(first.Success);
@@ -34,7 +34,7 @@ public sealed class TerminalControlTests
         Assert.Equal(1, selected);
         Assert.False(first.Data!.Value.GetProperty("commandCompletionKnown").GetBoolean());
         Assert.Equal("operation_conflict", (await gateway.ExecuteAsync(input with { Text = "different" }, default)).ErrorCode);
-        Assert.Equal("input_conflict", (await gateway.ExecuteAsync(input with { OperationId = "new-id" }, default)).ErrorCode);
+        Assert.Equal("session_check_required", (await gateway.ExecuteAsync(input with { OperationId = "new-id" }, default)).ErrorCode);
         Assert.Equal(1, terminal.Writes);
     }
 
@@ -43,9 +43,10 @@ public sealed class TerminalControlTests
     {
         var terminal = new TestAutomation { FailWrite = true };
         var gateway = new AgentGateway();
-        var handle = gateway.GrantSession("tab", "Test", new AgentGatewayTests.TestSession(), null, terminal, true);
-        Assert.Equal("input_outcome_unknown", (await gateway.ExecuteAsync(Input(handle), default)).ErrorCode);
-        Assert.Equal("input_outcome_unknown", (await gateway.ExecuteAsync(Input(handle), default)).ErrorCode);
+        var handle = GrantControl(gateway, terminal);
+        var input = await CheckedInputAsync(gateway, handle);
+        Assert.Equal("input_outcome_unknown", (await gateway.ExecuteAsync(input, default)).ErrorCode);
+        Assert.Equal("input_outcome_unknown", (await gateway.ExecuteAsync(input, default)).ErrorCode);
         Assert.Equal(1, terminal.Writes);
     }
 
@@ -62,6 +63,25 @@ public sealed class TerminalControlTests
 
     internal static AgentRequest Input(string handle) => new("terminal.text", handle,
         Text: "echo test", Submit: true, ExpectedInputRevision: 0, OperationId: "command-1");
+
+    internal static string GrantControl(AgentGateway gateway, TestAutomation terminal,
+        Func<string, CancellationToken, Task>? activate = null, Func<bool>? isActive = null, string connectionKey = "tab")
+    {
+        var session = new AgentGatewayTests.TestSession();
+        return gateway.GrantSession(connectionKey, "Test", session, null, terminal, true, activate, isActive,
+            new AgentSessionTarget(session.SessionId, "host.test", 2222, "alice"));
+    }
+
+    internal static async Task<AgentRequest> CheckedInputAsync(AgentGateway gateway, string handle)
+    {
+        var check = await gateway.ExecuteAsync(new("sessions.check", handle), default);
+        Assert.True(check.Success, check.Message);
+        return Input(handle) with
+        {
+            CheckToken = check.Data!.Value.GetProperty("checkToken").GetString(),
+            ExpectedInputRevision = check.Data.Value.GetProperty("screen").GetProperty("inputRevision").GetInt64(),
+        };
+    }
 
     internal sealed class TestAutomation : ITerminalAutomation
     {

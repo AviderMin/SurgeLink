@@ -12,6 +12,7 @@ public sealed record CliArguments(AgentRequest Request, int? Instance)
         {
             ("sessions", "list") => "sessions.list",
             ("sessions", "info") => "sessions.info",
+            ("sessions", "check") => "sessions.check",
             ("sessions", "activate") => "sessions.activate",
             ("terminal", "screen") => "terminal.screen",
             ("terminal", "output") => "terminal.output",
@@ -29,7 +30,7 @@ public sealed record CliArguments(AgentRequest Request, int? Instance)
         if (method == "terminal.output") allowed.Add("--cursor");
         if (method is "terminal.text" or "terminal.key")
         {
-            allowed.UnionWith(["--revision", "--operation-id"]);
+            allowed.UnionWith(["--revision", "--operation-id", "--check-token"]);
             allowed.Add(method == "terminal.text" ? "--text" : "--key");
         }
         var options = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -70,10 +71,11 @@ public sealed record CliArguments(AgentRequest Request, int? Instance)
         {
             if (revision is null) throw new ArgumentException("--revision from terminal screen is required.");
             operationId = Require("--operation-id");
+            Require("--check-token");
             if (method == "terminal.text" && !options.ContainsKey("--text")) throw new ArgumentException("--text is required.");
             if (method == "terminal.key") Require("--key");
         }
         return new(new AgentRequest(method, session, path, Text: Get("--text"), Submit: flags.Contains("--submit"),
-            Key: Get("--key"), Cursor: Number("--cursor"), ExpectedInputRevision: revision, OperationId: operationId, View: Get("--view")), instance);
+            Key: Get("--key"), Cursor: Number("--cursor"), ExpectedInputRevision: revision, OperationId: operationId, View: Get("--view"), CheckToken: Get("--check-token")), instance);
     }
 }

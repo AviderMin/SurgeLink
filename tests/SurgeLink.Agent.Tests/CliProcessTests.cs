@@ -24,9 +24,13 @@ public sealed class CliProcessTests
         Assert.Equal("usage", error.RootElement.GetProperty("errorCode").GetString());
 
         var terminal = new TerminalControlTests.TestAutomation();
-        var handle = gateway.GrantSession("tab", "Test", new AgentGatewayTests.TestSession(), null, terminal, true);
+        var handle = TerminalControlTests.GrantControl(gateway, terminal);
+        var checkedSession = await RunAsync("sessions", "check", "--instance", Environment.ProcessId.ToString(), "--session", handle);
+        Assert.Equal(0, checkedSession.ExitCode);
+        using var check = JsonDocument.Parse(checkedSession.Output);
+        var checkToken = check.RootElement.GetProperty("data").GetProperty("checkToken").GetString()!;
         var inputArgs = new[] { "terminal", "send", "--instance", Environment.ProcessId.ToString(), "--session", handle,
-            "--text", "echo visible", "--submit", "--revision", "0", "--operation-id", "cli-write" };
+            "--text", "echo visible", "--submit", "--revision", "0", "--operation-id", "cli-write", "--check-token", checkToken };
         var sent = await RunAsync(inputArgs);
         Assert.Equal(0, sent.ExitCode);
         using var receipt = JsonDocument.Parse(sent.Output);

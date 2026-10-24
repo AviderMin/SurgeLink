@@ -95,7 +95,10 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
                 var handle = _gateway.GrantSession(tab.Id.ToString(), tab.Title, tab.Session, null,
                     terminal: tab.Terminal, allowControl: mode == AgentAccessMode.Control,
                     activate: (view, ct) => ActivateAsync(tab, view, ct),
-                    isActive: () => _workspace.Snapshot.ActiveTabId == tab.Id);
+                    isActive: () => _workspace.Snapshot.ActiveTabId == tab.Id,
+                    target: new AgentSessionTarget(tab.Session.SessionId, tab.Profile.Host,
+                        tab.Session.Protocol.UsesNetworkAddress ? tab.Profile.ResolvePort(tab.Session.Protocol.DefaultPort) : 0,
+                        tab.Profile.Username));
                 _labels[handle] = tab.Title;
                 _handles[tab.Id] = handle;
                 _error = null;

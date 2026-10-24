@@ -6,7 +6,7 @@ namespace SurgeLink.Agent;
 
 public sealed partial class AgentGateway
 {
-    private static async Task<AgentResponse> ExecuteInputAsync(Grant grant, AgentRequest request, CancellationToken ct)
+    private async Task<AgentResponse> ExecuteInputAsync(Grant grant, AgentRequest request, CancellationToken ct)
     {
         if (!grant.Info.TerminalControl || grant.Terminal is null)
             return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel first.");
@@ -26,12 +26,21 @@ public sealed partial class AgentGateway
         if (request.Method == "terminal.key" && (string.IsNullOrWhiteSpace(request.Key) || request.Key.Length > 64))
             return AgentResponse.Error("invalid_arguments", "Supply a terminal key such as Enter, Tab, Ctrl+C or Up.");
 
+        if (grant.Check is not { } check || request.CheckToken != check.Token || _timeProvider.GetUtcNow() >= check.ExpiresUtc
+            || request.ExpectedInputRevision != check.InputRevision || grant.Terminal.ReadScreen().InputRevision != check.InputRevision
+            || (grant.IsActive?.Invoke() ?? false) != check.IsActive)
+            return AgentResponse.Error("session_check_required", "Run Check Sessions (sessions.check/check_sessions), verify the target and screen, then supply its checkToken and input revision before each new terminal operation.");
+        grant.Check = null;
+
         AgentResponse response;
         try
         {
             // Replaying the same operation never selects a tab or writes again.
             if (grant.Activate is not null) await grant.Activate("terminal", ct).ConfigureAwait(false);
             ThrowIfCancelled(grant, ct);
+            if (_timeProvider.GetUtcNow() >= check.ExpiresUtc || grant.Terminal.ReadScreen().InputRevision != check.InputRevision
+                || grant.Activate is not null && grant.IsActive is not null && !grant.IsActive())
+                return AgentResponse.Error("session_check_required", "The target changed or the check expired while selecting the terminal. Run Check Sessions again.");
             var receipt = request.Method == "terminal.text"
                 ? await grant.Terminal.SendTextAsync(request.Text!, request.Submit, request.ExpectedInputRevision.Value, ct).ConfigureAwait(false)
                 : await grant.Terminal.SendKeyAsync(request.Key!, request.ExpectedInputRevision.Value, ct).ConfigureAwait(false);

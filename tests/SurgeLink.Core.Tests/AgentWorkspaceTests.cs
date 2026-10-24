@@ -60,7 +60,9 @@ public sealed class AgentWorkspaceTests
         var client = new AgentClient(AgentEndpoint.ForProcess(Environment.ProcessId));
         var listed = await client.SendAsync(new("sessions.list"));
         var handle = Assert.Single(listed.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
-        var send = client.SendAsync(new("terminal.text", handle, Text: "pending", ExpectedInputRevision: 0, OperationId: "pending"));
+        var check = await client.SendAsync(new("sessions.check", handle));
+        var send = client.SendAsync(new("terminal.text", handle, Text: "pending", ExpectedInputRevision: 0, OperationId: "pending",
+            CheckToken: check.Data!.Value.GetProperty("checkToken").GetString()));
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -100,7 +102,11 @@ public sealed class AgentWorkspaceTests
         var listed = await client.SendAsync(new("sessions.list"));
         var handle = Assert.Single(listed.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
         workspace.SetView(tab.Id, SessionViewKind.Files);
-        var sent = await client.SendAsync(new("terminal.text", handle, Text: "echo hello", Submit: true, ExpectedInputRevision: 0, OperationId: "visible-command"));
+        var check = await client.SendAsync(new("sessions.check", handle));
+        Assert.Equal("host.test", check.Data!.Value.GetProperty("session").GetProperty("target").GetProperty("server").GetString());
+        Assert.Equal("alice", check.Data.Value.GetProperty("session").GetProperty("target").GetProperty("username").GetString());
+        var sent = await client.SendAsync(new("terminal.text", handle, Text: "echo hello", Submit: true, ExpectedInputRevision: 0, OperationId: "visible-command",
+            CheckToken: check.Data.Value.GetProperty("checkToken").GetString()));
         Assert.True(sent.Success);
         Assert.Equal(SessionViewKind.Terminal, tab.View);
         Assert.Equal("echo hello\r", Assert.Single(remote.Writes));

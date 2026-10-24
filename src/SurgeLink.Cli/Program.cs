@@ -11,10 +11,11 @@ if (args is ["--help"] or ["-h"] or [])
 
         surgelink-cli sessions list [--instance PID] [--json]
         surgelink-cli sessions info --session HANDLE [--instance PID] [--json]
+        surgelink-cli sessions check --session HANDLE [--instance PID] [--json]
         surgelink-cli terminal screen --session HANDLE [--instance PID] [--json]
         surgelink-cli terminal output --session HANDLE [--cursor N] [--instance PID] [--json]
-        surgelink-cli terminal send --session HANDLE --text TEXT [--submit] --revision N --operation-id ID [--instance PID] [--json]
-        surgelink-cli terminal key --session HANDLE --key Ctrl+C --revision N --operation-id ID [--instance PID] [--json]
+        surgelink-cli terminal send --session HANDLE --text TEXT [--submit] --revision N --operation-id ID --check-token TOKEN [--instance PID] [--json]
+        surgelink-cli terminal key --session HANDLE --key Ctrl+C --revision N --operation-id ID --check-token TOKEN [--instance PID] [--json]
         surgelink-cli sessions activate --session HANDLE [--view terminal|files|monitor] [--instance PID] [--json]
         surgelink-cli monitor snapshot --session HANDLE [--instance PID] [--json]
         surgelink-cli files list --session HANDLE --path REMOTE_PATH [--instance PID] [--json]
@@ -22,7 +23,9 @@ if (args is ["--help"] or ["-h"] or [])
 
         Open the robot button left of the four title-bar buttons, then allow reading or terminal control.
         Terminal input uses the visible PTY. Human typing takes over and revokes access.
-        Read inputRevision from terminal screen. Reuse the same operation ID and arguments when retrying.
+        Before EACH new input, run sessions check. Verify server, session ID, login user and current screen.
+        Pass its single-use checkToken and screen.inputRevision; checks expire after 2 minutes.
+        The login user does not prove the effective shell user after su/nested SSH. Reuse exact arguments for retries.
         input_sent acknowledges input only; it does not report command completion or an exit code.
         Results are always JSON. Exit codes: 0 success, 2 usage, 3 unavailable,
         4 operation declined/failed, 130 cancelled. Execution policy is managed by your Agent application.

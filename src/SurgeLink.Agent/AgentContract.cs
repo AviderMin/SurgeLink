@@ -7,7 +7,7 @@ namespace SurgeLink.Agent;
 /// <summary>Versioned operations shared by CLI and MCP adapters.</summary>
 public sealed record AgentRequest(string Method, string? Session = null, string? Path = null, int Version = 1,
     string? Text = null, bool Submit = false, string? Key = null, long? Cursor = null,
-    long? ExpectedInputRevision = null, string? OperationId = null, string? View = null);
+    long? ExpectedInputRevision = null, string? OperationId = null, string? View = null, string? CheckToken = null);
 
 public sealed record AgentResponse(bool Success, JsonElement? Data = null, string? ErrorCode = null, string? Message = null)
 {
@@ -16,7 +16,11 @@ public sealed record AgentResponse(bool Success, JsonElement? Data = null, strin
 }
 
 public sealed record AgentSessionInfo(string Handle, string Label, string Protocol, RemoteHostInfo Host,
-    bool Terminal, bool Files, bool Monitor, bool TerminalControl = false, bool IsActive = false);
+    bool Terminal, bool Files, bool Monitor, bool TerminalControl = false, bool IsActive = false,
+    AgentSessionTarget? Target = null);
+
+/// <summary>Connection identity captured when desktop access is granted; username is the configured login, not a probed effective shell user.</summary>
+public sealed record AgentSessionTarget(string SessionId, string Server, int Port, string Username);
 
 public enum AgentAccessMode { None, Observe, Control }
 

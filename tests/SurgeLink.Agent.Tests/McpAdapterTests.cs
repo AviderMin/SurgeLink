@@ -38,7 +38,9 @@ public sealed class McpAdapterTests
         });
         await using var client = await McpClient.CreateAsync(transport, cancellationToken: timeout.Token);
         var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
-        Assert.Equal(10, tools.Count);
+        Assert.Equal(11, tools.Count);
+        Assert.Contains(tools, t => t.Name == "check_sessions");
+        Assert.Equal("Check Sessions", McpAdapter.Tools.Single(t => t.Name == "check_sessions").Title);
         Assert.Contains(tools, t => t.Name == "read_terminal");
         var list = await client.CallToolAsync("list_sessions", cancellationToken: timeout.Token);
         Assert.NotEqual(true, list.IsError);
@@ -56,7 +58,7 @@ public sealed class McpAdapterTests
     {
         var terminal = new TerminalControlTests.TestAutomation();
         var gateway = new AgentGateway();
-        var handle = gateway.GrantSession("tab", "Test", new AgentGatewayTests.TestSession(), null, terminal, true);
+        var handle = TerminalControlTests.GrantControl(gateway, terminal);
         var instance = System.Security.Cryptography.RandomNumberGenerator.GetInt32(1000000, int.MaxValue);
         await using var desktop = new AgentPipeServer(AgentEndpoint.ForProcess(instance), gateway);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -65,10 +67,14 @@ public sealed class McpAdapterTests
             Name = "SurgeLink control test", Command = "dotnet",
             Arguments = [typeof(McpAdapter).Assembly.Location, "--instance", instance.ToString()],
         }), cancellationToken: timeout.Token);
+        var check = await client.CallToolAsync("check_sessions", new Dictionary<string, object?> { ["session"] = handle }, cancellationToken: timeout.Token);
+        Assert.NotEqual(true, check.IsError);
+        var checkToken = check.StructuredContent!.Value.GetProperty("data").GetProperty("checkToken").GetString();
         var arguments = new Dictionary<string, object?>
         {
             ["session"] = handle, ["text"] = "echo test", ["submit"] = true,
             ["expectedInputRevision"] = 0L, ["operationId"] = "mcp-write",
+            ["checkToken"] = checkToken,
         };
         var sent = await client.CallToolAsync("send_terminal_text", arguments, cancellationToken: timeout.Token);
         Assert.NotEqual(true, sent.IsError);
