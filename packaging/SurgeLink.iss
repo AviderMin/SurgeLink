@@ -16,6 +16,7 @@
 AppId={{CC35011B-9452-4AB8-8656-EE7A737FDC85}
 AppName=SurgeLink
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
 AppPublisher=AviderMin
 AppPublisherURL=https://github.com/AviderMin/SurgeLink
 DefaultDirName={localappdata}\Programs\SurgeLink

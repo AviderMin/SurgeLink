@@ -6,9 +6,23 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-[功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [文档](#开发文档)
+当前源码版本：**1.0.2.40**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+
+[更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
+
+## 版本更新
+
+**1.0.2.40** 集中修复远程文件操作与终端的边界问题：
+
+- 保留 POSIX 文件名中的反斜杠和首尾空格；复制支持同目录下仅大小写不同的文件，并保留文件与文件夹的普通权限。
+- 上传和编辑保存先在私有临时目录中完成，避免受限文件的内容在写入过程中因默认权限而暴露；修正 SFTP 权限转换及 SCP 特殊权限位解析。
+- SSH／SCP 回退读取改为可取消的流式传输，文本超限或用户取消时停止读取，无需先将整个远程文件下载到本地。
+- 滚动历史行数设置对新建、重连及已打开的终端生效；修复背景色擦除，限制异常组合字符造成的资源消耗。
+- 补齐 Inno 安装器的 Windows 文件版本元数据，与产品版本保持一致。
+
+本轮新增 51 项回归用例，1102 项测试全部通过，并完成本机 SFTP 与回退读取的协议联调。验证范围和复现对比见 [审查修复验证](docs/VERIFICATION-REVIEW-2026-10-25.md)。
 
 ## 功能
 
@@ -17,13 +31,14 @@ SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github
 | SSH 连接 | 密码、私钥及键盘交互认证；首次连接确认主机指纹，密钥变化时重新确认 |
 | Telnet 连接 | 默认端口 23，在终端内交互登录；支持选项协商、终端类型及窗口尺寸同步，连接不加密 |
 | 串口连接 | 本地 COM 端口，支持设备枚举与刷新、波特率、数据位、校验位、停止位、软／硬件流控及 DTR／RTS |
-| 终端 | 自研 VT100/xterm 模拟器，支持 UTF-8、中日韩宽字符、16／256／真彩色、滚动历史、文本选择与复制粘贴 |
+| 终端 | 自研 VT100/xterm 模拟器，支持 UTF-8、中日韩宽字符、16／256／真彩色、可配置的滚动历史、文本选择与复制粘贴 |
 | 远程文件 | SFTP 浏览与上传下载；服务器没有 SFTP 子系统时回退到 SSH 命令与 SCP |
 | 文件操作 | 新建文件与文件夹、编辑文本、重命名、删除、权限编辑；右键剪切、复制、粘贴及查看属性 |
 | 传输管理 | 会话内传输队列、进度与取消；切换到终端或监控视图后仍保留队列 |
 | 系统监控 | CPU、内存、交换空间、磁盘、网络和进程；支持 Linux 与 Windows OpenSSH 主机，具体指标取决于服务器能力 |
 | 会话管理 | 分组、筛选、多标签页，以及编辑、复制和删除保存的连接 |
 | 系统图标 | 连接后识别系统并保存图标信息，内置 Windows、macOS、常见 Linux 发行版和 FreeBSD 图标 |
+| Agent 与 CLI | 按会话授权读取或控制共享终端，提供 MCP stdio Host 与 CLI；人工输入可接管并撤销控制 |
 | 界面 | 简体中文／English／跟随系统，浅色、深色及高对比度主题 |
 | 离线演示 | 模拟终端、内存文件系统和合成监控指标，无需连接外部服务器 |
 
@@ -58,7 +73,7 @@ SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github
 ### 系统要求
 
 - Windows 10 21H2（内部版本 19044）或更新版本。
-- 提供 **x64**、**ARM64** 两种安装包，请按设备架构选择。
+- 支持构建 **x64**、**ARM64** 安装包，请按设备架构选择已发布的安装包。
 - 分发包包含 .NET 与 Windows App SDK 运行库，无需安装 .NET SDK。
 
 1.0.2.15 起主线的安装与应用最低版本统一为 19044；Windows 10 21H2 实机运行尚待验证，ARM64 也需对应设备验证。
@@ -128,13 +143,13 @@ dotnet test SurgeLink.slnx -c Release -p:Platform=x64
 
 ## 打包与 GitHub Actions
 
-本地生成包含运行库的安装包：
+本地生成包含运行库的安装包；EXE 打包需要 Inno Setup 6.3 或更新版本。脚本自动查找编译器，也可通过 `-IsccPath` 指定 `ISCC.exe`：
 
 ```powershell
-pwsh -NoProfile -File tools/package-exe.ps1 -Version 1.0.2.15 -Architecture x64
-pwsh -NoProfile -File tools/package-exe.ps1 -Version 1.0.2.15 -Architecture arm64
-pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.15 -Architecture x64
-pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.15 -Architecture arm64
+pwsh -NoProfile -File tools/package-exe.ps1 -Version 1.0.2.40 -Architecture x64
+pwsh -NoProfile -File tools/package-exe.ps1 -Version 1.0.2.40 -Architecture arm64
+pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.40 -Architecture x64
+pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.40 -Architecture arm64
 ```
 
 | 产物 | x64 输出目录 | ARM64 输出目录 |
@@ -142,9 +157,11 @@ pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.15 -Architecture arm
 | Inno EXE 安装包与 SHA256 | `artifacts/installer/x64/` | `artifacts/installer/arm64/` |
 | APPX 分发 ZIP | `artifacts/appx/` | `artifacts/appx/arm64/` |
 
-[Release 工作流](.github/workflows/release.yml) 支持手动运行或推送 `v1.0.2.15` 形式的数字版本标签。它复用 [Installer](.github/workflows/package-exe.yml) 和 [APPX](.github/workflows/package-appx.yml) 工作流，先运行测试，再分别构建两个架构。完整产物上传草稿后，核对或创建指向构建提交的 Tag，再公开 Release，提供 EXE、APPX ZIP 与 SHA256 校验清单。单独运行打包工作流只上传 Actions 产物，保留 14 天，不创建 Release。工作流不自动提交 Microsoft Store。
+例如，x64 Inno 安装包输出为 `artifacts/installer/x64/SurgeLink-Setup-1.0.2.40-x64.exe`，配套校验文件为同名的 `.exe.sha256`。
 
-打包使用临时生成的开发签名密钥，完成后删除临时 PFX；不需要向仓库提交私钥或配置签名 Secrets。ARM64 包在 x64 runner 上交叉编译，实际启动与功能仍需在 ARM64 设备验证。
+[Release 工作流](.github/workflows/release.yml) 支持手动运行或推送 `v1.0.2.40` 形式的数字版本标签。它复用 [Installer](.github/workflows/package-exe.yml) 和 [APPX](.github/workflows/package-appx.yml) 工作流，先运行测试，再分别构建两个架构。完整产物上传草稿后，核对或创建指向构建提交的 Tag，再公开 Release，提供 EXE、APPX ZIP 与 SHA256 校验清单。单独运行打包工作流只上传 Actions 产物，保留 14 天，不创建 Release。工作流不自动提交 Microsoft Store。
+
+APPX 打包使用临时生成的开发签名密钥，完成后删除临时 PFX；不需要向仓库提交私钥或配置签名 Secrets。Inno EXE 当前未签名。ARM64 包在 x64 runner 上交叉编译，实际启动与功能仍需在 ARM64 设备验证。
 
 ## 数据与隐私
 
@@ -169,6 +186,9 @@ src/
   SurgeLink.Protocols.Telnet/      Telnet 终端与协议协商
   SurgeLink.Protocols.Serial/      本地串口终端与连接参数
   SurgeLink.Protocols.Demo/        离线演示协议
+  SurgeLink.Agent/                 已授权连接的本地接入与共享终端控制
+  SurgeLink.Cli/                   surgelink-cli 命令行客户端
+  SurgeLink.AgentHost/             MCP stdio Host
 tests/                            单元测试与协议契约测试
 tools/                            构建、打包和开发辅助脚本
 packaging/                        APPX 清单与安装模板
@@ -189,18 +209,20 @@ UI 使用 C# 元素树与 Reactor hooks 描述，底层仍是原生 WinUI 控件
 
 提供 `surgelink-cli` 和独立的 MCP stdio Host，两者共用同一套接入与授权逻辑，不保存额外的 SSH 凭据。
 发行打包脚本将它们分别放入 `cli/` 和 `agent/`；开发构建与 MCP 客户端配置见 [接入文档](docs/AGENT-CLI.md)。
+每次新的终端输入前，Agent 必须先通过 Check Sessions 核对目标连接和当前屏幕，再使用返回的校验令牌与输入修订号发送输入；具体调用方式见接入文档。
 执行策略由外部 Agent 应用负责，授权后 SurgeLink 不逐条审批命令或文件读取。输入回执只表示发送结果，不表示命令已完成或成功。
 终端命令具有当前远端账户的权限；专用文件修改 API、逐客户端配对和独立 exec 退出码尚未提供。
 终端和文件内容可能包含敏感信息，外部 Agent 可能将读取结果发送给其模型服务商；界面隐私遮蔽不会替换接入返回内容。
 
 ## 开发文档
 
-- [Agent CLI 使用与接入契约](docs/AGENT-CLI.md)（只读 v1）
+- [Agent CLI 与 MCP 接入契约](docs/AGENT-CLI.md)（会话授权、读取与终端控制）
 - [外部 AI Agent 接入开发方案](docs/AI-AGENT-DEVELOPMENT.md)（设计评审与后续路线）
 - [架构与线程模型](docs/ARCHITECTURE.md)
 - [新增协议与契约测试](docs/ADDING-A-PROTOCOL.md)
 - [WinUI 3／Reactor 界面规范](docs/UI-GUIDELINES.md)
 - [开发验证说明](docs/VERIFICATION.md)
+- [1.0.2.40 审查修复与验证](docs/VERIFICATION-REVIEW-2026-10-25.md)
 - [打包与商店提交](packaging/README.md)
 
 欢迎通过 [Issues](https://github.com/AviderMin/SurgeLink/issues) 提交问题或功能建议。报告问题时请附上版本、系统架构、复现步骤和经过脱敏的诊断信息。
