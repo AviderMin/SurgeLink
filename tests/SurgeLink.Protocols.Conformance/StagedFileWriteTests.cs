@@ -6,6 +6,50 @@ namespace SurgeLink.Protocols.Conformance;
 
 public sealed class StagedFileWriteTests
 {
+    [Fact]
+    public async Task ADirectoryCreatedDuringUploadIsNotRemovedOrReplaced()
+    {
+        var fs = new DemoFileSystem();
+        await Assert.ThrowsAsync<IOException>(() => RemoteFileWrite.WriteAsync(fs, Destination, 3, null, true,
+            async (stream, token) =>
+            {
+                await stream.WriteAsync("new"u8.ToArray(), token);
+                await fs.DeleteAsync(Destination, false, token);
+                await fs.CreateDirectoryAsync(Destination, token);
+                await using var child = await fs.OpenWriteAsync(Destination + "/keep", 4, null, token);
+                await child.WriteAsync("keep"u8.ToArray(), token);
+            }, default));
+        Assert.Equal(RemoteEntryKind.Directory, (await fs.StatAsync(Destination, default)).Kind);
+        Assert.Equal("keep", await ReadAsync(fs, Destination + "/keep"));
+        Assert.DoesNotContain(await fs.ListAsync("/home/demo", default), entry => entry.Name.StartsWith(".surge-", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(RemoteEntryKind.SymbolicLink)]
+    [InlineData(RemoteEntryKind.Other)]
+    public async Task AChangedTargetTypeFailsBeforeCommit(RemoteEntryKind kind)
+    {
+        var fs = new ProtectedFileSystem();
+        var original = await ReadAsync(fs.Inner, Destination);
+        await Assert.ThrowsAsync<IOException>(() => RemoteFileWrite.WriteAsync(fs, Destination, 3, null, true,
+            async (stream, token) => { await stream.WriteAsync("new"u8.ToArray(), token); fs.TargetKind = kind; }, default));
+        Assert.Equal(original, await ReadAsync(fs.Inner, Destination));
+    }
+
+    [Theory]
+    [InlineData(0x9ED)]
+    [InlineData(0x5ED)]
+    [InlineData(0xDED)]
+    [InlineData(0x3ED)]
+    public async Task ContentReplacementDoesNotInheritPrivilegeBits(int mode)
+    {
+        var fs = new DemoFileSystem();
+        await fs.SetPermissionsAsync(Destination, mode, default);
+        await RemoteFileWrite.WriteAsync(fs, Destination, 3, null, true,
+            (stream, token) => stream.WriteAsync("new"u8.ToArray(), token).AsTask(), default);
+        Assert.Equal(mode & 0x1FF, (await fs.StatAsync(Destination, default)).UnixMode);
+    }
+
     private const string Destination = "/home/demo/demo.txt";
 
     [Fact]
@@ -102,11 +146,16 @@ public sealed class StagedFileWriteTests
         public DemoFileSystem Inner { get; } = new();
         public bool RejectProtection { get; init; }
         public bool PayloadOpened { get; private set; }
+        public RemoteEntryKind? TargetKind { get; set; }
         public bool SupportsPermissions => true;
         public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => Inner.GetHomeDirectoryAsync(ct);
         public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => Inner.GetCurrentDirectoryAsync(ct);
         public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken ct) => Inner.ListAsync(path, ct);
-        public Task<RemoteFileEntry> StatAsync(string path, CancellationToken ct) => Inner.StatAsync(path, ct);
+        public async Task<RemoteFileEntry> StatAsync(string path, CancellationToken ct)
+        {
+            var entry = await Inner.StatAsync(path, ct);
+            return path == Destination && TargetKind is { } kind ? entry with { Kind = kind } : entry;
+        }
         public Task<Stream> OpenReadAsync(string path, CancellationToken ct) => Inner.OpenReadAsync(path, ct);
         public async Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct)
         {

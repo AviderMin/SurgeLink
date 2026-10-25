@@ -6,6 +6,11 @@ public static class ZhTerminal
     /// <summary>Key -> 中文 mapping. Keep keys prefixed with <c>terminal.</c>.</summary>
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["terminal.reopenFailed"] = "无法重新打开 Shell",
+        ["terminal.shellExited"] = "远程 Shell 已退出，SSH 连接仍在线。",
+        ["terminal.connectionClosed"] = "终端已关闭。",
+        ["terminal.reopen"] = "重新打开 Shell",
+        ["shell.status.shellExited"] = "已连接 · Shell 已退出",
         ["terminal.copy"] = "复制",
         ["terminal.paste"] = "粘贴",
         ["terminal.selectAll"] = "全选",

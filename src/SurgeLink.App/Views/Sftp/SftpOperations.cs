@@ -83,8 +83,11 @@ internal static class SftpOperations
     }
 
     /// <summary>Builds the download job for a remote entry into a local folder.</summary>
-    public static TransferItem CreateDownload(RemoteFileEntry entry, string localFolder) => new()
+    public static TransferItem CreateDownload(RemoteFileEntry entry, string localFolder)
     {
+        if (!entry.IsDirectory) { RemoteFileAccess.RequireRegularFile(entry); }
+        return new()
+        {
         Id = Guid.NewGuid().ToString("n"),
         Direction = TransferDirection.Download,
         Name = entry.IsDirectory ? entry.Name + ".zip" : entry.Name,
@@ -92,5 +95,6 @@ internal static class SftpOperations
         LocalPath = LocalDownloadPath.Resolve(localFolder, entry.IsDirectory ? entry.Name + ".zip" : entry.Name),
         IsDirectory = entry.IsDirectory,
         TotalBytes = entry.Size,
-    };
+        };
+    }
 }

@@ -55,4 +55,19 @@ internal sealed class WindowStoragePicker(Window owner)
             throw new InvalidOperationException("Storage pickers must be opened on their owning window's UI thread.");
         }
     }
+
+    public async Task<StorageFile?> PickSaveFileAsync(string fileTypeLabel)
+    {
+        EnsureUiThread();
+        if (_isPicking) { return null; }
+        _isPicking = true;
+        try
+        {
+            var picker = new FileSavePicker { SuggestedFileName = "SurgeLink-copy", DefaultFileExtension = ".txt" };
+            picker.FileTypeChoices.Add(fileTypeLabel, new List<string> { ".txt" });
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(owner));
+            return await picker.PickSaveFileAsync();
+        }
+        finally { _isPicking = false; }
+    }
 }

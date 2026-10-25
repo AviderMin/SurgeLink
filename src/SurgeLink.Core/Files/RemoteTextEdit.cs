@@ -15,6 +15,7 @@ public static class RemoteTextEdit
         if (bytes.Length > maximumBytes) throw new IOException("This file exceeds the editor size limit.");
         async Task ValidateAsync(CancellationToken token)
         {
+            await RemoteFileAccess.RequireRegularFileAsync(fileSystem, path, token).ConfigureAwait(false);
             await using var input = await fileSystem.OpenReadAsync(path, token).ConfigureAwait(false);
             var current = await BoundedTextFile.ReadDocumentAsync(input, maximumBytes, token).ConfigureAwait(false);
             if (!string.Equals(current.Sha256, baseline.Sha256, StringComparison.Ordinal)) throw new RemoteFileConflictException();

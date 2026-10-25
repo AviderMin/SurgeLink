@@ -11,7 +11,8 @@ using static Microsoft.UI.Reactor.Factories;
 namespace SurgeLink.App.Views.Terminal;
 
 /// <summary>Props for <see cref="TerminalView"/>.</summary>
-internal sealed record TerminalViewProps(TerminalBridge? Bridge);
+internal sealed record TerminalViewProps(TerminalBridge? Bridge, bool CanReopen = false, Action? Reopen = null,
+    bool Reopening = false, bool Connected = true);
 
 /// <summary>
 /// Reactor host for one session's <see cref="TerminalSurface"/>.
@@ -42,10 +43,19 @@ internal sealed class TerminalView : Component<TerminalViewProps>
 
         // Rendering happens once per mount: the surface repaints itself from
         // TerminalBridge.Invalidated, so terminal output never re-renders Reactor.
-        return new XamlHostElement(() => new TerminalSurface(bridge, settings, logger), UpdateSurface)
+        Element surface = new XamlHostElement(() => new TerminalSurface(bridge, settings, logger), UpdateSurface)
         {
             TypeKey = "TerminalSurface:" + bridge.GetHashCode(),
         };
+        return Grid(columns: [GridSize.Star()], rows: [GridSize.Auto, GridSize.Star()],
+            bridge.IsClosed ? HStack(AppTheme.SpacingM,
+                Body(Props.Connected ? Str.T("terminal.shellExited", "The shell exited. The connection is still online.")
+                    : Str.T("terminal.connectionClosed", "The connection is closed. Reconnect to open a terminal.")),
+                Props.CanReopen ? Button(Str.T("terminal.reopen", "Reopen shell"), Props.Reopen)
+                    .AutomationName(Str.T("terminal.reopen", "Reopen shell"))
+                    .IsEnabled(!Props.Reopening).AutomationId("ReopenShellButton") : null)
+                .Padding(AppTheme.SpacingM).Grid(row: 0) : null,
+            surface.Grid(row: 1));
     }
 
     private static void UpdateSurface(FrameworkElement element)

@@ -16,7 +16,8 @@ using static Microsoft.UI.Reactor.Factories;
 namespace SurgeLink.App.Shell;
 
 /// <summary>Props for <see cref="SessionWorkspaceView"/>; a new record per state change drives re-render.</summary>
-internal sealed record SessionViewProps(WorkspaceTab Tab, ConnectionState State, SessionViewKind View, string? Message);
+internal sealed record SessionViewProps(WorkspaceTab Tab, ConnectionState State, SessionViewKind View, string? Message,
+    bool ReopeningTerminal, TerminalBridge? Terminal);
 
 /// <summary>
 /// One session tab: a capability switcher (Terminal / Files / Monitor) plus the
@@ -29,7 +30,7 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
 
     /// <summary>Snapshots the tab into immutable props.</summary>
     public static SessionViewProps PropsFor(WorkspaceTab tab) =>
-        new(tab, tab.State, tab.View, tab.Message);
+        new(tab, tab.State, tab.View, tab.Message, tab.IsReopeningTerminal, tab.Terminal);
 
     public override Element Render()
     {
@@ -38,6 +39,14 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
         var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
         var props = Props;
         var tab = props.Tab;
+        async Task ReopenShellAsync()
+        {
+            try { await services.Workspace.ReopenTerminalAsync(tab.Id); }
+            catch (Exception exception)
+            {
+                await services.Interaction.ShowErrorAsync(Str.T("terminal.reopenFailed", "Could not reopen the shell"), exception.Message);
+            }
+        }
         var capabilities = tab.Session.Protocol.Capabilities;
         var views = new List<SessionViewKind>(3);
         var items = new List<SelectorBarItemData>(3);
@@ -104,7 +113,9 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
             rows: [GridSize.Auto, GridSize.Star()],
             header.Grid(row: 0),
             terminalVisited.Current
-                ? Border(Component<TerminalView, TerminalViewProps>(new TerminalViewProps(tab.Terminal)))
+                ? Border(Component<TerminalView, TerminalViewProps>(new TerminalViewProps(props.Terminal,
+                    props.State == ConnectionState.Connected && tab.Session.CanReopenTerminal,
+                    () => _ = ReopenShellAsync(), props.ReopeningTerminal, props.State == ConnectionState.Connected)))
                     .IsVisible(props.View == SessionViewKind.Terminal)
                     .Grid(row: 1).WithKey("terminal-view")
                 : null,
@@ -123,7 +134,7 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
                     services.Settings,
                     tab.Transfers,
                     tab.FileBrowserPath,
-                    path => services.Workspace.SetFileBrowserPath(tab.Id, path), tab.Session)))
+                    path => services.Workspace.SetFileBrowserPath(tab.Id, path), tab.Session, props.State)))
                     .IsVisible(props.View == SessionViewKind.Files)
                     .Grid(row: 1).WithKey("files-view")
                 : null);

@@ -208,7 +208,9 @@ internal sealed class SshConnectionFactory
                 !item.IsEchoed,
                 i,
                 args.Prompts.Count);
-            answers[i] = prompt is null ? null : AskPrompt(prompt, request, cancellationToken);
+            if (prompt is null)
+                throw new ProtocolException("The server requested an additional authentication answer, but no prompt is available.", ProtocolFailureKind.Authentication);
+            answers[i] = AskPrompt(prompt, request, cancellationToken);
         }
 
         for (var i = 0; i < count; i++)
@@ -238,17 +240,19 @@ internal sealed class SshConnectionFactory
 
         try
         {
-            return promptTask.WaitAsync(cancellationToken).GetAwaiter().GetResult();
+            return promptTask.WaitAsync(cancellationToken).GetAwaiter().GetResult()
+                ?? throw new ProtocolException("Interactive authentication was cancelled.", ProtocolFailureKind.Cancelled);
         }
         catch (OperationCanceledException)
         {
             _logger.LogDebug("Keyboard interactive prompt {Question} was cancelled.", request.Question);
-            return null;
+            throw;
         }
+        catch (ProtocolException) { throw; }
         catch (Exception exception)
         {
             _logger.LogWarning(exception, "Keyboard interactive prompt {Question} failed.", request.Question);
-            return null;
+            throw new ProtocolException("The interactive authentication prompt failed.", ProtocolFailureKind.Authentication, exception);
         }
     }
 

@@ -29,6 +29,10 @@ internal sealed class FakeProtocolSession : IProtocolSession
 
     /// <inheritdoc />
     public IRemoteTerminal? Terminal { get; set; }
+    public Func<CancellationToken, Task<IRemoteTerminal>>? TerminalFactory { get; set; }
+    public bool CanReopenTerminal => TerminalFactory is not null;
+    public async Task<IRemoteTerminal> ReopenTerminalAsync(CancellationToken cancellationToken) =>
+        Terminal = await (TerminalFactory ?? throw new NotSupportedException())(cancellationToken);
 
     /// <inheritdoc />
     public IRemoteFileSystem? FileSystem => null;
@@ -68,8 +72,11 @@ internal sealed class FakeProtocolSession : IProtocolSession
     }
 
     /// <summary>Raises <see cref="StateChanged"/> to exercise manager subscriptions.</summary>
-    public void RaiseStateChanged(ConnectionState oldState, ConnectionState newState, string? message = null) =>
+    public void RaiseStateChanged(ConnectionState oldState, ConnectionState newState, string? message = null)
+    {
+        State = newState;
         StateChanged?.Invoke(this, new SessionStateChangedEventArgs(oldState, newState, message));
+    }
 
     /// <summary>Raises <see cref="Faulted"/>.</summary>
     public void RaiseFaulted(string message) => Faulted?.Invoke(this, message);

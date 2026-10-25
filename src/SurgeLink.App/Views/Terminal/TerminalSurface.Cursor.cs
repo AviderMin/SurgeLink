@@ -26,6 +26,7 @@ internal sealed partial class TerminalSurface
         }
 
         bool visible = modes.CursorVisible
+            && !_bridge.IsClosed
             && cursor.Visible
             && _hasFocus
             && cursor.Row >= 0 && cursor.Row < _paintedRowCount
@@ -38,7 +39,7 @@ internal sealed partial class TerminalSurface
         }
 
         _cursorLayer.Visibility = Visibility.Visible;
-        _cursorLayer.Opacity = _blinkOn ? 1 : 0;
+        _cursorLayer.Opacity = !modes.CursorBlink || _blinkOn ? 1 : 0;
 
         double left = cursor.Column * metrics.CellWidth;
         double top = cursor.Row * metrics.CellHeight;

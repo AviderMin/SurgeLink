@@ -26,6 +26,13 @@ public interface IProtocolSession : IAsyncDisposable
     /// <summary>Interactive terminal, when the protocol supports shells.</summary>
     IRemoteTerminal? Terminal { get; }
 
+    /// <summary>Whether an exited shell can be replaced on this live transport.</summary>
+    bool CanReopenTerminal => false;
+
+    /// <summary>Creates an unstarted replacement shell without reconnecting other capabilities.</summary>
+    Task<IRemoteTerminal> ReopenTerminalAsync(CancellationToken cancellationToken) =>
+        Task.FromException<IRemoteTerminal>(new NotSupportedException("This protocol cannot reopen a shell."));
+
     /// <summary>Remote file system browser, when the protocol supports files.</summary>
     IRemoteFileSystem? FileSystem { get; }
 

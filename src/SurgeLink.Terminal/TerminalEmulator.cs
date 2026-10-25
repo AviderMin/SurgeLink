@@ -871,8 +871,11 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             case 2004:
                 SetModes(_modes with { BracketedPaste = enable });
                 break;
+            case 1006:
+                SetModes(_modes with { SgrMouseEncoding = enable });
+                break;
             default:
-                // ?1006 (SGR mouse encoding), ?1004 focus reporting and the rest
+                // ?1004 focus reporting and the rest
                 // are accepted without tracking.
                 break;
         }
@@ -914,7 +917,13 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
 
         _mouseModeMask = mask;
-        SetModes(_modes with { MouseTracking = mask != 0 });
+        SetModes(_modes with
+        {
+            MouseTracking = mask != 0,
+            MouseTrackingMode = (mask & 4) != 0 ? TerminalMouseTrackingMode.Any
+                : (mask & 2) != 0 ? TerminalMouseTrackingMode.Drag
+                : mask != 0 ? TerminalMouseTrackingMode.Buttons : TerminalMouseTrackingMode.None,
+        });
     }
 
     private void ToggleAlternateScreen(bool enter, bool clearOnEntry, bool clearOnExit, bool saveCursor)
@@ -1057,6 +1066,8 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             CursorBlink = false,
             CursorShape = TerminalCursorShape.Block,
             MouseTracking = false,
+            MouseTrackingMode = TerminalMouseTrackingMode.None,
+            SgrMouseEncoding = false,
             NewLineMode = false,
             BracketedPaste = false,
         });

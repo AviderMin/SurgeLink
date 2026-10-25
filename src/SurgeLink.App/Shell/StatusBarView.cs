@@ -28,6 +28,9 @@ internal static class StatusBarView
         var snapshot = props.Snapshot;
         var active = snapshot.ActiveTab;
         var state = active?.State ?? ConnectionState.Disconnected;
+        var statusText = active is { State: ConnectionState.Connected, Terminal: { IsClosed: true } }
+            ? Str.T("shell.status.shellExited", "Connected · Shell exited")
+            : active is null ? Str.T("shell.status.ready", "Ready") : AppTheme.StatusText(state);
 
         var status = HStack(AppTheme.SpacingS,
             TextBlock(active is null ? "\uE8C8" : AppTheme.StatusGlyph(state))
@@ -35,7 +38,7 @@ internal static class StatusBarView
                 .Foreground(active is null ? Theme.SecondaryText : AppTheme.StatusBrush(state))
                 .VAlign(VerticalAlignment.Center)
                 .AutomationName(active is null ? Str.T("shell.status.noSession", "No session") : AppTheme.StatusText(state)),
-            Caption(active is null ? Str.T("shell.status.ready", "Ready") : AppTheme.StatusText(state))
+            Caption(statusText)
                 .VAlign(VerticalAlignment.Center)
                 .AutomationId("StatusConnectionState"))
             .VAlign(VerticalAlignment.Center);

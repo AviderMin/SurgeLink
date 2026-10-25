@@ -26,9 +26,10 @@ public sealed class SshAuthenticationInteractionTests
     public void CancelledMfaDoesNotReceiveTheSavedPassword()
     {
         var prompts = new[] { new AuthenticationPrompt(0, false, "One-time password:") };
-        CreateFactory().AnswerPrompts(new AuthenticationPromptEventArgs("alice", "", "", prompts),
-            (_, _) => Task.FromResult<string?>(null), "saved-password", CancellationToken.None);
-        Assert.Equal(string.Empty, prompts[0].Response);
+        var error = Assert.Throws<ProtocolException>(() => CreateFactory().AnswerPrompts(new AuthenticationPromptEventArgs("alice", "", "", prompts),
+            (_, _) => Task.FromResult<string?>(null), "saved-password", CancellationToken.None));
+        Assert.Equal(ProtocolFailureKind.Cancelled, error.Kind);
+        Assert.Null(prompts[0].Response);
     }
 
     [Fact]

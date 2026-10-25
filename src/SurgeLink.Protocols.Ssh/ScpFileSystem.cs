@@ -117,6 +117,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 try
                 {
                     token.ThrowIfCancellationRequested();
+                    await RemoteFileAccess.RequireRegularFileAsync(this, fullPath, token).ConfigureAwait(false);
                     await runner.CopyToAsync("cat -- " + Quote(fullPath), target, token).ConfigureAwait(false);
                     token.ThrowIfCancellationRequested();
                 }
@@ -209,6 +210,8 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         // -T prevents a directory or symlink-to-directory being treated as a folder
         // to move/link into. Missing server support must fail rather than overwrite.
+        if (overwrite)
+            await RemoteFileAccess.RequireRegularFileAsync(this, destination, cancellationToken).ConfigureAwait(false);
         var command = overwrite
             ? "mv -fT -- " + Quote(source) + " " + Quote(destination)
             : "ln -T -- " + Quote(source) + " " + Quote(destination) + " && rm -f -- " + Quote(source);

@@ -40,6 +40,7 @@ public sealed class SshSession : IProtocolSession
     private OsAwareMonitor? _monitor;
     private int _remoteOperatingSystem = (int)RemoteOperatingSystem.Unknown;
     private int _disposed;
+    private int _reopeningTerminal;
     private TaskCompletionSource? _disposeCompletion;
 
     /// <summary>Creates a session over an already connected client.</summary>
@@ -107,6 +108,36 @@ public sealed class SshSession : IProtocolSession
                 return _terminal ??= new SshTerminal(_client, _options, _logger);
             }
         }
+    }
+
+    public bool CanReopenTerminal => !IsDisposed && State == ConnectionState.Connected;
+
+    public async Task<IRemoteTerminal> ReopenTerminalAsync(CancellationToken cancellationToken)
+    {
+        if (Interlocked.CompareExchange(ref _reopeningTerminal, 1, 0) != 0)
+            throw new InvalidOperationException("A shell is already being reopened.");
+        try
+        {
+            SshTerminal? previous;
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(IsDisposed, this);
+                if (!_client.IsConnected || _state != ConnectionState.Connected)
+                    throw new InvalidOperationException("The SSH transport is not connected.");
+                previous = _terminal;
+                if (previous?.IsOpen == true) { throw new InvalidOperationException("The current shell is still open."); }
+            }
+            if (previous is not null) { await previous.DisposeAsync().ConfigureAwait(false); }
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(IsDisposed, this);
+                if (!_client.IsConnected || _state != ConnectionState.Connected)
+                    throw new InvalidOperationException("The SSH transport is not connected.");
+                return _terminal = new SshTerminal(_client, _options, _logger);
+            }
+        }
+        finally { Volatile.Write(ref _reopeningTerminal, 0); }
     }
 
     /// <inheritdoc />

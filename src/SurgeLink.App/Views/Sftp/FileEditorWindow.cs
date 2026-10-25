@@ -10,6 +10,8 @@ using SurgeLink.Core.Files;
 using SurgeLink.Core.Sessions;
 using SurgeLink.App.Shell;
 using static Microsoft.UI.Reactor.Factories;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
 
 namespace SurgeLink.App.Views.Sftp;
 
@@ -38,11 +40,14 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var (text, setText) = UseState(string.Empty, threadSafe: true);
         var (loading, setLoading) = UseState(true, threadSafe: true);
         var (saving, setSaving) = UseState(false, threadSafe: true);
+        var (connected, setConnected) = UseState(props.Session is null || props.Session.State == ConnectionState.Connected, threadSafe: true);
+        var (exporting, setExporting) = UseState(false);
         var (savedText, setSavedText) = UseState(string.Empty, threadSafe: true);
         var dirty = !string.Equals(text, savedText, StringComparison.Ordinal);
         var (loadFailed, setLoadFailed) = UseState(false, threadSafe: true);
         var (confirmation, setConfirmation) = UseState(0);
         var window = UseWindow();
+        var pickers = UseMemo(() => window is null ? null : new WindowStoragePicker(window.NativeWindow), window!);
         var allowClose = UseRef(false);
         var operationBusy = UseRef(false);
         var document = UseRef<TextFileDocument?>(null);
@@ -152,13 +157,15 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                     if (args.NewState is ConnectionState.Disconnected or ConnectionState.Disconnecting or ConnectionState.Faulted)
                     {
                         lifetime.Cancel();
+                        setConnected(false);
                         setLoading(false);
                         setSaving(false);
                         setError(Str.T("sftp.editor.sessionClosed", "The session has closed. Keep a copy of any unsaved text before closing this window."));
                     }
                 }
                 if (props.Session is { } session) { session.StateChanged += OnSessionStateChanged; }
-                _ = LoadAsync(lifetime.Token);
+                if (props.Session is null || props.Session.State == ConnectionState.Connected) { _ = LoadAsync(lifetime.Token); }
+                else { setConnected(false); setLoading(false); setError(Str.T("sftp.editor.sessionClosed", "The session has closed. Keep a copy of any unsaved text before closing this window.")); }
                 return () =>
                 {
                     if (props.Session is { } activeSession) { activeSession.StateChanged -= OnSessionStateChanged; }
@@ -176,6 +183,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             setStatus(null);
             try
             {
+                RemoteFileAccess.RequireRegularFile(target);
+                await RemoteFileAccess.RequireRegularFileAsync(props.FileSystem, target.FullPath, cancellationToken).ConfigureAwait(true);
                 if (target.Size > MaximumEditorBytes)
                 {
                     throw new InvalidOperationException(
@@ -208,7 +217,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 
         async Task SaveAsync()
         {
-            if (loading || operationBusy.Current || loadFailed || lifetime.IsCancellationRequested) { return; }
+            if (!connected || loading || operationBusy.Current || loadFailed || document.Current?.Sha256 is null || lifetime.IsCancellationRequested) { return; }
             operationBusy.Current = true;
             setSaving(true);
             setError(null);
@@ -248,9 +257,52 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 
         void Reload()
         {
-            if (loading || operationBusy.Current || lifetime.IsCancellationRequested) { return; }
+            if (loading || operationBusy.Current || (!connected && document.Current is null)) { return; }
             if (dirty) { setConfirmation(2); }
-            else { _ = LoadAsync(lifetime.Token); }
+            else if (!connected) { RestoreLoadedCopy(); }
+            else if (!lifetime.IsCancellationRequested) { _ = LoadAsync(lifetime.Token); }
+        }
+
+        void RestoreLoadedCopy()
+        {
+            if (document.Current is not { } baseline) { return; }
+            setText(baseline.Text);
+            setSavedText(baseline.Text);
+            setLoadFailed(false);
+            setStatus(Str.T("sftp.editor.restored", "Restored the last loaded copy."));
+            setError(null);
+        }
+
+        void CopyAll()
+        {
+            try
+            {
+                var package = new DataPackage();
+                package.SetText(text);
+                Clipboard.SetContent(package);
+                setError(null);
+                setStatus(Str.T("sftp.editor.copied", "Copied all text."));
+            }
+            catch (Exception exception) { setError(exception.Message); }
+        }
+
+        async Task ExportAsync()
+        {
+            if (loading || operationBusy.Current || pickers is null) { return; }
+            operationBusy.Current = true;
+            setExporting(true);
+            var snapshot = text;
+            var encoding = document.Current?.Encoding ?? new System.Text.UTF8Encoding(false, true);
+            try
+            {
+                var file = await pickers.PickSaveFileAsync(Str.T("sftp.editor.textFiles", "Text files")).ConfigureAwait(true);
+                if (file is null) { return; }
+                await FileIO.WriteBytesAsync(file, [.. encoding.GetPreamble(), .. encoding.GetBytes(snapshot)]);
+                setError(null);
+                setStatus(Str.T("sftp.editor.exported", "Saved a local copy."));
+            }
+            catch (Exception exception) { setError(exception.Message); }
+            finally { operationBusy.Current = false; setExporting(false); }
         }
 
         Element? confirmationDialog = confirmation == 0 ? null : AppDialog.Render(
@@ -263,6 +315,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 setConfirmation(0);
                 if (result != ContentDialogResult.Primary) { return; }
                 if (action == 1) { allowClose.Current = true; window?.Close(); }
+                else if (!connected) { RestoreLoadedCopy(); }
                 else if (!lifetime.IsCancellationRequested) { _ = LoadAsync(lifetime.Token); }
             }, Str.T("sftp.editor.discard", "Discard changes"), Str.T("common.cancel", "Cancel"),
             ThemeController.ToElementTheme(settings.Theme));
@@ -295,6 +348,12 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 .Grid(row: 0, column: 0),
             HStack(
                     AppTheme.SpacingS,
+                    Button(Str.T("sftp.editor.copyAll", "Copy all"), CopyAll).SubtleButton()
+                        .AutomationName(Str.T("sftp.editor.copyAll", "Copy all"))
+                        .IsEnabled(!loading && text.Length > 0),
+                    Button(Str.T("sftp.editor.export", "Save local copy"), () => _ = ExportAsync()).SubtleButton()
+                        .AutomationName(Str.T("sftp.editor.export", "Save local copy"))
+                        .IsEnabled(!loading && !saving && !exporting),
                     Button(Icon(FontIcon("\uE721", fontSize: 16)), () => OpenSearch(false))
                         .AutomationName(Str.T("sftp.editor.find.title", "Find (Ctrl+F)"))
                         .SubtleButton().ToolTip(Str.T("sftp.editor.find.title", "Find (Ctrl+F)")),
@@ -302,13 +361,13 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                         .AutomationName(Str.T("sftp.editor.replace.title", "Replace")).SubtleButton(),
                     ToggleButton(Str.T("sftp.editor.wordWrap", "Word wrap"), wrap, setWrap)
                         .AutomationName(Str.T("sftp.editor.wordWrap", "Word wrap")),
-                    Button(Str.T("sftp.editor.reload", "Reload"), Reload)
+                    Button(connected ? Str.T("sftp.editor.reload", "Reload") : Str.T("sftp.editor.restore", "Restore loaded copy"), Reload)
                         .SubtleButton()
-                        .IsEnabled(!loading && !saving && !lifetime.IsCancellationRequested)
+                        .IsEnabled(!loading && !saving && !exporting && (connected || document.Current is not null))
                         .AutomationName(Str.T("sftp.editor.reload", "Reload")),
                     Button(Str.T("sftp.editor.save", "Save"), () => _ = SaveAsync())
                         .AccentButton()
-                        .IsEnabled(!loading && !saving && !loadFailed && !lifetime.IsCancellationRequested)
+                        .IsEnabled(connected && !loading && !saving && !exporting && !loadFailed && document.Current?.Sha256 is not null && !lifetime.IsCancellationRequested)
                         .AutomationName(Str.T("sftp.editor.save", "Save")))
                 .VAlign(VerticalAlignment.Center)
                 .Grid(row: 0, column: 1))
@@ -470,7 +529,10 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             header.Grid(row: 1),
             searchBar?.Grid(row: 2),
             body.WithKey("editor-body").Grid(row: 3),
-            error is not null && !loadFailed ? InfoBar(Str.T("sftp.editor.saveFailed", "Could not save the file"), error)
+            !connected ? InfoBar(Str.T("sftp.offline.title", "Connection closed"),
+                Str.T("sftp.editor.sessionClosed", "The session has closed. Keep a copy of any unsaved text before closing this window."))
+                .Severity(InfoBarSeverity.Warning).IsClosable(false).Grid(row: 4)
+            : error is not null && !loadFailed ? InfoBar(Str.T("sftp.editor.saveFailed", "Could not save the file"), error)
                 .Severity(InfoBarSeverity.Error).IsClosable(false).Grid(row: 4) : null,
             footer.Grid(row: 5),
             confirmationDialog?.Grid(row: 0, rowSpan: 6))

@@ -19,7 +19,8 @@ internal sealed record SftpViewProps(
     FileTransferQueue Transfers,
     string? InitialPath = null,
     Action<string>? PathChanged = null,
-    IProtocolSession? Session = null);
+    IProtocolSession? Session = null,
+    ConnectionState State = ConnectionState.Connected);
 
 /// <summary>Columns the file list can be sorted by.</summary>
 internal enum SftpSortColumn

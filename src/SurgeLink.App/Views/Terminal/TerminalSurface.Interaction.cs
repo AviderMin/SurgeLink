@@ -23,16 +23,42 @@ internal sealed partial class TerminalSurface
     private const double DefaultFontSize = 13;
 
     private bool HasSelection => TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret).HasSelection;
+    private TerminalMouseButton _remoteMouseButton = TerminalMouseButton.None;
+    private (int Row, int Column, TerminalMouseButton Button)? _lastMouseMove;
 
-    private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
+    private bool ReportMouse(Point point, TerminalMouseButton button, TerminalMouseAction action, bool completePress = false)
+    {
+        var cell = CellFromPoint(point);
+        return _bridge.SendMouse(cell.Column, cell.Row, button, action,
+            IsKeyDown(VirtualKey.Control), IsKeyDown(VirtualKey.Menu), !completePress && IsKeyDown(VirtualKey.Shift));
+    }
+
+    private bool IsScrollBarEvent(PointerRoutedEventArgs e)
     {
         for (var source = e.OriginalSource as DependencyObject; source is not null && source != this;
              source = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(source))
         {
-            if (source is ScrollBar) { return; }
+            if (source is ScrollBar) { return true; }
         }
+        return false;
+    }
+
+    private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (IsScrollBarEvent(e)) { return; }
         Focus(FocusState.Pointer);
         var point = e.GetCurrentPoint(this);
+
+        var button = point.Properties.IsLeftButtonPressed ? TerminalMouseButton.Left
+            : point.Properties.IsMiddleButtonPressed ? TerminalMouseButton.Middle : TerminalMouseButton.Right;
+        if (ReportMouse(point.Position, button, TerminalMouseAction.Press))
+        {
+            _remoteMouseButton = button;
+            _lastMouseMove = null;
+            CapturePointer(e.Pointer);
+            e.Handled = true;
+            return;
+        }
 
         if (point.Properties.IsRightButtonPressed)
         {
@@ -66,6 +92,22 @@ internal sealed partial class TerminalSurface
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
     {
+        if (IsScrollBarEvent(e)) { return; }
+        if (!_selecting)
+        {
+            var point = e.GetCurrentPoint(this);
+            var button = point.Properties.IsLeftButtonPressed ? TerminalMouseButton.Left
+                : point.Properties.IsMiddleButtonPressed ? TerminalMouseButton.Middle
+                : point.Properties.IsRightButtonPressed ? TerminalMouseButton.Right : TerminalMouseButton.None;
+            var mouseCell = CellFromPoint(point.Position);
+            var move = (mouseCell.Row, mouseCell.Column, button);
+            if (_lastMouseMove != move && ReportMouse(point.Position, button, TerminalMouseAction.Move))
+            {
+                _lastMouseMove = move;
+                e.Handled = true;
+                return;
+            }
+        }
         if (!_selecting)
         {
             return;
@@ -83,12 +125,23 @@ internal sealed partial class TerminalSurface
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        if (_remoteMouseButton != TerminalMouseButton.None)
+        {
+            ReportMouse(e.GetCurrentPoint(this).Position, _remoteMouseButton, TerminalMouseAction.Release, completePress: true);
+            _remoteMouseButton = TerminalMouseButton.None;
+            _lastMouseMove = null;
+            ReleasePointerCapture(e.Pointer);
+            e.Handled = true;
+            return;
+        }
         if (!_selecting)
         {
             return;
         }
 
         _selecting = false;
+        _remoteMouseButton = TerminalMouseButton.None;
+        _lastMouseMove = null;
         ReleasePointerCapture(e.Pointer);
         e.Handled = true;
     }
@@ -96,20 +149,37 @@ internal sealed partial class TerminalSurface
     private void OnPointerCaptureLost(object sender, PointerRoutedEventArgs e)
     {
         _selecting = false;
+        _remoteMouseButton = TerminalMouseButton.None;
+        _lastMouseMove = null;
     }
 
     private void OnDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
+        lock (_bridge.Emulator.SyncRoot)
+        {
+            if (_bridge.Emulator.Modes.MouseTracking && !IsKeyDown(VirtualKey.Shift)) { e.Handled = true; return; }
+        }
         SelectWordAt(CellFromPoint(e.GetPosition(this)));
         e.Handled = true;
     }
 
     private void OnPointerWheelChanged(object sender, PointerRoutedEventArgs e)
     {
+        if (IsScrollBarEvent(e)) { return; }
         var point = e.GetCurrentPoint(this);
         int delta = point.Properties.MouseWheelDelta;
         if (delta == 0)
         {
+            return;
+        }
+
+        var wheel = point.Properties.IsHorizontalMouseWheel
+            ? (delta > 0 ? TerminalMouseButton.WheelRight : TerminalMouseButton.WheelLeft)
+            : (delta > 0 ? TerminalMouseButton.WheelUp : TerminalMouseButton.WheelDown);
+        if (ReportMouse(point.Position, wheel, TerminalMouseAction.Wheel))
+        {
+            for (var notch = 1; notch < Math.Abs(delta / 120); notch++) { ReportMouse(point.Position, wheel, TerminalMouseAction.Wheel); }
+            e.Handled = true;
             return;
         }
 

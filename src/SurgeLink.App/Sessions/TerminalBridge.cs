@@ -104,6 +104,18 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         }
     }
 
+    /// <summary>Reports a human mouse event, sharing serialization and Agent takeover with keyboard input.</summary>
+    public bool SendMouse(int column, int row, TerminalMouseButton button, TerminalMouseAction action,
+        bool control = false, bool alt = false, bool shift = false)
+    {
+        byte[]? bytes;
+        lock (Emulator.SyncRoot) { bytes = TerminalMouseEncoder.Encode(column, row, button, action, Emulator.Modes, control, alt, shift); }
+        if (bytes is not { Length: > 0 } || IsClosed) { return false; }
+        MarkUserInput();
+        Send(bytes);
+        return true;
+    }
+
     /// <summary>Resizes the emulator and tells the server about the new PTY size.</summary>
     public async Task ResizeAsync(int columns, int rows, CancellationToken cancellationToken = default)
     {

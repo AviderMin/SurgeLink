@@ -103,7 +103,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
         try
         {
-            var file = await client.GetAsync(fullPath, cancellationToken).ConfigureAwait(false);
+            var file = await GetEntryNoFollowAsync(client, fullPath, cancellationToken).ConfigureAwait(false);
             if (file is null)
             {
                 throw new ProtocolException($"Remote path not found: '{fullPath}'.", ProtocolFailureKind.Configuration);
@@ -133,6 +133,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
         try
         {
+            RemoteFileAccess.RequireRegularFile(MapEntry(await GetEntryNoFollowAsync(client, fullPath, cancellationToken).ConfigureAwait(false)));
             var stream = await client.OpenAsync(fullPath, FileMode.Open, FileAccess.Read, cancellationToken).ConfigureAwait(false);
             return stream;
         }
@@ -209,7 +210,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 return;
             }
 
-            var entry = await client.GetAsync(fullPath, cancellationToken).ConfigureAwait(false);
+            var entry = await GetEntryNoFollowAsync(client, fullPath, cancellationToken).ConfigureAwait(false);
             if (entry.IsDirectory && !entry.IsSymbolicLink)
             {
                 await client.DeleteDirectoryAsync(fullPath, cancellationToken).ConfigureAwait(false);
@@ -241,6 +242,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (overwrite)
         {
+            RemoteFileAccess.RequireRegularFile(MapEntry(await GetEntryNoFollowAsync(client, destination, cancellationToken).ConfigureAwait(false)));
             // OpenSSH posix-rename is an atomic replacement. If unsupported, fail
             // without deleting the old target; never emulate with delete + rename.
             await Task.Run(() => client.RenameFile(source, destination, isPosix: true), cancellationToken).ConfigureAwait(false);
@@ -482,6 +484,21 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
             _logger.LogDebug(exception, "Could not read the remote working directory.");
             return null;
         }
+    }
+
+    // SSH.NET Get/GetAttributes first REALPATH the complete name, following a
+    // final symbolic link before LSTAT. READDIR of the parent preserves its type.
+    private static async Task<ISftpFile> GetEntryNoFollowAsync(SftpClient client, string path, CancellationToken cancellationToken)
+    {
+        if (path == "/") { return await client.GetAsync(path, cancellationToken).ConfigureAwait(false); }
+        var separator = path.LastIndexOf('/');
+        var parent = separator == 0 ? "/" : path[..separator];
+        var name = path[(separator + 1)..];
+        await foreach (var entry in client.ListDirectoryAsync(parent, cancellationToken).ConfigureAwait(false))
+        {
+            if (string.Equals(entry.Name, name, StringComparison.Ordinal)) { return entry; }
+        }
+        throw new SftpPathNotFoundException("Remote path not found: " + path);
     }
 
     private static RemoteFileEntry MapEntry(ISftpFile file)

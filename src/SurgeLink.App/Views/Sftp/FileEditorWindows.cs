@@ -17,6 +17,7 @@ internal static class FileEditorWindows
     public static void Open(IRemoteFileSystem fileSystem, RemoteFileEntry target,
         IAppSettingsStore settings, IProtocolSession? session)
     {
+        RemoteFileAccess.RequireRegularFile(target);
         var editors = Windows.GetOrCreateValue(fileSystem);
         if (editors.TryGetValue(target.FullPath, out var existing))
         {

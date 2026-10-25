@@ -55,11 +55,14 @@ public static class RemoteFileWrite
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
             cancellationToken.ThrowIfCancellationRequested();
-            if ((unixMode ?? existing?.UnixMode) is int mode && fileSystem.SupportsPermissions)
+            // Content replacement inherits ordinary access bits, never privilege bits.
+            if ((unixMode ?? (existing?.UnixMode & 0x1FF)) is int mode && fileSystem.SupportsPermissions)
             {
                 await fileSystem.SetPermissionsAsync(temporary, mode, cancellationToken).ConfigureAwait(false);
             }
             if (validateDestination is not null) await validateDestination(cancellationToken).ConfigureAwait(false);
+            if (overwrite && existing is not null)
+                await RemoteFileAccess.RequireRegularFileAsync(fileSystem, destination, cancellationToken).ConfigureAwait(false);
             await fileSystem.CommitWriteAsync(temporary, destination, overwrite && existing is not null, cancellationToken).ConfigureAwait(false);
             committed = true;
         }

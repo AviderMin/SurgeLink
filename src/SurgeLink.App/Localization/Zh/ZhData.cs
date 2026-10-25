@@ -7,6 +7,15 @@ public static class ZhData
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         // ---- SFTP: toolbar -------------------------------------------------
+        ["sftp.offline.title"] = "文件连接已断开",
+        ["sftp.offline.body"] = "请重新连接后再进行远程文件操作。",
+        ["sftp.editor.restored"] = "已恢复加载时的副本。",
+        ["sftp.editor.copied"] = "已复制全部文本。",
+        ["sftp.editor.textFiles"] = "文本文件",
+        ["sftp.editor.exported"] = "已导出本地副本。",
+        ["sftp.editor.copyAll"] = "复制全部文本",
+        ["sftp.editor.export"] = "导出本地副本",
+        ["sftp.editor.restore"] = "恢复加载时的副本",
         ["sftp.upload.conflicts"] = "发现 {0} 个已存在的目标。请选择本次上传的处理方式。",
         ["sftp.upload.conflictTitle"] = "上传冲突",
         ["sftp.upload.rename"] = "重命名上传",

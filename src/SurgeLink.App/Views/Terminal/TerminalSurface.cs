@@ -318,7 +318,8 @@ internal sealed partial class TerminalSurface : ContentControl
     {
         _blinkOn = !_blinkOn;
 
-        _cursorLayer.Opacity = _blinkOn ? 1 : 0;
+        var emulator = _bridge.Emulator;
+        lock (emulator.SyncRoot) { _cursorLayer.Opacity = !emulator.Modes.CursorBlink || _blinkOn ? 1 : 0; }
         foreach (var run in _blinkingRuns) { run.Opacity = _blinkOn ? 1 : 0; }
     }
 }

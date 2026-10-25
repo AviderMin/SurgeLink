@@ -40,7 +40,9 @@ public sealed class WorkspaceTab
 
     public IProtocolSession Session { get; }
 
-    public TerminalBridge? Terminal { get; }
+    public TerminalBridge? Terminal { get; internal set; }
+
+    public bool IsReopeningTerminal { get; internal set; }
 
     /// <summary>
     /// Session-owned transfer queue. It survives Files/Monitor/Terminal switches
@@ -159,6 +161,7 @@ public sealed class WorkspaceStore
 
     /// <summary>Revoke and drain external operations before any protocol resources are disposed.</summary>
     public event Func<WorkspaceTab, Task>? SessionClosing;
+    public event Func<WorkspaceTab, Task>? TerminalReplacing;
 
     /// <summary>Current immutable snapshot.</summary>
     public WorkspaceSnapshot Snapshot => Volatile.Read(ref _snapshot);
@@ -196,7 +199,7 @@ public sealed class WorkspaceStore
 
             if (terminal is not null)
             {
-                terminal.Closed += (_, _) => OnTerminalClosed(tab);
+                terminal.Closed += (_, _) => OnTerminalClosed(tab, terminal);
             }
 
             // Merge only connection metadata into a still-existing, matching profile.
@@ -223,6 +226,7 @@ public sealed class WorkspaceStore
             });
 
             _logger.LogInformation("Session {Name} opened", profile.Name);
+            if (terminal?.IsClosed == true) { OnTerminalClosed(tab, terminal); }
             return tab;
         }
         catch
@@ -329,6 +333,53 @@ public sealed class WorkspaceStore
         cancellationToken.ThrowIfCancellationRequested();
         await CloseAsync(tabId);
         await OpenAsync(profile, options, cancellationToken);
+    }
+
+    /// <summary>Replaces only the exited shell, retaining the connection, files, monitor and transfers.</summary>
+    public async Task ReopenTerminalAsync(Guid tabId, CancellationToken cancellationToken = default)
+    {
+        WorkspaceTab? tab;
+        lock (_gate)
+        {
+            tab = _snapshot.Tabs.FirstOrDefault(item => item.Id == tabId);
+            if (tab is null || tab.IsClosing || tab.IsReopeningTerminal || tab.State != ConnectionState.Connected
+                || tab.Terminal is not { IsClosed: true } || !tab.Session.CanReopenTerminal) { return; }
+            tab.IsReopeningTerminal = true;
+        }
+        Update(snapshot => snapshot, force: true);
+        TerminalBridge? replacement = null;
+        try
+        {
+            if (TerminalReplacing is { } replacing)
+                foreach (Func<WorkspaceTab, Task> handler in replacing.GetInvocationList()) { await handler(tab); }
+            cancellationToken.ThrowIfCancellationRequested();
+            var remote = await tab.Session.ReopenTerminalAsync(cancellationToken);
+            replacement = new TerminalBridge(remote, _dispatcher, _logger, settings: _settings);
+            await replacement.StartAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var previous = tab.Terminal;
+            var opened = replacement;
+            lock (_gate)
+            {
+                if (tab.IsClosing || !_snapshot.Tabs.Contains(tab) || tab.Session.State != ConnectionState.Connected)
+                    throw new OperationCanceledException("The session closed while opening the shell.");
+                tab.Terminal = opened;
+                tab.Message = opened.IsClosed ? "Remote shell exited." : null;
+                opened.Closed += (_, _) => OnTerminalClosed(tab, opened);
+                replacement = null;
+            }
+            if (opened.IsClosed) { OnTerminalClosed(tab, opened); }
+            if (previous is not null) { await previous.DisposeAsync(); }
+        }
+        finally
+        {
+            try { if (replacement is not null) { await replacement.DisposeAsync(); } }
+            finally
+            {
+                lock (_gate) { tab.IsReopeningTerminal = false; }
+                Update(snapshot => snapshot, force: true);
+            }
+        }
     }
 
     /// <summary>Uses the latest saved configuration, or the tab configuration if it was deleted.</summary>
@@ -466,8 +517,9 @@ public sealed class WorkspaceStore
         });
     }
 
-    private void OnTerminalClosed(WorkspaceTab tab)
+    private void OnTerminalClosed(WorkspaceTab tab, TerminalBridge terminal)
     {
+        if (tab.IsClosing || !Snapshot.Tabs.Contains(tab) || !ReferenceEquals(tab.Terminal, terminal)) { return; }
         // TerminalBridge dispatches Closed to the UI thread, so state can be updated directly.
         tab.Message = "Remote shell exited.";
         Update(s => s, force: true);

@@ -40,6 +40,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         _logger = logger;
         _gateway.OperationCompleted += OnOperationCompleted;
         workspace.SessionClosing += OnSessionClosingAsync;
+        workspace.TerminalReplacing += OnTerminalReplacingAsync;
         McpHostPath = LocateExecutable("agent", "SurgeLink.AgentHost", "surgelink-agent-host.exe");
         CliPath = LocateExecutable("cli", "SurgeLink.Cli", "surgelink-cli.exe");
     }
@@ -88,7 +89,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
             lock (_gate)
             {
                 if (_disposed || generation != _stopGeneration || !_workspace.Snapshot.Tabs.Contains(tab)
-                    || tab.State != ConnectionState.Connected || tab.IsClosing
+                    || tab.State != ConnectionState.Connected || tab.IsClosing || tab.IsReopeningTerminal
                     || tab.Terminal?.ReadScreen().InputRevision != revision) return;
                 if (mode == AgentAccessMode.Control && (tab.Terminal is null || tab.Terminal.IsClosed)) return;
                 _server ??= new AgentPipeServer(AgentEndpoint.ForProcess(Environment.ProcessId), _gateway);
@@ -179,6 +180,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     }
 
     private Task OnSessionClosingAsync(WorkspaceTab tab) => RevokeAsync(tab, "connection_closed");
+    private Task OnTerminalReplacingAsync(WorkspaceTab tab) => RevokeAsync(tab, "shell_replaced");
 
     private void OnOperationCompleted(string method, string? handle, string outcome)
     {
@@ -246,6 +248,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         finally
         {
             _workspace.SessionClosing -= OnSessionClosingAsync;
+            _workspace.TerminalReplacing -= OnTerminalReplacingAsync;
             try { if (_server is not null) await _server.DisposeAsync().ConfigureAwait(false); }
             finally { _gateway.OperationCompleted -= OnOperationCompleted; }
         }

@@ -9,6 +9,7 @@ using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Files;
+using SurgeLink.Core.Sessions;
 using Windows.System;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -22,7 +23,6 @@ namespace SurgeLink.App.Views.Sftp;
 /// </summary>
 internal sealed class SftpView : Component<SftpViewProps>
 {
-    private static readonly object[] NoDependencies = Array.Empty<object>();
 
     // Lets the whole table area receive right clicks, including the blank space
     // below the last row and the empty-folder surface.
@@ -33,6 +33,8 @@ internal sealed class SftpView : Component<SftpViewProps>
         var fileSystem = Props.FileSystem;
         var settingsStore = Props.Settings;
         var queue = Props.Transfers;
+        var online = Props.State == ConnectionState.Connected;
+        bool IsOnline() => online && (Props.Session is null || Props.Session.State == ConnectionState.Connected);
         var pickers = UseContext(WindowStoragePicker.Context)
             ?? throw new InvalidOperationException("The file manager requires its owning window's storage picker.");
         var interaction = UseContext(AppServices.ReactorContext)!.Interaction;
@@ -71,6 +73,7 @@ internal sealed class SftpView : Component<SftpViewProps>
             () =>
             {
                 var cancellation = new CancellationTokenSource();
+                if (!online) { cancellation.Cancel(); }
                 operationLifetime.Current = cancellation;
                 return () =>
                 {
@@ -82,12 +85,12 @@ internal sealed class SftpView : Component<SftpViewProps>
                     }
                 };
             },
-            NoDependencies);
+            online);
 
         UseEffect(
             () =>
             {
-                if (fileSystem is null)
+                if (fileSystem is null || !online)
                 {
                     setLoading(false);
                     return () => { };
@@ -137,6 +140,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 return () => cancellation.Cancel();
             },
             fileSystem,
+            online,
             listingRequest);
 
         // A completion banner is view-local chrome; it is subscribed only while
@@ -157,6 +161,8 @@ internal sealed class SftpView : Component<SftpViewProps>
                         InfoBarSeverity.Error,
                         Str.T("sftp.banner.transferFailed", "Transfer failed"),
                         item.Name + " · " + (item.Error ?? Str.T("sftp.transfers.unknownError", "unknown error"))),
+                    TransferStatus.Cancelled => new SftpBanner(InfoBarSeverity.Informational,
+                        Str.T("sftp.transfers.cancelled", "Transfer cancelled"), item.Name),
                     _ => null,
                 });
 
@@ -173,6 +179,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void Refresh()
         {
+            if (!IsOnline()) { return; }
             setLoading(true);
             setListingRequest((listingRequest.Path, Guid.NewGuid()));
         }
@@ -188,6 +195,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void Navigate(string path)
         {
+            if (!IsOnline()) { return; }
             var normalized = SftpPath.Normalize(path);
             if (normalized == cwd && error is null && !loading)
             {
@@ -200,6 +208,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void GoHome()
         {
+            if (!IsOnline()) { return; }
             // A null request means "ask the protocol for the home directory" and
             // is how the very first load resolves it too.
             setListingRequest((null, Guid.NewGuid()));
@@ -228,7 +237,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void OpenEditor()
         {
-            if (fileSystem is null || selected.Count != 1 || selected[0].IsDirectory)
+            if (!IsOnline() || fileSystem is null || selected.Count != 1 || selected[0].Kind != RemoteEntryKind.File)
             {
                 return;
             }
@@ -239,7 +248,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void OpenRename(RemoteFileEntry? entry)
         {
-            if (entry is null)
+            if (!IsOnline() || entry is null)
             {
                 return;
             }
@@ -250,7 +259,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void OpenDelete(IReadOnlyList<RemoteFileEntry> items)
         {
-            if (items.Count == 0 || fileSystem is null || loading || error is not null
+            if (!IsOnline() || items.Count == 0 || fileSystem is null || loading || error is not null
                 || deleteRunning.Current || pasteRunning.Current)
             {
                 return;
@@ -262,7 +271,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         async Task DeleteSelectionAsync(IReadOnlyList<RemoteFileEntry> targets)
         {
-            if (fileSystem is null || deleteRunning.Current || targets.Count == 0) { return; }
+            if (!IsOnline() || fileSystem is null || deleteRunning.Current || targets.Count == 0) { return; }
             deleteRunning.Current = true;
             setDeleting(true);
             var token = operationLifetime.Current?.Token ?? new CancellationToken(true);
@@ -312,7 +321,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void OpenPermissions(RemoteFileEntry? entry)
         {
-            if (entry is null || fileSystem is not { SupportsPermissions: true })
+            if (!IsOnline() || entry is null || fileSystem is not { SupportsPermissions: true })
             {
                 return;
             }
@@ -323,7 +332,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         async Task ExecuteAsync(string title, Func<IRemoteFileSystem, CancellationToken, Task> operation)
         {
-            if (fileSystem is null)
+            if (!IsOnline() || fileSystem is null)
             {
                 return;
             }
@@ -380,6 +389,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         // must not resolve a picker owner from Reactor's transient ActiveHost.
         void Upload()
         {
+            if (!IsOnline()) { return; }
             _ = SftpViewCommands.UploadAsync(
                 fileSystem!, cwd, queue, () => pickers.PickFileAsync(), setBanner, interaction,
                 operationLifetime.Current?.Token ?? new CancellationToken(true));
@@ -387,6 +397,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void Download()
         {
+            if (!IsOnline()) { return; }
             _ = SftpViewCommands.DownloadAsync(
                 fileSystem!, selected, queue, pickers.PickFolderAsync, setBanner);
         }
@@ -453,7 +464,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         async Task PasteAsync()
         {
             var snapshot = clipboard.Current;
-            if (pasteRunning.Current || deleteRunning.Current || snapshot.Entries.Count == 0 || loading || error is not null) { return; }
+            if (!IsOnline() || pasteRunning.Current || deleteRunning.Current || snapshot.Entries.Count == 0 || loading || error is not null) { return; }
             pasteRunning.Current = true;
             var destinationDirectory = cwd;
             ShowBanner(InfoBarSeverity.Informational, Str.T("sftp.menu.paste", "Paste"),
@@ -529,7 +540,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         /// </summary>
         void ShowContextMenu(FrameworkElement sender, ContextRequestedEventArgs args)
         {
-            if (error is not null) { return; }
+            if (!IsOnline() || error is not null) { return; }
 
             var items = Array.Empty<RemoteFileEntry>();
             if (HitRow(args.OriginalSource) is { } row)
@@ -621,13 +632,13 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         var toolbar = SftpToolbar.Render(new SftpToolbarProps(
             cwd,
-            cwd != "/",
-            !loading && error is null && selected.Count > 0,
-            !loading && error is null,
-            !loading && error is null && selected.Count == 1,
-            !loading && error is null && selected.Count > 0 && !deleting && !pasteRunning.Current,
+            online && cwd != "/",
+            online && !loading && error is null && selected.Count > 0 && selected.All(entry => entry.Kind is RemoteEntryKind.File or RemoteEntryKind.Directory),
+            online && !loading && error is null,
+            online && !loading && error is null && selected.Count == 1,
+            online && !loading && error is null && selected.Count > 0 && !deleting && !pasteRunning.Current,
             fileSystem.SupportsPermissions,
-            !loading && error is null && selected.Count == 1 && !selected[0].IsDirectory,
+            online && !loading && error is null && selected.Count == 1 && selected[0].Kind == RemoteEntryKind.File,
             Navigate,
             () => Navigate(SftpPath.Parent(cwd)),
             GoHome,
@@ -651,7 +662,10 @@ internal sealed class SftpView : Component<SftpViewProps>
             () => OpenPermissions(selected.Count == 1 ? selected[0] : null),
             OpenEditor));
 
-        Element? bannerBar = banner is null
+        Element? bannerBar = !online
+            ? InfoBar(Str.T("sftp.offline.title", "Connection closed"),
+                Str.T("sftp.offline.body", "Reconnect before using remote files or starting transfers.")).Severity(InfoBarSeverity.Warning)
+            : banner is null
             ? null
             : InfoBar(banner.Title, banner.Message)
                 .Severity(banner.Severity)

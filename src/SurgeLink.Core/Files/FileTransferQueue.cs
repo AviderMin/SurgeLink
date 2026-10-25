@@ -75,8 +75,9 @@ public sealed class FileTransferQueue : IAsyncDisposable
         {
             if (_disposed)
             {
-                item.Status = TransferStatus.Cancelled;
-                return;
+                item.Status = TransferStatus.Failed;
+                item.Error = "The session transfer queue is closed. Reconnect before starting a transfer.";
+                throw new InvalidOperationException(item.Error);
             }
 
             _items.Add(item);
@@ -358,6 +359,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
             }
             else
             {
+                await RemoteFileAccess.RequireRegularFileAsync(fileSystem, item.RemotePath, token).ConfigureAwait(false);
                 await using var source = await fileSystem.OpenReadAsync(item.RemotePath, token).ConfigureAwait(false);
                 await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, BufferSize, useAsync: true))
                 {

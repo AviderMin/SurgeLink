@@ -8,6 +8,37 @@ namespace SurgeLink.Core.Tests;
 public sealed class FileTransferQueueTests
 {
     [Theory]
+    [InlineData(RemoteEntryKind.Other)]
+    [InlineData(RemoteEntryKind.SymbolicLink)]
+    [InlineData(RemoteEntryKind.Directory)]
+    public async Task PlainDownloadsNeverOpenSpecialTargets(RemoteEntryKind kind)
+    {
+        using var temp = new TempDirectory();
+        var fs = new FakeFileSystem();
+        fs.Listings["/remote"] = [new() { Name = "special", FullPath = "/remote/special", Kind = kind }];
+        var item = Download("/remote/special", temp.File("special"), 1);
+        await using var queue = new FileTransferQueue();
+        queue.Enqueue(item, fs);
+        Assert.True(await WaitAsync(() => !item.IsActive));
+        Assert.Equal(TransferStatus.Failed, item.Status);
+        Assert.Equal(0, fs.OpenReadCalls(item.RemotePath));
+        Assert.False(File.Exists(item.LocalPath));
+    }
+
+    [Fact]
+    public async Task ClosedQueueRejectsNewWorkWithAnExplicitError()
+    {
+        using var temp = new TempDirectory();
+        var queue = new FileTransferQueue();
+        await queue.DisposeAsync();
+        var item = Download("/file", temp.File("file"), 1);
+        Assert.Throws<InvalidOperationException>(() => queue.Enqueue(item, new FakeFileSystem()));
+        Assert.Equal(TransferStatus.Failed, item.Status);
+        Assert.Contains("closed", item.Error);
+        Assert.Empty(queue.Snapshot);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ExistingUploadRequiresExplicitAuthorizationForThatPath(bool authorized)
@@ -489,8 +520,17 @@ public sealed class FileTransferQueueTests
         public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken cancellationToken) =>
             Task.FromResult(Listings.TryGetValue(path, out var entries) ? entries : (IReadOnlyList<RemoteFileEntry>)Array.Empty<RemoteFileEntry>());
 
-        public Task<RemoteFileEntry> StatAsync(string path, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public Task<RemoteFileEntry> StatAsync(string path, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var entry = Listings.Values.SelectMany(entries => entries).FirstOrDefault(item => item.FullPath == path);
+            return Task.FromResult(entry ?? new RemoteFileEntry
+            {
+                Name = path[(path.LastIndexOf('/') + 1)..], FullPath = path,
+                Kind = Directories.ContainsKey(path) ? RemoteEntryKind.Directory : RemoteEntryKind.File,
+                Size = Files.TryGetValue(path, out var bytes) ? bytes.Length : 0,
+            });
+        }
 
         public async Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken)
         {

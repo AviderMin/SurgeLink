@@ -1,5 +1,8 @@
 namespace SurgeLink.Terminal;
 
+/// <summary>Xterm mouse reporting scope.</summary>
+public enum TerminalMouseTrackingMode { None, Buttons, Drag, Any }
+
 /// <summary>Cursor shapes requested with DECSCUSR.</summary>
 public enum TerminalCursorShape
 {
@@ -46,6 +49,10 @@ public sealed record TerminalModes
 
     /// <summary>Whether the terminal reports mouse events to the application.</summary>
     public bool MouseTracking { get; init; }
+
+    public TerminalMouseTrackingMode MouseTrackingMode { get; init; }
+
+    public bool SgrMouseEncoding { get; init; }
 
     /// <summary>Current cursor shape.</summary>
     public TerminalCursorShape CursorShape { get; init; } = TerminalCursorShape.Block;
