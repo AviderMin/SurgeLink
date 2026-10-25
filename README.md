@@ -6,7 +6,7 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.2.40**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.2.41**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
@@ -14,7 +14,7 @@ SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github
 
 ## 版本更新
 
-当前工作区在 1.0.2.40 基础上增加以下修复（尚未重新打包）：
+**1.0.2.41** 在 1.0.2.40 基础上增加以下修复：
 
 - 上传遇到同名目标时默认跳过，可选择重命名或明确覆盖；文件夹统一展示冲突，执行时再次拒绝未经授权的覆盖。
 - 密码认证回退到键盘交互时自动回答明确的密码挑战；主机指纹和 MFA 提示的人工等待不计入网络建连超时，仍支持取消。
@@ -158,10 +158,10 @@ dotnet test SurgeLink.slnx -c Release -p:Platform=x64
 本地生成包含运行库的安装包；EXE 打包需要 Inno Setup 6.3 或更新版本。脚本自动查找编译器，也可通过 `-IsccPath` 指定 `ISCC.exe`：
 
 ```powershell
-pwsh -NoProfile -File tools/package-exe.ps1 -Version 1.0.2.40 -Architecture x64
-pwsh -NoProfile -File tools/package-exe.ps1 -Version 1.0.2.40 -Architecture arm64
-pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.40 -Architecture x64
-pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.40 -Architecture arm64
+pwsh -NoProfile -File tools/package-exe.ps1 -Version 1.0.2.41 -Architecture x64
+pwsh -NoProfile -File tools/package-exe.ps1 -Version 1.0.2.41 -Architecture arm64
+pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.41 -Architecture x64
+pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.41 -Architecture arm64
 ```
 
 | 产物 | x64 输出目录 | ARM64 输出目录 |
@@ -169,9 +169,9 @@ pwsh -NoProfile -File tools/package-appx.ps1 -Version 1.0.2.40 -Architecture arm
 | Inno EXE 安装包与 SHA256 | `artifacts/installer/x64/` | `artifacts/installer/arm64/` |
 | APPX 分发 ZIP | `artifacts/appx/` | `artifacts/appx/arm64/` |
 
-例如，x64 Inno 安装包输出为 `artifacts/installer/x64/SurgeLink-Setup-1.0.2.40-x64.exe`，配套校验文件为同名的 `.exe.sha256`。
+例如，x64 Inno 安装包输出为 `artifacts/installer/x64/SurgeLink-Setup-1.0.2.41-x64.exe`，配套校验文件为同名的 `.exe.sha256`。
 
-[Release 工作流](.github/workflows/release.yml) 支持手动运行或推送 `v1.0.2.40` 形式的数字版本标签。它复用 [Installer](.github/workflows/package-exe.yml) 和 [APPX](.github/workflows/package-appx.yml) 工作流，先运行测试，再分别构建两个架构。完整产物上传草稿后，核对或创建指向构建提交的 Tag，再公开 Release，提供 EXE、APPX ZIP 与 SHA256 校验清单。单独运行打包工作流只上传 Actions 产物，保留 14 天，不创建 Release。工作流不自动提交 Microsoft Store。
+[Release 工作流](.github/workflows/release.yml) 支持手动运行或推送 `v1.0.2.41` 形式的数字版本标签。它复用 [Installer](.github/workflows/package-exe.yml) 和 [APPX](.github/workflows/package-appx.yml) 工作流，先运行测试，再分别构建两个架构。完整产物上传草稿后，核对或创建指向构建提交的 Tag，再公开 Release，提供 EXE、APPX ZIP 与 SHA256 校验清单。单独运行打包工作流只上传 Actions 产物，保留 14 天，不创建 Release。工作流不自动提交 Microsoft Store。
 
 APPX 打包使用临时生成的开发签名密钥，完成后删除临时 PFX；不需要向仓库提交私钥或配置签名 Secrets。Inno EXE 当前未签名。ARM64 包在 x64 runner 上交叉编译，实际启动与功能仍需在 ARM64 设备验证。
 
