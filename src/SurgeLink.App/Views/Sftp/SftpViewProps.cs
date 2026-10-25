@@ -46,8 +46,12 @@ internal enum SftpDialogKind
 /// <summary>State of the one dialog that can be open at a time.</summary>
 /// <param name="Kind">Dialog to show.</param>
 /// <param name="Target">Entry the action applies to; <c>null</c> for new folder.</param>
-internal sealed record SftpDialogState(SftpDialogKind Kind, RemoteFileEntry? Target = null)
+internal sealed record SftpDialogState(SftpDialogKind Kind, RemoteFileEntry? Target = null,
+    IReadOnlyList<RemoteFileEntry>? Targets = null)
 {
+    /// <summary>Selection captured when the delete confirmation opens.</summary>
+    public IReadOnlyList<RemoteFileEntry> DeleteTargets => Targets ?? (Target is null ? Array.Empty<RemoteFileEntry>() : new[] { Target });
+
     /// <summary>The "nothing open" state.</summary>
     public static SftpDialogState None { get; } = new(SftpDialogKind.None);
 }

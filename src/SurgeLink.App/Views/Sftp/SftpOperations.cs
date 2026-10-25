@@ -27,7 +27,7 @@ internal static class SftpOperations
         SftpDialogKind.NewFile => IsValidName(text),
         SftpDialogKind.NewFolder => IsValidName(text),
         SftpDialogKind.Rename => state.Target is not null && IsValidName(text) && text != state.Target.Name,
-        SftpDialogKind.Delete => state.Target is not null,
+        SftpDialogKind.Delete => state.DeleteTargets.Count > 0,
         SftpDialogKind.Permissions => state.Target is not null,
         _ => false,
     };
@@ -52,8 +52,7 @@ internal static class SftpOperations
             SftpPath.Combine(workingDirectory, text), cancellationToken),
         SftpDialogKind.Rename when state.Target is { } target => fileSystem.RenameAsync(
             target.FullPath, SftpPath.Combine(workingDirectory, text), cancellationToken),
-        SftpDialogKind.Delete when state.Target is { } target => fileSystem.DeleteAsync(
-            target.FullPath, target.IsDirectory, cancellationToken),
+        SftpDialogKind.Delete => RemoteFileDelete.DeleteManyAsync(fileSystem, state.DeleteTargets, cancellationToken),
         SftpDialogKind.Permissions when state.Target is { } target => fileSystem.SetPermissionsAsync(
             target.FullPath, mode, cancellationToken),
         _ => Task.CompletedTask,

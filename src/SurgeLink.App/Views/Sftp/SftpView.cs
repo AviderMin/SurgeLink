@@ -52,6 +52,10 @@ internal sealed class SftpView : Component<SftpViewProps>
         var (dialogText, setDialogText) = UseState(string.Empty);
         var (dialogMode, setDialogMode) = UseState(0);
         var (banner, setBanner) = UseState<SftpBanner?>(null, threadSafe: true);
+        var (deleting, setDeleting) = UseState(false);
+        var deleteRunning = UseRef(false);
+        var currentListing = UseRef(listingRequest);
+        currentListing.Current = listingRequest;
         var clipboard = UseRef<(IRemoteFileSystem? FileSystem, IReadOnlyList<RemoteFileEntry> Entries, bool Cut)>((fileSystem, Array.Empty<RemoteFileEntry>(), false));
         var pasteRunning = UseRef(false);
         if (!ReferenceEquals(clipboard.Current.FileSystem, fileSystem))
@@ -244,14 +248,66 @@ internal sealed class SftpView : Component<SftpViewProps>
             setDialog(new SftpDialogState(SftpDialogKind.Rename, entry));
         }
 
-        void OpenDelete(RemoteFileEntry? entry)
+        void OpenDelete(IReadOnlyList<RemoteFileEntry> items)
         {
-            if (entry is null)
+            if (items.Count == 0 || fileSystem is null || loading || error is not null
+                || deleteRunning.Current || pasteRunning.Current)
             {
                 return;
             }
 
-            setDialog(new SftpDialogState(SftpDialogKind.Delete, entry));
+            var targets = items.DistinctBy(entry => entry.FullPath, StringComparer.Ordinal).ToArray();
+            setDialog(new SftpDialogState(SftpDialogKind.Delete, targets[0], targets));
+        }
+
+        async Task DeleteSelectionAsync(IReadOnlyList<RemoteFileEntry> targets)
+        {
+            if (fileSystem is null || deleteRunning.Current || targets.Count == 0) { return; }
+            deleteRunning.Current = true;
+            setDeleting(true);
+            var token = operationLifetime.Current?.Token ?? new CancellationToken(true);
+            var requestPath = listingRequest.Path;
+            var title = Str.T("sftp.operation.delete", "Delete");
+            try
+            {
+                ShowBanner(InfoBarSeverity.Informational, title,
+                    Str.F("sftp.delete.working", "Deleting {0} item(s)…", targets.Count));
+                var result = await RemoteFileDelete.DeleteManyAsync(fileSystem, targets, token).ConfigureAwait(true);
+                if (token.IsCancellationRequested) { return; }
+                if (result.Failures.Count == 0)
+                {
+                    ShowBanner(InfoBarSeverity.Success, title,
+                        Str.F("sftp.delete.complete", "Deleted {0} item(s).", result.Deleted.Count));
+                }
+                else
+                {
+                    var message = Str.F("sftp.delete.partial", "Deleted {0} of {1} item(s). {2} failed.",
+                        result.Deleted.Count, targets.Count, result.Failures.Count)
+                        + "\n" + string.Join("\n", result.Failures.Take(10).Select(failure => failure.Entry.FullPath + ": " + failure.Message));
+                    if (result.Failures.Count > 10)
+                        message += "\n" + Str.F("sftp.delete.moreFailures", "{0} additional failure(s).", result.Failures.Count - 10);
+                    ShowBanner(result.Deleted.Count == 0 ? InfoBarSeverity.Error : InfoBarSeverity.Warning, title, message);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception exception)
+            {
+                if (!token.IsCancellationRequested) { ShowBanner(InfoBarSeverity.Error, title, exception.Message); }
+            }
+            finally
+            {
+                deleteRunning.Current = false;
+                if (!token.IsCancellationRequested)
+                {
+                    setDeleting(false);
+                    // Do not navigate back if the user changed folders during deletion.
+                    if (currentListing.Current.Path == requestPath)
+                    {
+                        setLoading(true);
+                        setListingRequest((requestPath, Guid.NewGuid()));
+                    }
+                }
+            }
         }
 
         void OpenPermissions(RemoteFileEntry? entry)
@@ -310,6 +366,11 @@ internal sealed class SftpView : Component<SftpViewProps>
             var mode = dialogMode;
             var directory = cwd;
             CloseDialog();
+            if (current.Kind == SftpDialogKind.Delete)
+            {
+                _ = DeleteSelectionAsync(current.DeleteTargets);
+                return;
+            }
             _ = ExecuteAsync(
                 SftpOperations.Title(current.Kind),
                 (fs, token) => SftpOperations.ApplyAsync(current, text, mode, directory, fs, token));
@@ -366,7 +427,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                     args.Handled = true;
                     break;
                 case VirtualKey.Delete:
-                    OpenDelete(current);
+                    OpenDelete(SelectedEntries(list));
                     args.Handled = true;
                     break;
                 case VirtualKey.F5:
@@ -392,7 +453,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         async Task PasteAsync()
         {
             var snapshot = clipboard.Current;
-            if (pasteRunning.Current || snapshot.Entries.Count == 0 || loading || error is not null) { return; }
+            if (pasteRunning.Current || deleteRunning.Current || snapshot.Entries.Count == 0 || loading || error is not null) { return; }
             pasteRunning.Current = true;
             var destinationDirectory = cwd;
             ShowBanner(InfoBarSeverity.Informational, Str.T("sftp.menu.paste", "Paste"),
@@ -493,13 +554,15 @@ internal sealed class SftpView : Component<SftpViewProps>
             }
 
             var menu = new MenuFlyout();
-            var available = !pasteRunning.Current;
+            var available = !pasteRunning.Current && !deleteRunning.Current;
             SftpContextMenu.Add(menu, Str.T("sftp.menu.cut", "Cut"), "\uE8C6", () => Capture(items, true), available && items.Length > 0);
             SftpContextMenu.Add(menu, Str.T("sftp.menu.copy", "Copy"), "\uE8C8", () => Capture(items, false), available && items.Length > 0);
             SftpContextMenu.Add(menu, items.Length == 0
                 ? Str.T("sftp.menu.pasteHere", "Paste into this folder")
                 : Str.T("sftp.menu.paste", "Paste"), "\uE77F", () => _ = PasteAsync(), available && !loading && clipboard.Current.Entries.Count > 0);
             menu.Items.Add(new MenuFlyoutSeparator());
+            SftpContextMenu.Add(menu, Str.T("sftp.command.delete", "Delete"), "\uE74D", () => OpenDelete(items),
+                available && !loading && items.Length > 0);
             // Pointer requests on blank space target the current folder even
             // when rows remain selected. Keyboard requests still use selection.
             var folderPath = cwd;
@@ -562,6 +625,7 @@ internal sealed class SftpView : Component<SftpViewProps>
             !loading && error is null && selected.Count > 0,
             !loading && error is null,
             !loading && error is null && selected.Count == 1,
+            !loading && error is null && selected.Count > 0 && !deleting && !pasteRunning.Current,
             fileSystem.SupportsPermissions,
             !loading && error is null && selected.Count == 1 && !selected[0].IsDirectory,
             Navigate,
@@ -583,7 +647,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 interaction, operationLifetime.Current?.Token ?? new CancellationToken(true)),
             Download,
             () => OpenRename(selected.Count == 1 ? selected[0] : null),
-            () => OpenDelete(selected.Count == 1 ? selected[0] : null),
+            () => OpenDelete(selected),
             () => OpenPermissions(selected.Count == 1 ? selected[0] : null),
             OpenEditor));
 
@@ -660,7 +724,7 @@ internal sealed class SftpView : Component<SftpViewProps>
             dialogs.Add(dialog.Kind switch
             {
                 SftpDialogKind.Rename => SftpDialogs.Rename(true, target, dialogText, setDialogText, CommitDialog, CloseDialog),
-                SftpDialogKind.Delete => SftpDialogs.Delete(true, target, CommitDialog, CloseDialog),
+                SftpDialogKind.Delete => SftpDialogs.Delete(true, dialog.DeleteTargets, CommitDialog, CloseDialog),
                 SftpDialogKind.Permissions => SftpDialogs.Permissions(true, target, dialogMode, setDialogMode, CommitDialog, CloseDialog),
                 SftpDialogKind.Properties => SftpDialogs.Properties(target, CloseDialog),
                 _ => Empty(),

@@ -14,6 +14,7 @@ namespace SurgeLink.App.Views.Sftp;
 /// <param name="CanDownload">At least one file or folder is selected.</param>
 /// <param name="CanModify">A current folder listing is available.</param>
 /// <param name="SingleSelection">Exactly one entry is selected.</param>
+/// <param name="CanDelete">At least one entry is selected and no deletion is running.</param>
 /// <param name="SupportsPermissions">The protocol can read and write POSIX modes.</param>
 /// <param name="CanEdit">Exactly one regular file is selected and can be opened in the text editor.</param>
 internal sealed record SftpToolbarProps(
@@ -22,6 +23,7 @@ internal sealed record SftpToolbarProps(
     bool CanDownload,
     bool CanModify,
     bool SingleSelection,
+    bool CanDelete,
     bool SupportsPermissions,
     bool CanEdit,
     Action<string> Navigate,
@@ -96,7 +98,7 @@ internal static class SftpToolbar
                     },
                     AppBarButton(Str.T("sftp.command.delete", "Delete"), props.Delete, "\uE74D") with
                     {
-                        IsEnabled = props.SingleSelection,
+                        IsEnabled = props.CanDelete,
                     },
                     AppBarButton(Str.T("sftp.command.permissions", "Permissions"), props.EditPermissions, "\uE72E") with
                     {

@@ -108,19 +108,24 @@ internal static class SftpDialogs
         });
 
     /// <summary>Delete confirmation dialog; directories are deleted recursively.</summary>
-    public static Element Delete(bool open, RemoteFileEntry target, Action commit, Action close) =>
+    public static Element Delete(bool open, IReadOnlyList<RemoteFileEntry> targets, Action commit, Action close) =>
         QueuedDialog.Wrap(ContentDialog(
                 Str.T("sftp.dialog.delete.title", "Delete"),
                 VStack(
                     AppTheme.SpacingM,
-                    TextBlock(target.FullPath).FontFamily(AppTheme.Monospace).FontSize(12).Foreground(Theme.SecondaryText),
-                    TextBlock(target.IsDirectory
-                            ? Str.T("sftp.dialog.delete.folderHint", "The folder and everything inside it will be deleted.")
-                            : Str.T("sftp.dialog.delete.fileHint", "The file will be deleted."))
+                    TextBlock(Str.F("sftp.dialog.delete.count", "Delete {0} selected item(s)?", targets.Count))
+                        .TextWrapping(TextWrapping.Wrap),
+                    ScrollViewer(VStack(AppTheme.SpacingXs, targets.Select(target =>
+                        (Element)TextBlock(target.FullPath).FontFamily(AppTheme.Monospace).FontSize(12)
+                            .Foreground(Theme.SecondaryText).TextWrapping(TextWrapping.Wrap)).ToArray())).MaxHeight(240),
+                    TextBlock(targets.Any(target => target.IsDirectory)
+                            ? Str.T("sftp.dialog.delete.foldersHint", "Selected folders and everything inside them will be deleted.")
+                            : Str.T("sftp.dialog.delete.filesHint", "The selected files will be deleted."))
                         .TextWrapping(TextWrapping.Wrap)),
                 primaryButtonText: Str.T("sftp.dialog.delete.primary", "Delete")) with
         {
             IsOpen = open,
+            IsPrimaryButtonEnabled = targets.Count > 0,
             CloseButtonText = Str.T("sftp.dialog.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Close,
             OnClosed = result => Handle(result, commit, close),

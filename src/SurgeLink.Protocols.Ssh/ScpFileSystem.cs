@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Renci.SshNet;
 using SurgeLink.Core.Files;
@@ -17,10 +15,6 @@ namespace SurgeLink.Protocols.Ssh;
 internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
 {
     private readonly object _lifecycleGate = new();
-    private static readonly Regex ListingPattern = new(
-        @"^([bcdlps-])([rwxStTs-]{9})\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(.+)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
     private static readonly TimeSpan ScpOperationTimeout = TimeSpan.FromSeconds(60);
 
     private readonly SshConnectionFactory _factory;
@@ -59,13 +53,9 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         }
 
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
-        var result = await RunAsync(runner, "pwd", "resolve home directory", "/", cancellationToken)
+        var result = await RunAsync(runner, ScpMetadata.BuildHomeCommand(), "resolve home directory", "/", cancellationToken)
             .ConfigureAwait(false);
-        home = result.StandardOutput.TrimEnd('\r', '\n');
-        if (string.IsNullOrEmpty(home))
-        {
-            home = "/";
-        }
+        home = ScpMetadata.ParseHome(result.StandardOutput);
 
         _homeDirectory = home;
         return home;
@@ -82,27 +72,13 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         var result = await RunAsync(
                 runner,
-                BuildListingCommand(fullPath, directory: true),
+                ScpMetadata.BuildCommand(fullPath, directory: true),
                 "list directory",
                 fullPath,
                 cancellationToken)
             .ConfigureAwait(false);
 
-        var entries = new List<RemoteFileEntry>();
-        foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (line.StartsWith("total ", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var entry = ParseEntry(fullPath, line);
-            if (entry is not null)
-            {
-                entries.Add(entry);
-            }
-        }
-
+        var entries = ScpMetadata.Parse(fullPath, result.StandardOutput, directory: true).ToList();
         entries.Sort(CompareEntries);
         return entries;
     }
@@ -114,32 +90,13 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         var result = await RunAsync(
                 runner,
-                BuildListingCommand(fullPath, directory: false),
+                ScpMetadata.BuildCommand(fullPath, directory: false),
                 "read file status",
                 fullPath,
                 cancellationToken)
             .ConfigureAwait(false);
 
-        var line = result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault();
-        var entry = line is null ? null : ParseEntry(GetParent(fullPath), line);
-        if (entry is not null)
-        {
-            entry = entry with
-            {
-                Name = fullPath == "/" ? "/" : fullPath[(fullPath.LastIndexOf('/') + 1)..],
-                FullPath = fullPath,
-            };
-        }
-
-        if (entry is null)
-        {
-            throw new ProtocolException(
-                $"Remote path not found: '{fullPath}'.",
-                ProtocolFailureKind.Configuration);
-        }
-
-        return entry;
+        return ScpMetadata.Parse(fullPath, result.StandardOutput, directory: false)[0];
     }
 
     /// <inheritdoc />
@@ -544,151 +501,6 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         return result;
     }
 
-    private static string BuildListingCommand(string path, bool directory)
-    {
-        var command = "TZ=UTC LC_ALL=C ls " + (directory ? "-la " : "-ld ");
-        // GNU ls reports an explicit UTC timestamp; BusyBox/POSIX systems use
-        // the same UTC environment with the traditional listing as a fallback.
-        return command + "--time-style='+%b %e %Y-%m-%dT%H:%M:%SZ' " + Quote(path)
-            + " 2>/dev/null || " + command + Quote(path);
-    }
-
-    internal static RemoteFileEntry? ParseEntry(string parentPath, string line, DateTimeOffset? now = null)
-    {
-        var match = ListingPattern.Match(line.TrimStart());
-        if (!match.Success)
-        {
-            return null;
-        }
-
-        var name = match.Groups[10].Value;
-        if (name is "." or "..")
-        {
-            return null;
-        }
-
-        string? linkTarget = null;
-        if (match.Groups[1].Value == "l")
-        {
-            var arrow = name.LastIndexOf(" -> ", StringComparison.Ordinal);
-            if (arrow >= 0)
-            {
-                linkTarget = name[(arrow + 4)..];
-                name = name[..arrow];
-            }
-        }
-
-        if (string.IsNullOrEmpty(name))
-        {
-            return null;
-        }
-
-        var kind = match.Groups[1].Value switch
-        {
-            "d" => RemoteEntryKind.Directory,
-            "l" => RemoteEntryKind.SymbolicLink,
-            "-" => RemoteEntryKind.File,
-            _ => RemoteEntryKind.Other,
-        };
-
-        var size = long.TryParse(match.Groups[6].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedSize)
-            ? parsedSize
-            : 0;
-        if (kind == RemoteEntryKind.Directory)
-        {
-            size = 0;
-        }
-
-        return new RemoteFileEntry
-        {
-            Name = name,
-            FullPath = Combine(parentPath, name),
-            Kind = kind,
-            Size = size,
-            ModifiedUtc = ParseModified(match.Groups[7].Value, match.Groups[8].Value, match.Groups[9].Value, now ?? DateTimeOffset.UtcNow),
-            UnixMode = ParseMode(match.Groups[2].Value),
-            Owner = match.Groups[4].Value,
-            Group = match.Groups[5].Value,
-            LinkTarget = linkTarget,
-        };
-    }
-
-    private static int ParseMode(string permissions)
-    {
-        var mode = 0;
-        for (var index = 0; index < 9; index++)
-        {
-            if (permissions[index] is 'r' or 'w' or 'x' or 's' or 't')
-            {
-                mode |= 1 << (8 - index);
-            }
-        }
-
-        if (permissions[2] is 's' or 'S')
-        {
-            mode |= 0x800;
-        }
-
-        if (permissions[5] is 's' or 'S')
-        {
-            mode |= 0x400;
-        }
-
-        if (permissions[8] is 't' or 'T')
-        {
-            mode |= 0x200;
-        }
-
-        return mode;
-    }
-
-    private static DateTimeOffset ParseModified(string monthText, string dayText, string timeText, DateTimeOffset now)
-    {
-        if (DateTimeOffset.TryParseExact(timeText, "yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture,
-            DateTimeStyles.AssumeUniversal, out var explicitTime)) { return explicitTime.ToUniversalTime(); }
-        try
-        {
-            var month = DateTime.ParseExact(
-                monthText,
-                "MMM",
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AllowWhiteSpaces);
-            var day = int.Parse(dayText, CultureInfo.InvariantCulture);
-            DateTime local;
-            if (timeText.Contains(':', StringComparison.Ordinal))
-            {
-                var time = DateTime.ParseExact(
-                    timeText,
-                    "H:mm",
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.AllowWhiteSpaces);
-                var year = now.UtcDateTime.Year;
-                // A leap-day listing near New Year may belong to the previous year.
-                while (day > DateTime.DaysInMonth(year, month.Month)) { year--; }
-                local = new DateTime(year, month.Month, day, time.Hour, time.Minute, 0, DateTimeKind.Utc);
-                if (local > now.UtcDateTime.AddDays(1)) { local = local.AddYears(-1); }
-            }
-            else if (int.TryParse(timeText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var year))
-            {
-                local = new DateTime(year, month.Month, day, 0, 0, 0, DateTimeKind.Utc);
-            }
-            else
-            {
-                return DateTimeOffset.MinValue;
-            }
-
-            return new DateTimeOffset(local).ToUniversalTime();
-        }
-        catch (FormatException)
-        {
-            return DateTimeOffset.MinValue;
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            return DateTimeOffset.MinValue;
-        }
-    }
-
     private static int CompareEntries(RemoteFileEntry left, RemoteFileEntry right)
     {
         if (left.IsDirectory != right.IsDirectory)
@@ -700,21 +512,6 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     }
 
     internal static string NormalizePath(string path) => PosixPath.Resolve(path);
-
-    private static string GetParent(string path)
-    {
-        var normalized = NormalizePath(path);
-        if (normalized == "/")
-        {
-            return "/";
-        }
-
-        var slash = normalized.LastIndexOf('/');
-        return slash <= 0 ? "/" : normalized[..slash];
-    }
-
-    private static string Combine(string parent, string name) =>
-        parent == "/" ? "/" + name : parent.TrimEnd('/') + "/" + name;
 
     private static string Quote(string value) => "'" + value.Replace("'", "'\\''") + "'";
 
