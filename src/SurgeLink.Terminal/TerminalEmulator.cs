@@ -42,7 +42,6 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         ArgumentOutOfRangeException.ThrowIfLessThan(rows, 1);
         ArgumentOutOfRangeException.ThrowIfNegative(scrollbackLimit);
 
-        ScrollbackLimit = scrollbackLimit;
         _scrollback = new ScrollbackBuffer(scrollbackLimit);
         _primaryScreen = new ScreenBuffer(columns, rows, this, isAlternate: false);
         _alternateScreen = new ScreenBuffer(columns, rows, this, isAlternate: true);
@@ -51,7 +50,25 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     }
 
     /// <summary>Maximum number of scrollback lines retained.</summary>
-    public int ScrollbackLimit { get; }
+    public int ScrollbackLimit => _scrollback.Limit;
+
+    /// <summary>Changes the history cap immediately, keeping the newest lines.</summary>
+    public void SetScrollbackLimit(int limit)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(limit);
+        lock (_sync)
+        {
+            if (limit == _scrollback.Limit) return;
+            BeginBatch();
+            try
+            {
+                _scrollback.SetLimit(limit);
+                _viewportOffset = Math.Min(_viewportOffset, _scrollback.Count);
+                MarkDirty();
+            }
+            finally { EndBatch(); }
+        }
+    }
 
     /// <inheritdoc />
     public int Columns => _primaryScreen.Columns;
@@ -302,6 +319,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     /// <summary>Prints one printable ASCII code point (fast path).</summary>
     internal void PrintAscii(byte value)
     {
+        UpdateEraseCell();
         _screen.Print(
             AsciiText.Get(value),
             1,
@@ -315,6 +333,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     /// <summary>Prints one decoded Unicode code point.</summary>
     internal void PrintRune(Rune rune)
     {
+        UpdateEraseCell();
         if (rune.Value < 0xA0)
         {
             // C1 controls decoded from UTF-8 are not printable on the grid.
@@ -341,6 +360,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     /// <summary>Executes a C0 control character.</summary>
     internal void ExecuteControl(byte control)
     {
+        UpdateEraseCell();
         switch (control)
         {
             case 0x08:
@@ -366,6 +386,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     /// <summary>Handles an ESC sequence that is not CSI, OSC or a string.</summary>
     internal void HandleEsc(char final, ReadOnlySpan<char> intermediates)
     {
+        UpdateEraseCell();
         if (intermediates.Length > 0)
         {
             if (intermediates[0] == '#' && final == '8')
@@ -417,6 +438,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         ReadOnlySpan<int> parameters,
         ReadOnlySpan<bool> parameterIsSub)
     {
+        UpdateEraseCell();
         char intermediate = intermediates.Length > 0 ? intermediates[0] : '\0';
         switch (final)
         {
@@ -702,6 +724,9 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         _version++;
         _dirty = true;
     }
+
+    private void UpdateEraseCell() => _screen.EraseCell = new TerminalCell(" ",
+        _sgr.Foreground, _sgr.Background, CellAttributes.None, CellWidth.Narrow);
 
     private void BeginBatch() => _batchDepth++;
 

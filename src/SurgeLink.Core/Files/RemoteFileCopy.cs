@@ -33,7 +33,7 @@ public static class RemoteFileCopy
             var parent = separator == 0 ? "/" : to[..separator];
             var name = to[(separator + 1)..];
             var siblings = await fileSystem.ListAsync(parent, cancellationToken).ConfigureAwait(false);
-            if (siblings.Any(item => string.Equals(item.Name, name, StringComparison.OrdinalIgnoreCase)))
+            if (siblings.Any(item => string.Equals(item.Name, name, StringComparison.Ordinal)))
             {
                 throw new IOException($"Destination already exists: {to}");
             }
@@ -41,6 +41,8 @@ public static class RemoteFileCopy
             {
                 var children = await fileSystem.ListAsync(from, cancellationToken).ConfigureAwait(false);
                 await fileSystem.CreateDirectoryAsync(to, cancellationToken).ConfigureAwait(false);
+                if (fileSystem.SupportsPermissions)
+                    await fileSystem.SetPermissionsAsync(to, 0x1C0, cancellationToken).ConfigureAwait(false);
                 foreach (var child in children)
                 {
                     if (string.IsNullOrEmpty(child.Name) || child.Name is "." or ".." || child.Name.Contains('/') || child.Name.Contains('\0'))
@@ -49,12 +51,15 @@ public static class RemoteFileCopy
                     }
                     await CopyEntryAsync(from + "/" + child.Name, to + "/" + child.Name, depth + 1).ConfigureAwait(false);
                 }
+                if (entry.UnixMode is int directoryMode && fileSystem.SupportsPermissions)
+                    await fileSystem.SetPermissionsAsync(to, directoryMode & 0x1FF, cancellationToken).ConfigureAwait(false);
             }
             else
             {
                 await using var input = await fileSystem.OpenReadAsync(from, cancellationToken).ConfigureAwait(false);
                 await RemoteFileWrite.WriteAsync(fileSystem, to, entry.Size, null, false,
-                    (output, token) => input.CopyToAsync(output, token), cancellationToken).ConfigureAwait(false);
+                    (output, token) => input.CopyToAsync(output, token), cancellationToken,
+                    unixMode: (entry.UnixMode ?? 0x180) & 0x1FF).ConfigureAwait(false);
             }
         }
     }

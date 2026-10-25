@@ -132,6 +132,7 @@ public sealed class WorkspaceStore
     private readonly ICredentialStore _credentials;
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger<WorkspaceStore> _logger;
+    private readonly IAppSettingsStore? _settings;
     private readonly object _gate = new();
     private readonly Dictionary<Guid, TaskCompletionSource> _closing = new();
     private WorkspaceSnapshot _snapshot = WorkspaceSnapshot.Empty;
@@ -142,13 +143,14 @@ public sealed class WorkspaceStore
         ISessionStore profiles,
         ICredentialStore credentials,
         IUiDispatcher dispatcher,
-        ILogger<WorkspaceStore> logger)
+        ILogger<WorkspaceStore> logger, IAppSettingsStore? settings = null)
     {
         _sessions = sessions;
         _profiles = profiles;
         _credentials = credentials;
         _dispatcher = dispatcher;
         _logger = logger;
+        _settings = settings;
         _snapshot = _snapshot with { Profiles = _profiles.Load() };
     }
 
@@ -182,7 +184,7 @@ public sealed class WorkspaceStore
             cancellationToken.ThrowIfCancellationRequested();
             if (session.Terminal is { } remoteTerminal)
             {
-                terminal = new TerminalBridge(remoteTerminal, _dispatcher, _logger);
+                terminal = new TerminalBridge(remoteTerminal, _dispatcher, _logger, settings: _settings);
                 await terminal.StartAsync(cancellationToken);
             }
 

@@ -153,8 +153,11 @@ store. Strict JSON parse failures are wrapped in `IOException`, retaining the or
 exception. Back up and repair a corrupt file before retrying. `ISessionStore` exposes only
 incremental Upsert/Delete operations; its unused whole-set Save API has been removed.
 
-Remote writes stage into unique sibling files and commit through the protocol's rename
-operation. The text editor retains the original encoding and raw-byte SHA-256 baseline,
+Remote writes stage inside unique sibling directories and commit through the protocol's rename
+operation. On POSIX-capable file systems, each empty staging directory is restricted to 0700
+before any payload is written. Copied files and directories preserve ordinary permission bits;
+copies do not propagate special bits. Names retain literal backslashes and whitespace, and
+the server resolves dot segments through symbolic links. The text editor retains the original encoding and raw-byte SHA-256 baseline,
 revalidating before staging and before commit. Writers sharing one file-system instance are
 serialized. SFTP does not provide server-side compare-and-swap: an external edit between the
 last check and rename remains possible. Failed staging cleanup is best effort when disconnected.
@@ -164,6 +167,12 @@ I/O. This is a bounded shutdown policy, not a guarantee that all remote cleanup 
 SSH internal command capture drains stdout/stderr concurrently and rejects output above
 8 MiB/2 MiB respectively. Limits apply to captured data; SSH.NET also owns transient receive
 buffers. Large listings fail explicitly rather than returning incomplete directory contents.
+The SSH/SCP fallback reads raw bytes through an owned `cat --` command channel, exposing a pull
+stream backed by two 32 KiB queued chunks rather than spooling the whole file to disk. Bounded
+text readers stop the producer on disposal. Cancellation completes and disposes that command's
+output pipes, including when the peer ignores signals; SCP remains the upload transport. These
+bounds cover the adapter, not SSH.NET receive buffers. SFTP permission changes convert our bit
+masks into the octal-digit representation expected by SSH.NET (for example, 0x1C0 becomes 700).
 
 ## Host key verification
 

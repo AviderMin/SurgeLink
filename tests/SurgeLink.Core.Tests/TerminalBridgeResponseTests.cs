@@ -9,6 +9,31 @@ namespace SurgeLink.Core.Tests;
 public sealed class TerminalBridgeResponseTests
 {
     [Fact]
+    public async Task SavedHistoryLimitAppliesToNewAndRunningTerminalsAndUnsubscribesOnClose()
+    {
+        using var temp = new TempDirectory();
+        var settings = new AppSettingsStore(temp.File("settings.json"));
+        settings.Update(s => s with { TerminalScrollbackLines = 1000 });
+        var remote = new CapturingTerminal();
+        var bridge = new TerminalBridge(remote, new InlineDispatcher(), NullLogger.Instance, settings: settings);
+        remote.Emit(string.Concat(Enumerable.Repeat("line\r\n", 1500)));
+        Assert.Equal(1000, bridge.Emulator.ScrollbackLimit);
+        Assert.Equal(1000, bridge.Emulator.ScrollbackLength);
+        settings.Update(s => s with { TerminalScrollbackLines = 5000 });
+        remote.Emit(string.Concat(Enumerable.Repeat("line\r\n", 1500)));
+        Assert.Equal(5000, bridge.Emulator.ScrollbackLimit);
+        Assert.True(bridge.Emulator.ScrollbackLength > 1000);
+        settings.Update(s => s with { TerminalScrollbackLines = 1000 });
+        Assert.Equal(1000, bridge.Emulator.ScrollbackLength);
+        var invalidations = 0;
+        bridge.Invalidated += (_, _) => invalidations++;
+        await bridge.DisposeAsync();
+        settings.Update(s => s with { TerminalScrollbackLines = 5000 });
+        Assert.Equal(0, invalidations);
+        Assert.Equal(1000, bridge.Emulator.ScrollbackLimit);
+    }
+
+    [Fact]
     public async Task RemoteQueryIsWrittenBackAndSubscriptionIsRemovedOnDispose()
     {
         var remote = new CapturingTerminal();

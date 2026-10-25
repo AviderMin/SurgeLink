@@ -172,12 +172,15 @@ produce no test cases, so a terminal-only protocol runs the relevant subset.
 ### Safe file publication
 
 `OpenWriteAsync` is a low-level stream primitive. Application uploads, copies and editor saves
-use `RemoteFileWrite.WriteAsync` to stage data in the destination directory, flush and close it,
-preserve an existing regular file's Unix mode, then call `CommitWriteAsync`.
-Implement `CommitWriteAsync` as an atomic same-directory replacement when `overwrite` is true.
+use `RemoteFileWrite.WriteAsync` to stage data inside a unique directory under the destination's
+parent. Before opening the payload, it restricts that empty directory to 0700 when permissions
+are supported. It flushes and closes the payload, preserves an existing regular file's Unix mode
+(or the requested ordinary copy permissions), then calls `CommitWriteAsync`.
+Implement `CommitWriteAsync` as an atomic same-filesystem replacement when `overwrite` is true.
 When false, it must refuse an existing destination at commit time, including concurrent creation.
 Never emulate replacement by deleting the destination first. The default implementation rejects
-unsupported commits. Failed/cancelled writes attempt to remove only the staging file.
+unsupported commits. Cleanup removes only the staging payload and its empty private directory;
+it never recursively deletes a directory or deletes the final destination.
 
 The SSH implementation uses POSIX rename for SFTP replacement and standard no-clobber SFTP
 rename for new files. The SCP fallback uses `mv -fT` for replacement and `ln -T` followed by

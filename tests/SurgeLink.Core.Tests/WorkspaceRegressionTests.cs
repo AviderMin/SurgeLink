@@ -11,6 +11,28 @@ namespace SurgeLink.Core.Tests;
 public sealed class WorkspaceRegressionTests
 {
     [Fact]
+    public async Task OpeningAndReconnectingUseTheSavedHistoryLimit()
+    {
+        using var temp = new TempDirectory();
+        var catalog = new ProtocolCatalog(); catalog.Register(new SurgeLink.Protocols.Demo.DemoProtocolPlugin());
+        var credentials = new FakeCredentialStore();
+        var settings = new AppSettingsStore(temp.File("settings.json"));
+        settings.Update(s => s with { TerminalScrollbackLines = 5000 });
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
+            new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance, settings);
+        var tab = await workspace.OpenAsync(SessionProfile.New("demo", "demo", 0, "demo"), null, default);
+        Assert.Equal(5000, tab.Terminal!.Emulator.ScrollbackLimit);
+        settings.Update(s => s with { TerminalScrollbackLines = 1000 });
+        Assert.Equal(1000, tab.Terminal.Emulator.ScrollbackLimit);
+        await workspace.ReconnectAsync(tab.Id);
+        var reconnected = Assert.Single(workspace.Snapshot.Tabs);
+        Assert.Equal(1000, reconnected.Terminal!.Emulator.ScrollbackLimit);
+        await workspace.CloseAsync(reconnected.Id);
+    }
+
+    [Fact]
     public async Task FailedPrecloseDrainLeavesConnectionOpenAndRetryable()
     {
         using var temp = new TempDirectory();

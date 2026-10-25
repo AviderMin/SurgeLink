@@ -167,7 +167,7 @@ public sealed class AppServices : IAsyncDisposable
             profileStore,
             credentials,
             dispatcher,
-            loggerFactory.CreateLogger<WorkspaceStore>());
+            loggerFactory.CreateLogger<WorkspaceStore>(), settings);
 
         return new AppServices(
             loggerFactory,

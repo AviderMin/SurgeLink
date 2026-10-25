@@ -19,6 +19,8 @@ internal interface IScreenHost
 /// </summary>
 internal sealed class ScreenBuffer
 {
+    internal const int MaximumCellTextLength = 64;
+    public TerminalCell EraseCell { private get; set; } = TerminalCell.Blank;
     private readonly IScreenHost _host;
     private readonly bool _isAlternate;
 
@@ -325,7 +327,7 @@ internal sealed class ScreenBuffer
             {
                 TerminalCell[] lastCells = _lines[_cursorRow].Cells;
                 ClearWidePair(lastCells, _columns - 1);
-                lastCells[_columns - 1] = TerminalCell.Blank;
+                lastCells[_columns - 1] = EraseCell;
                 _pendingWrap = true;
                 _host.OnScreenChanged();
                 return;
@@ -392,6 +394,7 @@ internal sealed class ScreenBuffer
 
         ref TerminalCell cell = ref cells[column];
         string text = string.IsNullOrEmpty(cell.Text) ? " " : cell.Text;
+        if (text.Length > MaximumCellTextLength - mark.Length) return;
         cell = cell.WithText(string.Concat(text, mark));
         _host.OnScreenChanged();
     }
@@ -476,7 +479,7 @@ internal sealed class ScreenBuffer
         Array.Copy(cells, column + shift, cells, column, _columns - column - shift);
         for (int i = _columns - shift; i < _columns; i++)
         {
-            cells[i] = TerminalCell.Blank;
+            cells[i] = EraseCell;
         }
 
         SanitizeRightEdge(cells);
@@ -496,7 +499,7 @@ internal sealed class ScreenBuffer
         {
             CellLine bottom = _lines[_scrollBottom];
             Array.Copy(_lines, _cursorRow, _lines, _cursorRow + 1, _scrollBottom - _cursorRow);
-            bottom.Clear();
+            bottom.Clear(EraseCell);
             _lines[_cursorRow] = bottom;
         }
 
@@ -516,7 +519,7 @@ internal sealed class ScreenBuffer
         {
             CellLine top = _lines[_cursorRow];
             Array.Copy(_lines, _cursorRow + 1, _lines, _cursorRow, _scrollBottom - _cursorRow);
-            top.Clear();
+            top.Clear(EraseCell);
             _lines[_scrollBottom] = top;
         }
 
@@ -676,7 +679,7 @@ internal sealed class ScreenBuffer
             CellLine replacement = _scrollTop == 0 && !_isAlternate
                 ? _host.OnLineScrolledOff(scrolled)
                 : scrolled;
-            replacement.Clear();
+            replacement.Clear(EraseCell);
             _lines[_scrollBottom] = replacement;
         }
     }
@@ -689,7 +692,7 @@ internal sealed class ScreenBuffer
         {
             CellLine bottom = _lines[_scrollBottom];
             Array.Copy(_lines, _scrollTop, _lines, _scrollTop + 1, _scrollBottom - _scrollTop);
-            bottom.Clear();
+            bottom.Clear(EraseCell);
             _lines[_scrollTop] = bottom;
         }
     }
@@ -709,7 +712,7 @@ internal sealed class ScreenBuffer
         Array.Copy(cells, column, cells, column + shift, _columns - column - shift);
         for (int i = column; i < column + shift; i++)
         {
-            cells[i] = TerminalCell.Blank;
+            cells[i] = EraseCell;
         }
 
         SanitizeRightEdge(cells);
@@ -722,7 +725,7 @@ internal sealed class ScreenBuffer
             return;
         }
 
-        Array.Fill(_lines[row].Cells, TerminalCell.Blank);
+        Array.Fill(_lines[row].Cells, EraseCell);
     }
 
     private void ClearCells(int row, int from, int toExclusive)
@@ -747,13 +750,13 @@ internal sealed class ScreenBuffer
 
         if (cells[toExclusive - 1].Width == CellWidth.Wide && toExclusive < _columns)
         {
-            cells[toExclusive] = TerminalCell.Blank;
+            cells[toExclusive] = EraseCell;
             toExclusive++;
         }
 
         for (int i = from; i < toExclusive; i++)
         {
-            cells[i] = TerminalCell.Blank;
+            cells[i] = EraseCell;
         }
     }
 
@@ -768,12 +771,12 @@ internal sealed class ScreenBuffer
         {
             if (column > 0)
             {
-                cells[column - 1] = TerminalCell.Blank;
+                cells[column - 1] = EraseCell;
             }
         }
         else if (cells[column].Width == CellWidth.Wide && column + 1 < _columns)
         {
-            cells[column + 1] = TerminalCell.Blank;
+            cells[column + 1] = EraseCell;
         }
     }
 
@@ -787,11 +790,11 @@ internal sealed class ScreenBuffer
 
         if (cells[last].Width == CellWidth.Wide)
         {
-            cells[last] = TerminalCell.Blank;
+            cells[last] = EraseCell;
         }
         else if (cells[last].Width == CellWidth.Continuation && (last == 0 || cells[last - 1].Width != CellWidth.Wide))
         {
-            cells[last] = TerminalCell.Blank;
+            cells[last] = EraseCell;
         }
     }
 }

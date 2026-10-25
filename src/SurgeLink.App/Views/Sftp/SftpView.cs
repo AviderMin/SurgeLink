@@ -412,7 +412,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                         if (snapshot.Cut)
                         {
                             var listing = await fs.ListAsync(destinationDirectory, token).ConfigureAwait(true);
-                            if (listing.Any(entry => string.Equals(entry.Name, item.Name, StringComparison.OrdinalIgnoreCase)))
+                            if (listing.Any(entry => string.Equals(entry.Name, item.Name, StringComparison.Ordinal)))
                             {
                                 throw new IOException(Str.F("sftp.clipboard.exists", "Destination already exists: {0}", destination));
                             }

@@ -5,6 +5,35 @@ namespace SurgeLink.Protocols.Conformance;
 
 public sealed class RemoteFileCopyTests
 {
+    [Theory]
+    [InlineData(0x180)]
+    [InlineData(0x1E8)]
+    [InlineData(0x9ED)]
+    public async Task CopyPreservesOrdinaryPermissionsWithoutPropagatingSpecialBits(int mode)
+    {
+        var fs = new DemoFileSystem();
+        await fs.SetPermissionsAsync("/home/demo/demo.txt", mode, default);
+        await RemoteFileCopy.CopyAsync(fs, "/home/demo/demo.txt", "/home/demo/copy.txt", default);
+        Assert.Equal(mode & 0x1FF, (await fs.StatAsync("/home/demo/copy.txt", default)).UnixMode);
+    }
+
+    [Fact]
+    public async Task CopyKeepsPrivateDirectoryPermissionsAndCaseDistinctChildren()
+    {
+        var fs = new DemoFileSystem();
+        await fs.CreateDirectoryAsync("/home/demo/private", default);
+        await fs.SetPermissionsAsync("/home/demo/private", 0x140, default); // r-x------
+        foreach (var name in new[] { "README", "readme", "file ", "..\\literal" })
+        {
+            await using var output = await fs.OpenWriteAsync("/home/demo/private/" + name, 1, null, default);
+            await output.WriteAsync(new byte[] { 42 });
+        }
+        await RemoteFileCopy.CopyAsync(fs, "/home/demo/private", "/home/demo/copied", default);
+        Assert.Equal(0x140, (await fs.StatAsync("/home/demo/copied", default)).UnixMode);
+        Assert.Equal(new[] { "..\\literal", "README", "file ", "readme" },
+            (await fs.ListAsync("/home/demo/copied", default)).Select(entry => entry.Name));
+    }
+
     [Fact]
     public async Task CopyPreservesBytesAndSource()
     {

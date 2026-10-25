@@ -56,6 +56,38 @@ internal sealed class SshCommandRunner
         }
     }
 
+    /// <summary>Streams a file without decoding, capturing the whole payload, or
+    /// imposing the short monitoring-command deadline on a large transfer.</summary>
+    internal async Task CopyToAsync(string command, Stream destination, CancellationToken ct)
+    {
+        using var sshCommand = _client.CreateCommand(command, _encoding);
+        sshCommand.CommandTimeout = Timeout.InfiniteTimeSpan;
+        var execution = sshCommand.ExecuteAsync(ct);
+        var output = sshCommand.OutputStream.CopyToAsync(destination, 32 * 1024, ct);
+        var error = ReadBoundedOutputAsync(sshCommand.ExtendedOutputStream, _encoding, 2 * 1024 * 1024, ct);
+        var pending = new List<Task> { execution, output, error };
+        try
+        {
+            while (pending.Count > 0)
+            {
+                var finished = await Task.WhenAny(pending).ConfigureAwait(false);
+                await finished.ConfigureAwait(false);
+                pending.Remove(finished);
+            }
+            ct.ThrowIfCancellationRequested();
+            if (sshCommand.ExitStatus != 0) throw new IOException("The remote file read command failed.");
+        }
+        catch
+        {
+            // We own the command and its output pipes, so disposal unblocks
+            // reads even when the peer ignores cancellation or disconnects.
+            sshCommand.Dispose();
+            try { await Task.WhenAll(execution, output, error).ConfigureAwait(false); }
+            catch (Exception) { /* Preserve the original transfer failure. */ }
+            throw;
+        }
+    }
+
     internal static async Task<string> ReadBoundedOutputAsync(Stream input, Encoding encoding, int maximumBytes, CancellationToken ct)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumBytes);

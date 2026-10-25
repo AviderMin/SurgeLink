@@ -287,7 +287,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
         var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var fullPath = ResolvePath(client, path);
-        var mode = (short)(unixMode & 0xFFF);
+        var mode = ToSftpPermissionMode(unixMode);
 
         try
         {
@@ -461,7 +461,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
     private string ResolvePath(SftpClient client, string? path)
     {
         var baseDirectory = _homeDirectory ?? TryGetWorkingDirectory(client) ?? "/";
-        return PosixPath.Normalize(path, baseDirectory, baseDirectory);
+        return PosixPath.Resolve(path, baseDirectory, baseDirectory);
     }
 
     private string? TryGetWorkingDirectory(SftpClient client)
@@ -469,7 +469,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         try
         {
             var value = client.WorkingDirectory;
-            return string.IsNullOrWhiteSpace(value) ? null : PosixPath.Normalize(value);
+            return string.IsNullOrEmpty(value) ? null : PosixPath.Resolve(value);
         }
         catch (Exception exception)
         {
@@ -491,7 +491,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         return new RemoteFileEntry
         {
             Name = file.Name,
-            FullPath = PosixPath.Normalize(file.FullName),
+            FullPath = PosixPath.Resolve(file.FullName),
             Kind = kind,
             Size = file.IsDirectory ? 0 : Math.Max(0, file.Length),
             ModifiedUtc = ToUtcOffset(file.LastWriteTimeUtc),
@@ -520,6 +520,11 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         if (attributes.IsStickyBitSet) mode |= 0x200;
         return mode;
     }
+
+    // SSH.NET accepts octal *digits* (700), whereas our contract carries the
+    // permission bit mask (0x1C0 / decimal 448).
+    internal static short ToSftpPermissionMode(int unixMode) =>
+        short.Parse(Convert.ToString(unixMode & 0xFFF, 8), CultureInfo.InvariantCulture);
 
     private static string? FormatId(int id) =>
         id >= 0 ? id.ToString(CultureInfo.InvariantCulture) : null;

@@ -13,9 +13,9 @@ public sealed class PosixPathTests
     [InlineData("../../..", "/home/alice", "/")]
     [InlineData("..", "/", "/")]
     [InlineData("", null, "/")]
-    [InlineData("   ", null, "/")]
+    [InlineData("   ", null, "/   ")]
     [InlineData("/", null, "/")]
-    [InlineData("a\\b", "/home/alice", "/home/alice/a/b")]
+    [InlineData("a\\b", "/home/alice", "/home/alice/a\\b")]
     public void NormalizeResolvesRelativePosixPaths(string? path, string? currentDirectory, string expected)
     {
         Assert.Equal(expected, PosixPath.Normalize(path, currentDirectory));
@@ -25,6 +25,30 @@ public sealed class PosixPathTests
     public void NormalizeAcceptsNull()
     {
         Assert.Equal("/", PosixPath.Normalize(null));
+    }
+
+    [Theory]
+    [InlineData("/data/report.txt ", "/data/report.txt ")]
+    [InlineData("/data/..\\victim.txt", "/data/..\\victim.txt")]
+    [InlineData("/data/link/../target", "/data/link/../target")]
+    [InlineData(" leading name ", "/home/alice/ leading name ")]
+    [InlineData("~/file ", "/home/alice/file ")]
+    public void ResolvePreservesLiteralNamesAndServerSideSymlinkTraversal(string path, string expected)
+    {
+        Assert.Equal(expected, PosixPath.Resolve(path, "/home/alice", "/home/alice"));
+    }
+
+    [Fact]
+    public void ResolveRejectsNulInsteadOfChangingTheTarget()
+    {
+        Assert.Throws<ArgumentException>(() => PosixPath.Resolve("/safe\0/other"));
+    }
+
+    [Fact]
+    public void RootHomeExpansionRemainsRootEvenWithADifferentCurrentDirectory()
+    {
+        Assert.Equal("/", PosixPath.Resolve("~", "/current", "/"));
+        Assert.Equal("/file", PosixPath.Resolve("~/file", "/current", "/"));
     }
 
     [Theory]

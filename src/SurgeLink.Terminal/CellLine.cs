@@ -22,6 +22,8 @@ internal sealed class CellLine
     /// <summary>Resets every cell to blank.</summary>
     public void Clear() => Array.Fill(Cells, TerminalCell.Blank);
 
+    public void Clear(TerminalCell blank) => Array.Fill(Cells, blank);
+
     /// <summary>Pads or truncates the row to the requested width.</summary>
     public void Resize(int columns)
     {

@@ -15,16 +15,20 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     private readonly IRemoteTerminal _remote;
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger _logger;
+    private readonly IAppSettingsStore? _settings;
     private int _repaintScheduled;
     private int _closed;
 
     /// <summary>Wraps a remote terminal; call <see cref="StartAsync"/> to open the shell channel.</summary>
-    public TerminalBridge(IRemoteTerminal remote, IUiDispatcher dispatcher, ILogger logger, int columns = 120, int rows = 32)
+    public TerminalBridge(IRemoteTerminal remote, IUiDispatcher dispatcher, ILogger logger, int columns = 120, int rows = 32,
+        IAppSettingsStore? settings = null)
     {
         _remote = remote;
         _dispatcher = dispatcher;
         _logger = logger;
-        Emulator = new TerminalEmulator(columns, rows);
+        _settings = settings;
+        Emulator = new TerminalEmulator(columns, rows, settings?.Current.TerminalScrollbackLines ?? 10000);
+        if (settings is not null) settings.Changed += OnSettingsChanged;
         Emulator.ResponseRequested += OnResponseRequested;
         _remote.OutputReceived += OnOutputReceived;
         _remote.Closed += OnRemoteClosed;
@@ -32,6 +36,13 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
 
     /// <summary>The screen buffer the view renders.</summary>
     public TerminalEmulator Emulator { get; }
+
+    private void OnSettingsChanged(object? sender, EventArgs args)
+    {
+        if (IsClosed || _settings is null) return;
+        Emulator.SetScrollbackLimit(_settings.Current.TerminalScrollbackLines);
+        RaiseInvalidated();
+    }
 
     /// <summary>Raised on the UI thread after new output was parsed; coalesced per frame.</summary>
     public event EventHandler? Invalidated;
@@ -182,6 +193,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     public async ValueTask DisposeAsync()
     {
         Interlocked.Exchange(ref _closed, 1);
+        if (_settings is not null) _settings.Changed -= OnSettingsChanged;
         Emulator.ResponseRequested -= OnResponseRequested;
         _remote.OutputReceived -= OnOutputReceived;
         _remote.Closed -= OnRemoteClosed;

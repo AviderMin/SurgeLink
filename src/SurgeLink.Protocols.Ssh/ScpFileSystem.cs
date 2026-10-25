@@ -61,7 +61,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         var result = await RunAsync(runner, "pwd", "resolve home directory", "/", cancellationToken)
             .ConfigureAwait(false);
-        home = result.StandardOutput.Trim();
+        home = result.StandardOutput.TrimEnd('\r', '\n');
         if (string.IsNullOrEmpty(home))
         {
             home = "/";
@@ -143,58 +143,46 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public async Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken)
+    public Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        cancellationToken.ThrowIfCancellationRequested();
         var fullPath = NormalizePath(path);
-        var client = await EnsureScpClientAsync(cancellationToken).ConfigureAwait(false);
-        var temporaryPath = Path.Combine(
-            Path.GetTempPath(),
-            "surge-scp-" + Guid.NewGuid().ToString("N") + ".tmp");
-
-        try
+        return Task.FromResult<Stream>(new RemoteReadStream(async (target, token) =>
         {
-            await _transferLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await _transferLock.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                await Task.Run(
-                        () => client.Download(fullPath, new FileInfo(temporaryPath)),
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                // SCP's synchronous Download can stay blocked in its private
+                // pipe after Disconnect. Stream raw bytes through an owned,
+                // cancellable exec channel instead; uploads still use SCP.
+                var runner = await EnsureCommandRunnerAsync(token).ConfigureAwait(false);
+                try
+                {
+                    token.ThrowIfCancellationRequested();
+                    await runner.CopyToAsync("cat -- " + Quote(fullPath), target, token).ConfigureAwait(false);
+                    token.ThrowIfCancellationRequested();
+                }
+                catch (Exception exception)
+                {
+                    token.ThrowIfCancellationRequested();
+                    throw SshErrorMapper.MapFileSystem(exception, fullPath, "download over SCP");
+                }
             }
-            finally
-            {
-                _transferLock.Release();
-            }
-
-            return new FileStream(
-                temporaryPath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                81920,
-                FileOptions.Asynchronous | FileOptions.DeleteOnClose);
-        }
-        catch (Exception exception)
-        {
-            TryDelete(temporaryPath);
-            if (exception is OperationCanceledException)
-            {
-                throw;
-            }
-
-            throw SshErrorMapper.MapFileSystem(exception, fullPath, "download over SCP");
-        }
+            finally { _transferLock.Release(); }
+        }, cancellationToken));
     }
 
     /// <inheritdoc />
-    public async Task<Stream> OpenWriteAsync(
+    public Task<Stream> OpenWriteAsync(
         string path,
         long? expectedSize,
         IProgress<TransferProgress>? progress,
         CancellationToken cancellationToken)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        cancellationToken.ThrowIfCancellationRequested();
         var fullPath = NormalizePath(path);
-        var client = await EnsureScpClientAsync(cancellationToken).ConfigureAwait(false);
         var temporaryPath = Path.Combine(
             Path.GetTempPath(),
             "surge-scp-" + Guid.NewGuid().ToString("N") + ".tmp");
@@ -209,9 +197,9 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 81920,
                 FileOptions.Asynchronous);
 
-            return new DeferredUploadStream(file, temporaryPath,
-                token => UploadFileAsync(client, temporaryPath, fullPath, expectedSize, progress, token),
-                cancellationToken);
+            return Task.FromResult<Stream>(new DeferredUploadStream(file, temporaryPath,
+                token => UploadFileAsync(temporaryPath, fullPath, expectedSize, progress, token),
+                cancellationToken));
         }
         catch (Exception exception)
         {
@@ -333,7 +321,6 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     }
 
     internal async Task UploadFileAsync(
-        ScpClient client,
         string localPath,
         string remotePath,
         long? expectedSize,
@@ -345,6 +332,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
             await _transferLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                var client = await EnsureScpClientAsync(cancellationToken).ConfigureAwait(false);
                 using var cancelTransfer = cancellationToken.Register(() =>
                 {
                     try { client.Disconnect(); } catch (Exception) { }
@@ -548,7 +536,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
     internal static RemoteFileEntry? ParseEntry(string parentPath, string line)
     {
-        var match = ListingPattern.Match(line.TrimStart().TrimEnd('\r'));
+        var match = ListingPattern.Match(line.TrimStart());
         if (!match.Success)
         {
             return null;
@@ -611,7 +599,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         var mode = 0;
         for (var index = 0; index < 9; index++)
         {
-            if (permissions[index] != '-')
+            if (permissions[index] is 'r' or 'w' or 'x' or 's' or 't')
             {
                 mode |= 1 << (8 - index);
             }
@@ -687,21 +675,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         return string.Compare(left.Name, right.Name, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string NormalizePath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return "/";
-        }
-
-        var normalized = path.Replace('\\', '/').Trim();
-        if (!normalized.StartsWith('/'))
-        {
-            normalized = "/" + normalized;
-        }
-
-        return normalized.Length > 1 ? normalized.TrimEnd('/') : normalized;
-    }
+    internal static string NormalizePath(string path) => PosixPath.Resolve(path);
 
     private static string GetParent(string path)
     {

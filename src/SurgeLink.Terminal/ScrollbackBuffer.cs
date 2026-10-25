@@ -6,7 +6,7 @@ namespace SurgeLink.Terminal;
 /// </summary>
 internal sealed class ScrollbackBuffer
 {
-    private readonly int _limit;
+    private int _limit;
     private CellLine?[] _items;
     private int _head;
     private int _count;
@@ -22,6 +22,17 @@ internal sealed class ScrollbackBuffer
 
     /// <summary>Configured cap.</summary>
     public int Limit => _limit;
+
+    public void SetLimit(int limit)
+    {
+        var keep = Math.Min(_count, limit);
+        var items = new CellLine?[Math.Max(1, Math.Max(keep, Math.Min(limit, 64)))];
+        for (var index = 0; index < keep; index++) items[index] = this[_count - keep + index];
+        _items = items;
+        _head = 0;
+        _count = keep;
+        _limit = limit;
+    }
 
     /// <summary>Reads a stored line by index; index 0 is the oldest line.</summary>
     public CellLine this[int index] => _items[(_head + index) % _items.Length]!;

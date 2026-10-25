@@ -6,6 +6,24 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 
 public sealed class ScpFileSystemTests
 {
+    [Theory]
+    [InlineData("rwSr--r--", 0x9A4)]
+    [InlineData("rw-r-Sr--", 0x5A4)]
+    [InlineData("rw-r--r-T", 0x3A4)]
+    [InlineData("rwsr-sr-t", 0xFED)]
+    public void SpecialPermissionsDoNotInventExecuteBits(string permissions, int expected)
+    {
+        var entry = ScpFileSystem.ParseEntry("/data", $"-{permissions} 1 root root 12 Jan 1 2026 file");
+        Assert.NotNull(entry);
+        Assert.Equal(expected, entry.UnixMode);
+    }
+
+    [Theory]
+    [InlineData("/data/..\\victim.txt")]
+    [InlineData("/data/report.txt ")]
+    [InlineData("/data/link/../target")]
+    public void CommandPathsKeepTheirExactPosixMeaning(string path) => Assert.Equal(path, ScpFileSystem.NormalizePath(path));
+
     [Fact]
     public void ParseEntryReadsBusyBoxDirectoryLine()
     {

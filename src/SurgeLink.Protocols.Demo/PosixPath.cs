@@ -6,7 +6,7 @@ internal static class PosixPath
     /// <summary>Normalises a POSIX path against <paramref name="currentDirectory"/>.</summary>
     public static string Normalize(string path, string currentDirectory)
     {
-        if (string.IsNullOrWhiteSpace(path))
+        if (string.IsNullOrEmpty(path))
         {
             return currentDirectory;
         }

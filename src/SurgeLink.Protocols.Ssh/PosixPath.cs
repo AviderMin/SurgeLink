@@ -13,18 +13,7 @@ public static class PosixPath
     /// <returns>An absolute, normalised path without a trailing separator (except for the root).</returns>
     public static string Normalize(string? path, string? currentDirectory = null, string? homeDirectory = null)
     {
-        var raw = ExpandHome(path?.Trim().Replace('\\', '/') ?? string.Empty, homeDirectory);
-
-        if (raw.Length == 0)
-        {
-            raw = string.IsNullOrWhiteSpace(currentDirectory) ? "/" : currentDirectory!;
-        }
-
-        if (!raw.StartsWith('/'))
-        {
-            var baseDirectory = string.IsNullOrWhiteSpace(currentDirectory) ? "/" : currentDirectory!;
-            raw = baseDirectory.EndsWith('/') ? baseDirectory + raw : baseDirectory + "/" + raw;
-        }
+        var raw = Resolve(path, currentDirectory, homeDirectory);
 
         var segments = new List<string>();
         foreach (var segment in raw.Split('/'))
@@ -58,12 +47,12 @@ public static class PosixPath
     /// <param name="path">Path to append; may be absolute.</param>
     public static string Combine(string? baseDirectory, string? path)
     {
-        if (string.IsNullOrWhiteSpace(path))
+        if (string.IsNullOrEmpty(path))
         {
             return Normalize(baseDirectory);
         }
 
-        return path!.TrimStart().StartsWith('/')
+        return path!.StartsWith('/')
             ? Normalize(path)
             : Normalize(path, Normalize(baseDirectory));
     }
@@ -82,6 +71,18 @@ public static class PosixPath
         return index < 0 ? normalised : normalised[(index + 1)..];
     }
 
+    /// <summary>Resolves a remote path without changing literal names or evaluating
+    /// dot segments locally: the server must resolve those through symbolic links.</summary>
+    public static string Resolve(string? path, string? currentDirectory = null, string? homeDirectory = null)
+    {
+        var raw = ExpandHome(path ?? string.Empty, homeDirectory);
+        if (raw.Contains('\0')) throw new ArgumentException("Remote paths cannot contain NUL.", nameof(path));
+        var directory = string.IsNullOrEmpty(currentDirectory) ? "/" : currentDirectory;
+        if (!directory.StartsWith('/')) directory = "/" + directory;
+        if (raw.Length == 0) return directory;
+        return raw.StartsWith('/') ? raw : directory.TrimEnd('/') + "/" + raw;
+    }
+
     private static string ExpandHome(string raw, string? homeDirectory)
     {
         if (string.IsNullOrEmpty(homeDirectory))
@@ -89,7 +90,8 @@ public static class PosixPath
             return raw;
         }
 
-        var home = homeDirectory!.EndsWith('/') ? homeDirectory[..^1] : homeDirectory;
+        var home = homeDirectory!.TrimEnd('/');
+        if (home.Length == 0) home = "/";
         if (raw == "~")
         {
             return home;
@@ -97,7 +99,7 @@ public static class PosixPath
 
         if (raw.StartsWith("~/", StringComparison.Ordinal))
         {
-            return home + raw[1..];
+            return home.TrimEnd('/') + raw[1..];
         }
 
         return raw;

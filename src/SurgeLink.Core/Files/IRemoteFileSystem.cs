@@ -51,7 +51,7 @@ public interface IRemoteFileSystem
     /// <summary>Renames or moves an entry.</summary>
     Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken);
 
-    /// <summary>Publishes a same-directory staging file. Must fail without replacing an existing
+    /// <summary>Publishes a staging file on the destination's filesystem. Must fail without replacing an existing
     /// target when overwrite is false. With overwrite, replace atomically or fail safely.</summary>
     Task CommitWriteAsync(string temporaryPath, string destinationPath, bool overwrite, CancellationToken cancellationToken) =>
         Task.FromException(new NotSupportedException("This protocol does not support safe staged writes."));
