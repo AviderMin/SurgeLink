@@ -1,6 +1,7 @@
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml.Controls;
 using SurgeLink.App.Localization;
+using SurgeLink.App.Services;
 using SurgeLink.Core.Files;
 using Windows.Storage;
 
@@ -20,7 +21,9 @@ internal static class SftpViewCommands
         string workingDirectory,
         FileTransferQueue queue,
         Func<Task<StorageFile?>> pickFile,
-        Action<SftpBanner?> setBanner)
+        Action<SftpBanner?> setBanner,
+        InteractionService interaction,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -32,9 +35,12 @@ internal static class SftpViewCommands
 
             var localPath = file.Path;
             var name = string.IsNullOrEmpty(file.Name) ? Path.GetFileName(localPath) : file.Name;
-            queue.Enqueue(SftpOperations.CreateUpload(workingDirectory, localPath, name), fileSystem);
+            var item = await PrepareUploadAsync(fileSystem, workingDirectory, localPath, name, false, interaction, cancellationToken).ConfigureAwait(true);
+            if (item is null) { return; }
+            queue.Enqueue(item, fileSystem);
             setBanner(null);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             setBanner(new SftpBanner(InfoBarSeverity.Error, Str.T("sftp.command.upload", "Upload"), ex.Message));
@@ -44,27 +50,59 @@ internal static class SftpViewCommands
     /// <summary>Queues the selected folder, including nested and empty directories.</summary>
     public static async Task UploadFolderAsync(
         IRemoteFileSystem fileSystem, string workingDirectory, FileTransferQueue queue,
-        Func<Task<StorageFolder?>> pickFolder, Action<SftpBanner?> setBanner)
+        Func<Task<StorageFolder?>> pickFolder, Action<SftpBanner?> setBanner,
+        InteractionService interaction, CancellationToken cancellationToken)
     {
         try
         {
             var folder = await pickFolder().ConfigureAwait(true);
             if (folder is null) { return; }
-            queue.Enqueue(new TransferItem
-            {
-                Id = Guid.NewGuid().ToString("n"),
-                Direction = TransferDirection.Upload,
-                Name = folder.Name,
-                LocalPath = folder.Path,
-                RemotePath = SftpPath.Combine(workingDirectory, folder.Name),
-                IsDirectory = true,
-            }, fileSystem);
+            var item = await PrepareUploadAsync(fileSystem, workingDirectory, folder.Path, folder.Name, true, interaction, cancellationToken).ConfigureAwait(true);
+            if (item is null) { return; }
+            queue.Enqueue(item, fileSystem);
             setBanner(null);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             setBanner(new SftpBanner(InfoBarSeverity.Error, Str.T("sftp.command.uploadFolder", "Upload folder"), ex.Message));
         }
+    }
+
+    private static async Task<TransferItem?> PrepareUploadAsync(IRemoteFileSystem fileSystem, string directory,
+        string localPath, string name, bool isDirectory, InteractionService interaction, CancellationToken token)
+    {
+        var destination = SftpPath.Combine(directory, name);
+        var conflicts = await UploadConflicts.FindAsync(fileSystem, localPath, destination, isDirectory, token).ConfigureAwait(true);
+        IReadOnlySet<string> overwrite = new HashSet<string>(StringComparer.Ordinal);
+        if (conflicts.Count > 0)
+        {
+            var message = Str.F("sftp.upload.conflicts", "{0} existing destination(s). Choose how to handle this upload.", conflicts.Count)
+                + "\n\n" + string.Join("\n", conflicts.Take(10));
+            var choice = await interaction.RequestChoiceAsync(new ChoiceRequest(
+                Str.T("sftp.upload.conflictTitle", "Upload conflict"), message,
+                Str.T("sftp.upload.rename", "Rename upload"), Str.T("sftp.upload.overwrite", "Overwrite existing files"),
+                Str.T("sftp.upload.skip", "Skip upload")), token).ConfigureAwait(true);
+            if (choice == 0) { return null; }
+            if (choice == 1)
+            {
+                var siblings = await fileSystem.ListAsync(directory, token).ConfigureAwait(true);
+                var names = siblings.Select(entry => entry.Name).ToHashSet(StringComparer.Ordinal);
+                var suffix = 1;
+                var stem = isDirectory ? name : Path.GetFileNameWithoutExtension(name);
+                var extension = isDirectory ? string.Empty : Path.GetExtension(name);
+                do { destination = SftpPath.Combine(directory, stem + " (" + suffix++ + ")" + extension); }
+                while (names.Contains(destination[(destination.LastIndexOf('/') + 1)..]));
+            }
+            else { overwrite = conflicts.ToHashSet(StringComparer.Ordinal); }
+        }
+        token.ThrowIfCancellationRequested();
+        return new TransferItem
+        {
+            Id = Guid.NewGuid().ToString("n"), Direction = TransferDirection.Upload, Name = name,
+            LocalPath = localPath, RemotePath = destination, IsDirectory = isDirectory, OverwritePaths = overwrite,
+            TotalBytes = isDirectory ? 0 : new FileInfo(localPath).Length,
+        };
     }
 
     /// <summary>Picks a local destination; folders download as ZIP archives.</summary>

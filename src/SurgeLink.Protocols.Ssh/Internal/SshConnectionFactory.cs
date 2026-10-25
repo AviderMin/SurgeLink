@@ -57,14 +57,24 @@ internal sealed class SshConnectionFactory
     public TimeSpan KeepAliveInterval => _request.KeepAliveInterval;
 
     /// <summary>Creates a verifier bound to the supplied cancellation token.</summary>
-    public HostKeyVerifier CreateVerifier(CancellationToken cancellationToken) =>
-        new(_request.Host, Port, _context.HostKeyStore, _context.HostKeyPrompt, _logger, cancellationToken);
+    public HostKeyVerifier CreateVerifier(CancellationToken cancellationToken, SshConnectBudget? budget = null) =>
+        new(_request.Host, Port, _context.HostKeyStore,
+            _context.HostKeyPrompt is { } prompt && budget is not null
+                ? async (challenge, token) =>
+                {
+                    budget.Pause();
+                    try { return await prompt(challenge, token).ConfigureAwait(false); }
+                    finally { budget.Resume(); }
+                }
+                : _context.HostKeyPrompt, _logger, cancellationToken);
+
+    internal SshConnectBudget CreateConnectBudget(CancellationToken token) => new(_options.ConnectTimeout, token);
 
     /// <summary>Creates connection settings with authentication methods and algorithm preferences applied.</summary>
     /// <param name="cancellationToken">Token observed by interactive prompts.</param>
-    public ConnectionInfo CreateConnectionInfo(CancellationToken cancellationToken)
+    public ConnectionInfo CreateConnectionInfo(CancellationToken cancellationToken, SshConnectBudget? budget = null)
     {
-        var methods = BuildAuthenticationMethods(cancellationToken);
+        var methods = BuildAuthenticationMethods(budget, cancellationToken);
         var info = new ConnectionInfo(_request.Host, Port, _request.Username, methods)
         {
             Timeout = _options.ConnectTimeout,
@@ -75,7 +85,7 @@ internal sealed class SshConnectionFactory
         return info;
     }
 
-    private SshAuthenticationMethod[] BuildAuthenticationMethods(CancellationToken cancellationToken)
+    private SshAuthenticationMethod[] BuildAuthenticationMethods(SshConnectBudget? budget, CancellationToken cancellationToken)
     {
         switch (_request.Authentication)
         {
@@ -92,7 +102,7 @@ internal sealed class SshConnectionFactory
                 {
                     new PasswordAuthenticationMethod(_request.Username, password),
                 };
-                var fallback = CreateKeyboardInteractiveMethod(password, cancellationToken);
+                var fallback = CreateKeyboardInteractiveMethod(password, budget, cancellationToken);
                 if (fallback is not null)
                 {
                     passwordMethods.Add(fallback);
@@ -111,7 +121,7 @@ internal sealed class SshConnectionFactory
                         ProtocolFailureKind.Configuration);
                 }
 
-                return new SshAuthenticationMethod[] { CreateKeyboardInteractiveMethod(null, cancellationToken)! };
+                return new SshAuthenticationMethod[] { CreateKeyboardInteractiveMethod(null, budget, cancellationToken)! };
 
             default:
                 throw new ProtocolException(
@@ -155,7 +165,7 @@ internal sealed class SshConnectionFactory
         return new PrivateKeyAuthenticationMethod(_request.Username, keyFile);
     }
 
-    private KeyboardInteractiveAuthenticationMethod? CreateKeyboardInteractiveMethod(string? password, CancellationToken cancellationToken)
+    private KeyboardInteractiveAuthenticationMethod? CreateKeyboardInteractiveMethod(string? password, SshConnectBudget? budget, CancellationToken cancellationToken)
     {
         var prompt = _context.InteractivePrompt;
         if (prompt is null && string.IsNullOrEmpty(password))
@@ -164,11 +174,16 @@ internal sealed class SshConnectionFactory
         }
 
         var method = new KeyboardInteractiveAuthenticationMethod(_request.Username);
-        method.AuthenticationPrompt += (_, args) => AnswerPrompts(args, prompt, password, cancellationToken);
+        method.AuthenticationPrompt += (_, args) =>
+        {
+            budget?.Pause();
+            try { AnswerPrompts(args, prompt, password, cancellationToken); }
+            finally { budget?.Resume(); }
+        };
         return method;
     }
 
-    private void AnswerPrompts(
+    internal void AnswerPrompts(
         AuthenticationPromptEventArgs args,
         Func<InteractivePrompt, CancellationToken, Task<string?>>? prompt,
         string? password,
@@ -180,7 +195,8 @@ internal sealed class SshConnectionFactory
         for (var i = 0; i < count; i++)
         {
             var item = args.Prompts[i];
-            if (prompt is null)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (password is not null && IsPasswordChallenge(item.Request, item.IsEchoed))
             {
                 answers[i] = password;
                 continue;
@@ -192,13 +208,24 @@ internal sealed class SshConnectionFactory
                 !item.IsEchoed,
                 i,
                 args.Prompts.Count);
-            answers[i] = AskPrompt(prompt, request, cancellationToken) ?? password;
+            answers[i] = prompt is null ? null : AskPrompt(prompt, request, cancellationToken);
         }
 
         for (var i = 0; i < count; i++)
         {
             args.Prompts[i].Response = answers[i] ?? string.Empty;
         }
+    }
+
+    internal static bool IsPasswordChallenge(string question, bool isEchoed)
+    {
+        if (isEchoed) { return false; }
+        var text = question.Trim().TrimEnd(':').Trim();
+        return text.Equals("password", StringComparison.OrdinalIgnoreCase)
+            || text.Equals("密码", StringComparison.Ordinal)
+            || text.Equals("密码：", StringComparison.Ordinal)
+            || (text.EndsWith("'s password", StringComparison.OrdinalIgnoreCase)
+                && !text.Contains("one-time", StringComparison.OrdinalIgnoreCase));
     }
 
     private string? AskPrompt(

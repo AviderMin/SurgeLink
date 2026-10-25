@@ -41,6 +41,9 @@ public sealed class TransferItem
     /// <summary>Transfers a directory recursively; downloads produce a ZIP archive.</summary>
     public bool IsDirectory { get; init; }
 
+    /// <summary>Exact existing files the user explicitly allowed this upload to replace.</summary>
+    public IReadOnlySet<string> OverwritePaths { get; init; } = new HashSet<string>(StringComparer.Ordinal);
+
     /// <summary>Total bytes when known, otherwise 0.</summary>
     public long TotalBytes { get; set; }
 

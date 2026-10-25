@@ -9,6 +9,7 @@ public enum InteractionKind
     Secret,
     Confirmation,
     Text,
+    Choice,
     Error,
     Info,
 }
@@ -59,6 +60,9 @@ public sealed record ConfirmationRequest(string Title, string Message, string Pr
 
 /// <summary>Free text request.</summary>
 public sealed record TextRequest(string Title, string Label, string? InitialValue = null);
+
+/// <summary>Three-way choice whose close button is the safe default.</summary>
+public sealed record ChoiceRequest(string Title, string Message, string PrimaryText, string SecondaryText, string CloseText);
 
 /// <summary>Notification shown as a dialog.</summary>
 public sealed record MessageRequest(string Title, string Message);
@@ -129,6 +133,13 @@ public sealed class InteractionService
         var pending = Enqueue(InteractionKind.Text, request, cancellationToken);
         var result = await AwaitAnswerAsync(pending, cancellationToken).ConfigureAwait(false);
         return result as string;
+    }
+
+    /// <summary>Returns 1 for primary, 2 for secondary, or 0 when dismissed.</summary>
+    public async Task<int> RequestChoiceAsync(ChoiceRequest request, CancellationToken cancellationToken)
+    {
+        var pending = Enqueue(InteractionKind.Choice, request, cancellationToken);
+        return await AwaitAnswerAsync(pending, cancellationToken).ConfigureAwait(false) is int choice ? choice : 0;
     }
 
     /// <summary>Shows a blocking error message.</summary>

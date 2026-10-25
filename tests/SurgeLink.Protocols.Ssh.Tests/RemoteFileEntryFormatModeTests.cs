@@ -11,6 +11,10 @@ public sealed class RemoteFileEntryFormatModeTests
     [InlineData(0x1FF, false, "-rwxrwxrwx")]
     [InlineData(0x000, false, "----------")]
     [InlineData(0x1A0, false, "-rw-r-----")]
+    [InlineData(0x9A4, false, "-rwSr--r--")]
+    [InlineData(0x5A4, false, "-rw-r-Sr--")]
+    [InlineData(0x3A4, false, "-rw-r--r-T")]
+    [InlineData(0xFFF, true, "drwsrwsrwt")]
     public void FormatModeRendersUnixBits(int mode, bool isDirectory, string expected)
     {
         Assert.Equal(expected, RemoteFileEntry.FormatMode(mode, isDirectory));

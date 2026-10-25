@@ -8,7 +8,7 @@ namespace SurgeLink.Protocols.Ssh;
 
 /// <summary>
 /// SSH protocol plugin: interactive shell, SFTP/SCP file system and Linux monitoring
-/// over a single SSH.NET connection.
+/// within one workspace session. File capabilities authenticate separate transports.
 /// </summary>
 public sealed class SshProtocolPlugin : IProtocolPlugin
 {
@@ -42,15 +42,14 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
         var logger = context.CreateLogger<SshSession>();
         var options = new SshProtocolOptions(request);
         var factory = new SshConnectionFactory(request, options, context, logger);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(options.ConnectTimeout);
+        using var timeout = factory.CreateConnectBudget(cancellationToken);
 
         ConnectionInfo connectionInfo;
         HostKeyVerifier verifier;
         try
         {
-            connectionInfo = factory.CreateConnectionInfo(timeout.Token);
-            verifier = factory.CreateVerifier(timeout.Token);
+            connectionInfo = factory.CreateConnectionInfo(timeout.Token, timeout);
+            verifier = factory.CreateVerifier(timeout.Token, timeout);
         }
         catch (ProtocolException)
         {
@@ -71,7 +70,7 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
                 client.KeepAliveInterval = ClampKeepAlive(request.KeepAliveInterval);
             }
 
-            await client.ConnectAsync(timeout.Token).ConfigureAwait(false);
+            await timeout.ConnectAsync(client).ConfigureAwait(false);
         }
         catch (OperationCanceledException exception)
         {

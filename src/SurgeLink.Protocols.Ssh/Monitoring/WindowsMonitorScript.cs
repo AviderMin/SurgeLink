@@ -137,7 +137,7 @@ public static class WindowsMonitorScript
         return script.Replace(LimitPlaceholder, Math.Clamp(limit, 1, PsParser.MaximumProcessCount).ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
-    /// <summary>Builds the <c>Get-Process</c> fallback top process script; CPU seconds are normalised by process age.</summary>
+    /// <summary>Builds the fallback using CPU time deltas across a short sampling window.</summary>
     /// <param name="limit">Maximum number of rows.</param>
     public static string BuildGetProcessScript(int limit)
     {
@@ -145,19 +145,27 @@ public static class WindowsMonitorScript
             try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
             $ErrorActionPreference = 'SilentlyContinue'
             $ProgressPreference = 'SilentlyContinue'
-            $now = Get-Date
-            Get-Process |
-                Sort-Object CPU -Descending |
-                Select-Object -First __LIMIT__ |
-                ForEach-Object {
-                    $age = 0.0
-                    try { $age = ($now - $_.StartTime).TotalSeconds } catch { $age = 0.0 }
-                    $percent = 0.0
-                    if ($age -gt 0 -and $null -ne $_.CPU) { $percent = [math]::Round(($_.CPU / $age) * 100.0, 1) }
+            $before = @{}
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            Get-Process | ForEach-Object {
+                try { $before[$_.Id] = @{ Cpu = $_.TotalProcessorTime.TotalSeconds; Start = $_.StartTime.ToUniversalTime().Ticks; At = $clock.Elapsed.TotalSeconds } } catch { }
+            }
+            Start-Sleep -Milliseconds 500
+            $rows = @(Get-Process | ForEach-Object {
+                try {
+                    $previous = $before[$_.Id]
+                    if ($null -eq $previous -or $previous.Start -ne $_.StartTime.ToUniversalTime().Ticks) { return }
+                    $seconds = $clock.Elapsed.TotalSeconds - $previous.At
+                    $delta = [math]::Max(0, $_.TotalProcessorTime.TotalSeconds - $previous.Cpu)
+                    $percent = [math]::Round($delta / $seconds * 100.0, 1)
                     $threads = 0
                     try { $threads = @($_.Threads).Count } catch { $threads = 0 }
-                    Write-Output ([string]$_.Id + '|' + [string]$_.ProcessName + '|' + [string]$percent + '|' + [string]$_.WorkingSet64 + '|' + [string]$threads)
-                }
+                    [pscustomobject]@{ Id = $_.Id; Name = $_.ProcessName; Percent = $percent; Memory = $_.WorkingSet64; Threads = $threads }
+                } catch { }
+            })
+            $rows | Sort-Object Percent -Descending | Select-Object -First __LIMIT__ | ForEach-Object {
+                Write-Output ([string]$_.Id + '|' + [string]$_.Name + '|' + [string]$_.Percent + '|' + [string]$_.Memory + '|' + [string]$_.Threads)
+            }
             """;
 
         return script.Replace(LimitPlaceholder, Math.Clamp(limit, 1, PsParser.MaximumProcessCount).ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);

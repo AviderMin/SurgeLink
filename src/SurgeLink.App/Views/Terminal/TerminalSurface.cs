@@ -57,6 +57,7 @@ internal sealed partial class TerminalSurface : ContentControl
     private readonly TextBlock _cursorGlyph;
     private readonly DispatcherQueueTimer? _blinkTimer;
     private readonly StringBuilder _runBuilder = new(64);
+    private readonly HashSet<TextBlock> _blinkingRuns = new();
 
     private string _fontFamilyName = string.Empty;
     private double _fontSize;
@@ -228,6 +229,7 @@ internal sealed partial class TerminalSurface : ContentControl
         }
 
         UpdateGridSize();
+        StartBlink();
         InvalidatePaint(force: true);
         _logger?.LogInformation(
             "Terminal surface loaded: size={Width}x{Height}, grid={Columns}x{Rows}",
@@ -285,6 +287,7 @@ internal sealed partial class TerminalSurface : ContentControl
     {
         _hasFocus = true;
         _blinkOn = true;
+        foreach (var run in _blinkingRuns) { run.Opacity = 1; }
         StartBlink();
         InvalidatePaint(force: true);
     }
@@ -292,8 +295,6 @@ internal sealed partial class TerminalSurface : ContentControl
     private void OnLostFocus(object sender, RoutedEventArgs e)
     {
         _hasFocus = false;
-        StopBlink();
-        _blinkOn = true;
         InvalidatePaint(force: true);
     }
 
@@ -317,7 +318,7 @@ internal sealed partial class TerminalSurface : ContentControl
     {
         _blinkOn = !_blinkOn;
 
-        // Blinking only toggles the cursor layer: no cell repaint is involved.
         _cursorLayer.Opacity = _blinkOn ? 1 : 0;
+        foreach (var run in _blinkingRuns) { run.Opacity = _blinkOn ? 1 : 0; }
     }
 }

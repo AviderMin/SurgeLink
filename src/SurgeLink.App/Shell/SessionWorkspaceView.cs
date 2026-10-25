@@ -111,7 +111,7 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
             monitorVisited.Current
                 ? Border(Component<MonitorView, MonitorViewProps>(new MonitorViewProps(
                     tab.Session.Monitor, services.Settings,
-                    props.View == SessionViewKind.Monitor && activeTabId == tab.Id)))
+                    props.View == SessionViewKind.Monitor && activeTabId == tab.Id && tab.State == SurgeLink.Core.Sessions.ConnectionState.Connected)))
                     .IsVisible(props.View == SessionViewKind.Monitor)
                     .Grid(row: 1).WithKey("monitor-view")
                 : null,

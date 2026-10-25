@@ -268,8 +268,9 @@ public sealed class FileTransferQueue : IAsyncDisposable
 
         await using var source = new FileStream(localPath ?? item.LocalPath, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, useAsync: true);
 
-        await RemoteFileWrite.WriteAsync(fileSystem, remotePath ?? item.RemotePath, source.Length,
-            null, true, async (target, writeToken) =>
+        var destination = remotePath ?? item.RemotePath;
+        await RemoteFileWrite.WriteAsync(fileSystem, destination, source.Length,
+            null, item.OverwritePaths.Contains(destination), async (target, writeToken) =>
             {
                 var buffer = new byte[BufferSize];
                 long done = 0;

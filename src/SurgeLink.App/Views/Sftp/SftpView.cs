@@ -35,6 +35,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         var queue = Props.Transfers;
         var pickers = UseContext(WindowStoragePicker.Context)
             ?? throw new InvalidOperationException("The file manager requires its owning window's storage picker.");
+        var interaction = UseContext(AppServices.ReactorContext)!.Interaction;
 
         // Hooks: constant order and count on every render.
         var settings = UseExternalStore(settingsStore.Subscribe, () => settingsStore.Current);
@@ -319,7 +320,8 @@ internal sealed class SftpView : Component<SftpViewProps>
         void Upload()
         {
             _ = SftpViewCommands.UploadAsync(
-                fileSystem!, cwd, queue, () => pickers.PickFileAsync(), setBanner);
+                fileSystem!, cwd, queue, () => pickers.PickFileAsync(), setBanner, interaction,
+                operationLifetime.Current?.Token ?? new CancellationToken(true));
         }
 
         void Download()
@@ -577,7 +579,8 @@ internal sealed class SftpView : Component<SftpViewProps>
                 setDialog(new SftpDialogState(SftpDialogKind.NewFolder));
             },
             Upload,
-            () => _ = SftpViewCommands.UploadFolderAsync(fileSystem, cwd, queue, pickers.PickFolderAsync, setBanner),
+            () => _ = SftpViewCommands.UploadFolderAsync(fileSystem, cwd, queue, pickers.PickFolderAsync, setBanner,
+                interaction, operationLifetime.Current?.Token ?? new CancellationToken(true)),
             Download,
             () => OpenRename(selected.Count == 1 ? selected[0] : null),
             () => OpenDelete(selected.Count == 1 ? selected[0] : null),

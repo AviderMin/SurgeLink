@@ -376,8 +376,9 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
     private async Task<SftpClient> ConnectClientAsync(CancellationToken cancellationToken)
     {
-        var connectionInfo = _factory.CreateConnectionInfo(cancellationToken);
-        var verifier = _factory.CreateVerifier(cancellationToken);
+        using var budget = _factory.CreateConnectBudget(cancellationToken);
+        var connectionInfo = _factory.CreateConnectionInfo(budget.Token, budget);
+        var verifier = _factory.CreateVerifier(budget.Token, budget);
         var client = new SftpClient(connectionInfo)
         {
             OperationTimeout = SftpOperationTimeout,
@@ -391,19 +392,24 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         client.HostKeyReceived += verifier.Handle;
         try
         {
-            await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+            await budget.ConnectAsync(client).ConfigureAwait(false);
             return client;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception)
         {
             client.HostKeyReceived -= verifier.Handle;
             client.Dispose();
+            if (!cancellationToken.IsCancellationRequested)
+                throw new ProtocolException($"Connecting SFTP to {_factory.Endpoint} timed out.", ProtocolFailureKind.Timeout, exception);
             throw;
         }
         catch (Exception exception)
         {
             client.HostKeyReceived -= verifier.Handle;
             client.Dispose();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (budget.IsCancellationRequested)
+                throw new ProtocolException($"Connecting SFTP to {_factory.Endpoint} timed out.", ProtocolFailureKind.Timeout, exception);
             if (verifier.RejectionReason is { Length: > 0 } reason)
             {
                 throw new ProtocolException(reason, ProtocolFailureKind.HostKey, exception);

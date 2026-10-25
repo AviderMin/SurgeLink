@@ -109,6 +109,7 @@ internal sealed partial class TerminalSurface
             _backgroundLayer.Children.Remove(background);
         }
 
+        foreach (var run in visuals.Runs) { _blinkingRuns.Remove(run); }
         visuals.Runs.Clear();
         visuals.Backgrounds.Clear();
     }

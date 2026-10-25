@@ -82,7 +82,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         var result = await RunAsync(
                 runner,
-                "LC_ALL=C ls -la " + Quote(fullPath),
+                BuildListingCommand(fullPath, directory: true),
                 "list directory",
                 fullPath,
                 cancellationToken)
@@ -114,7 +114,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         var result = await RunAsync(
                 runner,
-                "LC_ALL=C ls -ld " + Quote(fullPath),
+                BuildListingCommand(fullPath, directory: false),
                 "read file status",
                 fullPath,
                 cancellationToken)
@@ -338,12 +338,14 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                     try { client.Disconnect(); } catch (Exception) { }
                 });
                 cancellationToken.ThrowIfCancellationRequested();
+
                 progress?.Report(new TransferProgress(0, expectedSize, remotePath));
                 await Task.Run(
                         () => client.Upload(new FileInfo(localPath), remotePath),
                         cancellationToken)
                     .ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
+
                 progress?.Report(new TransferProgress(new FileInfo(localPath).Length, expectedSize, remotePath));
             }
             finally
@@ -390,20 +392,24 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 DisposeClient(commandClient);
             }
 
-            var connectionInfo = _factory.CreateConnectionInfo(cancellationToken);
-            var verifier = _factory.CreateVerifier(cancellationToken);
+            using var budget = _factory.CreateConnectBudget(cancellationToken);
+            var connectionInfo = _factory.CreateConnectionInfo(budget.Token, budget);
+            var verifier = _factory.CreateVerifier(budget.Token, budget);
             var client = new SshClient(connectionInfo);
             client.HostKeyReceived += verifier.Handle;
 
             try
             {
-                await Task.Run(client.Connect, cancellationToken).ConfigureAwait(false);
+                await budget.ConnectAsync(client).ConfigureAwait(false);
             }
             catch (Exception exception)
             {
                 client.HostKeyReceived -= verifier.Handle;
                 client.Dispose();
                 cancellationToken.ThrowIfCancellationRequested();
+
+                if (budget.IsCancellationRequested)
+                    throw new ProtocolException($"Connecting SCP file commands to {_factory.Endpoint} timed out.", ProtocolFailureKind.Timeout, exception);
 
                 if (verifier.RejectionReason is { Length: > 0 } reason)
                 {
@@ -460,8 +466,9 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 DisposeClient(old);
             }
 
-            var connectionInfo = _factory.CreateConnectionInfo(cancellationToken);
-            var verifier = _factory.CreateVerifier(cancellationToken);
+            using var budget = _factory.CreateConnectBudget(cancellationToken);
+            var connectionInfo = _factory.CreateConnectionInfo(budget.Token, budget);
+            var verifier = _factory.CreateVerifier(budget.Token, budget);
             var client = new ScpClient(connectionInfo, RemotePathTransformation.ShellQuote)
             {
                 OperationTimeout = ScpOperationTimeout,
@@ -470,13 +477,16 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
             try
             {
-                await Task.Run(client.Connect, cancellationToken).ConfigureAwait(false);
+                await budget.ConnectAsync(client).ConfigureAwait(false);
             }
             catch (Exception exception)
             {
                 client.HostKeyReceived -= verifier.Handle;
                 client.Dispose();
                 cancellationToken.ThrowIfCancellationRequested();
+
+                if (budget.IsCancellationRequested)
+                    throw new ProtocolException($"Connecting SCP transfer to {_factory.Endpoint} timed out.", ProtocolFailureKind.Timeout, exception);
 
                 if (verifier.RejectionReason is { Length: > 0 } reason)
                 {
@@ -534,7 +544,16 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         return result;
     }
 
-    internal static RemoteFileEntry? ParseEntry(string parentPath, string line)
+    private static string BuildListingCommand(string path, bool directory)
+    {
+        var command = "TZ=UTC LC_ALL=C ls " + (directory ? "-la " : "-ld ");
+        // GNU ls reports an explicit UTC timestamp; BusyBox/POSIX systems use
+        // the same UTC environment with the traditional listing as a fallback.
+        return command + "--time-style='+%b %e %Y-%m-%dT%H:%M:%SZ' " + Quote(path)
+            + " 2>/dev/null || " + command + Quote(path);
+    }
+
+    internal static RemoteFileEntry? ParseEntry(string parentPath, string line, DateTimeOffset? now = null)
     {
         var match = ListingPattern.Match(line.TrimStart());
         if (!match.Success)
@@ -586,7 +605,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
             FullPath = Combine(parentPath, name),
             Kind = kind,
             Size = size,
-            ModifiedUtc = ParseModified(match.Groups[7].Value, match.Groups[8].Value, match.Groups[9].Value),
+            ModifiedUtc = ParseModified(match.Groups[7].Value, match.Groups[8].Value, match.Groups[9].Value, now ?? DateTimeOffset.UtcNow),
             UnixMode = ParseMode(match.Groups[2].Value),
             Owner = match.Groups[4].Value,
             Group = match.Groups[5].Value,
@@ -623,8 +642,10 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         return mode;
     }
 
-    private static DateTimeOffset ParseModified(string monthText, string dayText, string timeText)
+    private static DateTimeOffset ParseModified(string monthText, string dayText, string timeText, DateTimeOffset now)
     {
+        if (DateTimeOffset.TryParseExact(timeText, "yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal, out var explicitTime)) { return explicitTime.ToUniversalTime(); }
         try
         {
             var month = DateTime.ParseExact(
@@ -633,7 +654,6 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 CultureInfo.InvariantCulture,
                 DateTimeStyles.AllowWhiteSpaces);
             var day = int.Parse(dayText, CultureInfo.InvariantCulture);
-            var now = DateTimeOffset.Now;
             DateTime local;
             if (timeText.Contains(':', StringComparison.Ordinal))
             {
@@ -642,15 +662,19 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                     "H:mm",
                     CultureInfo.InvariantCulture,
                     DateTimeStyles.AllowWhiteSpaces);
-                local = new DateTime(now.Year, month.Month, day, time.Hour, time.Minute, 0, DateTimeKind.Local);
+                var year = now.UtcDateTime.Year;
+                // A leap-day listing near New Year may belong to the previous year.
+                while (day > DateTime.DaysInMonth(year, month.Month)) { year--; }
+                local = new DateTime(year, month.Month, day, time.Hour, time.Minute, 0, DateTimeKind.Utc);
+                if (local > now.UtcDateTime.AddDays(1)) { local = local.AddYears(-1); }
             }
             else if (int.TryParse(timeText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var year))
             {
-                local = new DateTime(year, month.Month, day, 0, 0, 0, DateTimeKind.Local);
+                local = new DateTime(year, month.Month, day, 0, 0, 0, DateTimeKind.Utc);
             }
             else
             {
-                local = new DateTime(now.Year, month.Month, day, 0, 0, 0, DateTimeKind.Local);
+                return DateTimeOffset.MinValue;
             }
 
             return new DateTimeOffset(local).ToUniversalTime();

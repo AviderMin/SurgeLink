@@ -7,6 +7,11 @@ public static class ZhData
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         // ---- SFTP: toolbar -------------------------------------------------
+        ["sftp.upload.conflicts"] = "发现 {0} 个已存在的目标。请选择本次上传的处理方式。",
+        ["sftp.upload.conflictTitle"] = "上传冲突",
+        ["sftp.upload.rename"] = "重命名上传",
+        ["sftp.upload.overwrite"] = "覆盖已有文件",
+        ["sftp.upload.skip"] = "跳过本次上传",
         ["sftp.editor.conflict"] = "远程文件在加载后已被修改。请保留当前编辑内容，重新加载后再保存。",
         ["sftp.editor.waitForSave"] = "请等待当前操作完成后再关闭窗口。",
         ["sftp.editor.sessionClosed"] = "会话已关闭，请在关闭窗口前复制并保留未保存的文本。",

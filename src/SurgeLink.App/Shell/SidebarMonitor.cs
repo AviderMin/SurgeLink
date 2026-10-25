@@ -52,52 +52,21 @@ internal sealed class SidebarMonitor : Component<SidebarMonitorProps>
                     return () => { };
                 }
 
-                var cancellation = new CancellationTokenSource();
-                // Restart the history window when the monitor or sampling interval changes.
                 var history = new MonitorHistory();
                 historyRef.Current = history;
                 setSnapshot(null);
                 setError(null);
-                var interval = TimeSpan.FromSeconds(intervalSeconds);
-
-                _ = Task.Run(async () =>
-                {
-                    while (!cancellation.IsCancellationRequested)
+                var subscription = RemoteMonitorSampler.For(monitor).Subscribe(
+                    TimeSpan.FromSeconds(intervalSeconds), false, result =>
                     {
-                        try
+                        if (result.Snapshot is { } sample)
                         {
-                            var sample = await monitor.SampleAsync(cancellation.Token).ConfigureAwait(false);
-                            cancellation.Token.ThrowIfCancellationRequested();
                             history.Add(sample);
                             setSnapshot(sample);
-                            setError(null);
                         }
-                        catch (OperationCanceledException)
-                        {
-                            return;
-                        }
-                        catch (Exception ex)
-                        {
-                            if (cancellation.IsCancellationRequested)
-                            {
-                                return;
-                            }
-
-                            setError(ex.Message);
-                        }
-
-                        try
-                        {
-                            await Task.Delay(interval, cancellation.Token).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            return;
-                        }
-                    }
-                });
-
-                return () => cancellation.Cancel();
+                        setError(result.Error);
+                    });
+                return subscription.Dispose;
             },
             monitor,
             intervalSeconds);

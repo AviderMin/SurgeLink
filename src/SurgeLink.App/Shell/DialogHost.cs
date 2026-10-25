@@ -54,6 +54,7 @@ internal sealed class DialogHost : Component
             InteractionKind.Secret => BuildSecret((SecretRequest)pending.Request, answer, setAnswer, pending, interaction),
             InteractionKind.Confirmation => BuildConfirmation((ConfirmationRequest)pending.Request, pending, interaction),
             InteractionKind.Text => BuildText((TextRequest)pending.Request, answer, setAnswer, pending, interaction),
+            InteractionKind.Choice => BuildChoice((ChoiceRequest)pending.Request, pending, interaction),
             InteractionKind.Error => BuildMessage((MessageRequest)pending.Request, true, pending, interaction),
             _ => BuildMessage((MessageRequest)pending.Request, false, pending, interaction),
         };
@@ -69,6 +70,7 @@ internal sealed class DialogHost : Component
                     SecretRequest request => request.Title,
                     ConfirmationRequest request => request.Title,
                     TextRequest request => request.Title,
+                    ChoiceRequest request => request.Title,
                     MessageRequest request => request.Title,
                     _ => null,
                 };
@@ -209,6 +211,22 @@ internal sealed class DialogHost : Component
 
         return dialog.Set(DialogAutomation.Tag("Secret"));
     }
+
+    private static ContentDialogElement BuildChoice(ChoiceRequest request, PendingInteraction pending, InteractionService interaction) =>
+        ContentDialog(PrivacyDisplay.Mask(request.Title), TextBlock(request.Message).Private(request.Message).TextWrapping(TextWrapping.Wrap),
+            primaryButtonText: request.PrimaryText) with
+        {
+            IsOpen = true,
+            SecondaryButtonText = request.SecondaryText,
+            CloseButtonText = request.CloseText,
+            DefaultButton = ContentDialogButton.Close,
+            OnClosed = result => Finish(interaction, pending, result switch
+            {
+                ContentDialogResult.Primary => 1,
+                ContentDialogResult.Secondary => 2,
+                _ => 0,
+            }),
+        };
 
     private static ContentDialogElement BuildConfirmation(
         ConfirmationRequest request,

@@ -7,6 +7,22 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 public sealed class ScpFileSystemTests
 {
     [Theory]
+    [InlineData("Dec 31 12:00", 2025, 12, 31)]
+    [InlineData("Oct 25 18:00", 2026, 10, 25)]
+    [InlineData("Jan 1 2023", 2023, 1, 1)]
+    [InlineData("Oct 25 2026-10-25T02:03:04Z", 2026, 10, 25)]
+    public void ListingDatesUseUtcAndRollBackFutureYear(string date, int year, int month, int day)
+    {
+        var now = new DateTimeOffset(2026, 10, 25, 0, 0, 0, TimeSpan.Zero);
+        var entry = ScpFileSystem.ParseEntry("/data", "-rw-r--r-- 1 root root 12 " + date + " file", now)!;
+        Assert.Equal(year, entry.ModifiedUtc.Year);
+        Assert.Equal(month, entry.ModifiedUtc.Month);
+        Assert.Equal(day, entry.ModifiedUtc.Day);
+        Assert.Equal(TimeSpan.Zero, entry.ModifiedUtc.Offset);
+        if (date.Contains('T')) { Assert.Equal(2, entry.ModifiedUtc.Hour); Assert.Equal(4, entry.ModifiedUtc.Second); }
+    }
+
+    [Theory]
     [InlineData("rwSr--r--", 0x9A4)]
     [InlineData("rw-r-Sr--", 0x5A4)]
     [InlineData("rw-r--r-T", 0x3A4)]

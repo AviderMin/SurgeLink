@@ -20,6 +20,7 @@ public sealed class DemoSession : IProtocolSession
     {
         _logger = logger;
         _terminal = new DemoTerminal(request.Username, request.Host);
+        _terminal.Closed += OnTerminalClosed;
         _fileSystem = new DemoFileSystem();
         _monitor = new DemoMonitor();
         _state = ConnectionState.Connected;
@@ -74,8 +75,12 @@ public sealed class DemoSession : IProtocolSession
     public async ValueTask DisposeAsync()
     {
         await _terminal.DisposeAsync().ConfigureAwait(false);
+        _terminal.Closed -= OnTerminalClosed;
         SetState(ConnectionState.Disconnected, "Session closed");
     }
+
+    private void OnTerminalClosed(object? sender, EventArgs e) =>
+        SetState(ConnectionState.Disconnected, "Remote shell exited.");
 
     private void SetState(ConnectionState next, string? message = null)
     {

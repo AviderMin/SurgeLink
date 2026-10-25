@@ -55,77 +55,23 @@ internal sealed class MonitorView : Component<MonitorViewProps>
                     return () => { };
                 }
 
-                var cancellation = new CancellationTokenSource();
-                var interval = TimeSpan.FromSeconds(intervalSeconds);
-                var clock = history;
-
-                _ = Task.Run(async () =>
-                {
-                    while (!cancellation.IsCancellationRequested)
+                var subscription = RemoteMonitorSampler.For(target).Subscribe(
+                    TimeSpan.FromSeconds(intervalSeconds), true, result =>
                     {
-                        try
+                        if (result.Snapshot is { } sample)
                         {
-                            var sample = await target.SampleAsync(cancellation.Token).ConfigureAwait(false);
-
-                            IReadOnlyList<RemoteProcessInfo> top;
-                            try
-                            {
-                                top = await target.GetTopProcessesAsync(15, cancellation.Token).ConfigureAwait(false);
-                            }
-                            catch (OperationCanceledException)
-                            {
-                                throw;
-                            }
-                            catch (Exception)
-                            {
-                                // The process list is optional; the counters still render.
-                                top = Array.Empty<RemoteProcessInfo>();
-                            }
-
-                            cancellation.Token.ThrowIfCancellationRequested();
-                            clock.Add(sample);
+                            history.Add(sample);
                             retained.Snapshot = sample;
-                            retained.Processes = top;
-                            retained.Error = null;
+                            retained.Processes = result.Processes;
                             retained.UpdatedAt = DateTimeOffset.Now;
                             setSnapshot(sample);
-                            setProcesses(top);
-                            setError(null);
+                            setProcesses(result.Processes);
                             setUpdatedAt(retained.UpdatedAt);
                         }
-                        catch (OperationCanceledException)
-                        {
-                            return;
-                        }
-                        catch (Exception ex)
-                        {
-                            if (cancellation.IsCancellationRequested)
-                            {
-                                return;
-                            }
-
-                            retained.Error = ex.Message;
-                            setError(ex.Message);
-                        }
-
-                        // A manual refresh while paused takes exactly one sample.
-                        if (paused)
-                        {
-                            return;
-                        }
-
-                        try
-                        {
-                            await Task.Delay(interval, cancellation.Token).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            return;
-                        }
-                    }
-                });
-
-                return () => cancellation.Cancel();
+                        retained.Error = result.Error;
+                        setError(result.Error);
+                    }, once: paused);
+                return subscription.Dispose;
             },
             monitor!,
             intervalSeconds,

@@ -20,6 +20,7 @@ public sealed class DemoTerminal : IRemoteTerminal
     private Task? _pump;
     private int _closed;
     private int _closedRaised;
+    private int _disposed;
     private bool _lastInputWasCarriageReturn;
 
     internal DemoTerminal(string user, string host)
@@ -60,9 +61,12 @@ public sealed class DemoTerminal : IRemoteTerminal
     /// <inheritdoc />
     public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Volatile.Read(ref _closed) != 0) { return ValueTask.CompletedTask; }
         var text = Encoding.UTF8.GetString(data.Span);
         foreach (var ch in text)
         {
+            if (Volatile.Read(ref _closed) != 0) { break; }
             if (ch != '\n')
             {
                 _lastInputWasCarriageReturn = false;
@@ -125,11 +129,12 @@ public sealed class DemoTerminal : IRemoteTerminal
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _closed, 1) != 0)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
         }
 
+        Interlocked.Exchange(ref _closed, 1);
         _lifetime.Cancel();
         _outbox.Writer.TryComplete();
         if (_pump is not null)
@@ -144,6 +149,7 @@ public sealed class DemoTerminal : IRemoteTerminal
         }
 
         RaiseClosedOnce();
+        _lifetime.Dispose();
     }
 
     private void EmitBanner()
@@ -168,7 +174,7 @@ public sealed class DemoTerminal : IRemoteTerminal
         }
 
         Execute(command);
-        Emit(_prompt);
+        if (Volatile.Read(ref _closed) == 0) { Emit(_prompt); }
     }
 
     private void Execute(string command)
@@ -220,11 +226,8 @@ public sealed class DemoTerminal : IRemoteTerminal
                 break;
             case "exit":
                 Emit(Ansi.Paint("logout", "1;33") + Ansi.Crlf + "Connection to demo closed." + Ansi.Crlf);
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(120).ConfigureAwait(false);
-                    _outbox.Writer.TryComplete();
-                });
+                Interlocked.Exchange(ref _closed, 1);
+                _outbox.Writer.TryComplete();
                 break;
             default:
                 Emit(Ansi.Paint("demo-sh: " + name + ": command not found", "1;31") + Ansi.Crlf);
@@ -275,6 +278,7 @@ public sealed class DemoTerminal : IRemoteTerminal
         }
         finally
         {
+            Interlocked.Exchange(ref _closed, 1);
             RaiseClosedOnce();
         }
     }

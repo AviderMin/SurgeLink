@@ -56,6 +56,9 @@ public sealed record RemoteFileEntry
             buffer[i + 1] = (mode & bit) != 0 ? rwx[i % 3] : '-';
         }
 
+        if ((mode & 0x800) != 0) { buffer[3] = (mode & 0x40) != 0 ? 's' : 'S'; }
+        if ((mode & 0x400) != 0) { buffer[6] = (mode & 0x8) != 0 ? 's' : 'S'; }
+        if ((mode & 0x200) != 0) { buffer[9] = (mode & 0x1) != 0 ? 't' : 'T'; }
         return new string(buffer);
     }
 }

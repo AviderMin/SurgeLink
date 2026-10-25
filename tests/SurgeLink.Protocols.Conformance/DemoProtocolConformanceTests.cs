@@ -10,6 +10,23 @@ namespace SurgeLink.Protocols.Conformance;
 public sealed class DemoProtocolConformanceTests
 {
     [Fact]
+    public async Task ExitClosesTerminalAndDisconnectsSessionOnce()
+    {
+        await using var connection = await ConformanceSession.OpenAsync(ProtocolConformanceRegistry.Get("demo"));
+        var terminal = connection.Session.Terminal!;
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var closedCount = 0;
+        terminal.Closed += (_, _) => { Interlocked.Increment(ref closedCount); closed.TrySetResult(); };
+        await terminal.StartAsync(new TerminalStartOptions { Columns = 80, Rows = 24 }, CancellationToken.None);
+        await terminal.WriteAsync(Encoding.UTF8.GetBytes("exit\recho must-not-run\r"));
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(terminal.IsOpen);
+        Assert.Equal(SurgeLink.Core.Sessions.ConnectionState.Disconnected, connection.Session.State);
+        await connection.Session.DisposeAsync();
+        Assert.Equal(1, closedCount);
+    }
+
+    [Fact]
     public async Task ConnectingToFailHostThrowsNetworkProtocolException()
     {
         IProtocolUnderTest fixture = ProtocolConformanceRegistry.Get("demo");

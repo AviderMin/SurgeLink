@@ -103,7 +103,7 @@ internal sealed class SidebarView : Component<SidebarProps>
                     demoButton.Grid(column: 1)) with { ColumnSpacing = AppTheme.SpacingS }).Grid(row: 1),
                 body.Grid(row: 2),
                 Component<SidebarMonitor, SidebarMonitorProps>(new SidebarMonitorProps(
-                        props.Snapshot.ActiveTab?.Session.Monitor,
+                        props.Snapshot.ActiveTab is { State: SurgeLink.Core.Sessions.ConnectionState.Connected } activeTab ? activeTab.Session.Monitor : null,
                         props.Snapshot.ActiveTab is not null,
                         services.Settings))
                     .Grid(row: 3)) with

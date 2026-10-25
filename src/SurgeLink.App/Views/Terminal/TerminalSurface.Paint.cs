@@ -234,6 +234,16 @@ internal sealed partial class TerminalSurface
         block.FontWeight = (style.Attributes & CellAttributes.Bold) != 0 ? FontWeights.Bold : FontWeights.Normal;
         block.FontStyle = (style.Attributes & CellAttributes.Italic) != 0 ? FontStyle.Italic : FontStyle.Normal;
         block.TextDecorations = decorations;
+        if ((style.Attributes & CellAttributes.Blink) != 0)
+        {
+            _blinkingRuns.Add(block);
+            block.Opacity = _blinkOn ? 1 : 0;
+        }
+        else
+        {
+            _blinkingRuns.Remove(block);
+            block.Opacity = 1;
+        }
         Canvas.SetLeft(block, column * metrics.CellWidth);
         Canvas.SetTop(block, top);
         block.Visibility = Visibility.Visible;

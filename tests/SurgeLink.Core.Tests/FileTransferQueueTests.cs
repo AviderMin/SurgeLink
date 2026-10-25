@@ -7,6 +7,70 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class FileTransferQueueTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExistingUploadRequiresExplicitAuthorizationForThatPath(bool authorized)
+    {
+        using var temp = new TempDirectory();
+        var local = temp.File("config");
+        await File.WriteAllTextAsync(local, "replacement");
+        var fs = new FakeFileSystem();
+        fs.Files["/config"] = Encoding.UTF8.GetBytes("original");
+        fs.Listings["/"] = [new() { Name = "config", FullPath = "/config", Kind = RemoteEntryKind.File }];
+        var conflicts = await UploadConflicts.FindAsync(fs, local, "/config", false, CancellationToken.None);
+        Assert.Equal(new[] { "/config" }, conflicts);
+        var item = new TransferItem
+        {
+            Id = Guid.NewGuid().ToString("N"), Direction = TransferDirection.Upload, Name = "config", LocalPath = local, RemotePath = "/config",
+            OverwritePaths = (authorized ? conflicts : Array.Empty<string>()).ToHashSet(StringComparer.Ordinal),
+        };
+        await using var queue = new FileTransferQueue();
+        queue.Enqueue(item, fs);
+        Assert.True(await WaitAsync(() => !item.IsActive));
+        Assert.Equal(authorized ? TransferStatus.Completed : TransferStatus.Failed, item.Status);
+        Assert.Equal(authorized ? "replacement" : "original", Encoding.UTF8.GetString(fs.Files["/config"]));
+    }
+
+    [Fact]
+    public async Task FolderPreflightCollectsNestedConflictsWithoutWriting()
+    {
+        using var temp = new TempDirectory();
+        var folder = temp.File("folder");
+        Directory.CreateDirectory(Path.Combine(folder, "nested"));
+        await File.WriteAllTextAsync(Path.Combine(folder, "config"), "new");
+        await File.WriteAllTextAsync(Path.Combine(folder, "nested", "data"), "new");
+        var fs = new FakeFileSystem();
+        fs.Listings["/"] = [new() { Name = "folder", FullPath = "/folder", Kind = RemoteEntryKind.Directory }];
+        fs.Listings["/folder"] = [new() { Name = "config", FullPath = "/folder/config" }, new() { Name = "nested", FullPath = "/folder/nested", Kind = RemoteEntryKind.Directory }];
+        fs.Listings["/folder/nested"] = [new() { Name = "data", FullPath = "/folder/nested/data" }];
+        var conflicts = await UploadConflicts.FindAsync(fs, folder, "/folder", true, CancellationToken.None);
+        Assert.Equal(new[] { "/folder/config", "/folder/nested/data" }, conflicts.Order(StringComparer.Ordinal));
+        Assert.Empty(fs.Files);
+        Assert.Empty(fs.Directories);
+    }
+
+    [Fact]
+    public async Task AuthorizationForAnotherPathCannotReplaceAConcurrentUploadTarget()
+    {
+        using var temp = new TempDirectory();
+        var local = temp.File("config");
+        await File.WriteAllTextAsync(local, "replacement");
+        var fs = new FakeFileSystem();
+        // Simulate a target created after an empty listing/preflight.
+        fs.Files["/config"] = Encoding.UTF8.GetBytes("concurrent writer");
+        var item = new TransferItem
+        {
+            Id = Guid.NewGuid().ToString("N"), Direction = TransferDirection.Upload, Name = "config", LocalPath = local, RemotePath = "/config",
+            OverwritePaths = new HashSet<string>(StringComparer.Ordinal) { "/different-config" },
+        };
+        await using var queue = new FileTransferQueue();
+        queue.Enqueue(item, fs);
+        Assert.True(await WaitAsync(() => !item.IsActive));
+        Assert.Equal(TransferStatus.Failed, item.Status);
+        Assert.Equal("concurrent writer", Encoding.UTF8.GetString(fs.Files["/config"]));
+    }
+
     [Fact]
     public async Task SubscriberFailuresDoNotStopFollowingTransfersOrOtherSubscribers()
     {
@@ -463,6 +527,7 @@ public sealed class FileTransferQueueTests
 
         public Task CommitWriteAsync(string temporaryPath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
         {
+            if (!overwrite && Files.ContainsKey(destinationPath)) { throw new IOException("Destination already exists"); }
             Files[destinationPath] = Files[temporaryPath];
             Files.TryRemove(temporaryPath, out _);
             return Task.CompletedTask;
