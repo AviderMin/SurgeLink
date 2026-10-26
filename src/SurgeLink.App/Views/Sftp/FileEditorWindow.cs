@@ -30,7 +30,11 @@ internal sealed record FileEditorWindowProps(
 internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 {
     private const int MaximumEditorBytes = 4 * 1024 * 1024;
-    private ScrollViewer? _gutterScroll;
+    // The gutter scroll viewer is created during render, so it is published
+    // through a ref: a replaced element would otherwise leave the scroll
+    // handler pinned to a detached control.
+    private readonly Ref<ScrollViewer?> gutterRef = new(null);
+    private TextBox? _editor;
 
     public override Element Render()
     {
@@ -46,6 +50,11 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var dirty = !string.Equals(text, savedText, StringComparison.Ordinal);
         var (loadFailed, setLoadFailed) = UseState(false, threadSafe: true);
         var (confirmation, setConfirmation) = UseState(0);
+        // Caret offset, tracked independently of the text so the editor can put
+        // the caret back after a re-render. Reading it from the control while
+        // rendering is not an option: during a re-render the control still holds
+        // the previous value.
+        var (caret, setCaret) = UseState(0);
         var window = UseWindow();
         var pickers = UseMemo(() => window is null ? null : new WindowStoragePicker(window.NativeWindow), window!);
         var allowClose = UseRef(false);
@@ -64,6 +73,15 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var editorRef = UseRef<TextBox?>(null);
         var focusSearch = UseRef(false);
         var comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+
+        // One place that turns a text change into editor state, so the caret
+        // bookkeeping can never be forgotten by a caller.
+        void CommitText(int caretOffset, string value)
+        {
+            setText(value);
+            setCaret(caretOffset);
+            setStatus(null);
+        }
 
         void OpenSearch(bool replace)
         {
@@ -96,9 +114,11 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             if (editorRef.Current is not { } editor || string.IsNullOrEmpty(query)) { return; }
             if (string.Equals(editor.SelectedText, query, comparison))
             {
-                editor.SelectedText = replacement;
-                setText(editor.Text);
-                setStatus(null);
+                var start = editor.SelectionStart;
+                var updated = string.Concat(editor.Text.AsSpan(0, start), replacement, editor.Text.AsSpan(start + query.Length));
+                editor.Text = updated;
+                editor.Select(start + replacement.Length, 0);
+                CommitText(start + replacement.Length, updated);
             }
             FindMatch();
         }
@@ -114,8 +134,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 return;
             }
             editor.Text = updated;
-            setText(updated);
-            setStatus(null);
+            CommitText(editor.SelectionStart, updated);
             setSearchMessage(Str.T("sftp.editor.find.replaced", "All matches replaced"));
         }
 
@@ -320,11 +339,9 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             }, Str.T("sftp.editor.discard", "Discard changes"), Str.T("common.cancel", "Cancel"),
             ThemeController.ToElementTheme(settings.Theme));
 
-        var lineCount = text.Count(character => character == '\n') + 1;
+        var lineCount = LineLayout.CountLines(text);
         var characterCount = text.Length;
-        var lineNumbers = string.Join(
-            "\n",
-            Enumerable.Range(1, lineCount).Select(number => number.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        var lineNumbers = LineLayout.GutterText(lineCount);
         var statusText = error ?? (loading
             ? Str.T("sftp.editor.loading", "Loading file…")
             : saving
@@ -402,7 +419,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                         .Set(block => block.IsHitTestVisible = false))
                 .Set(viewer =>
                 {
-                    _gutterScroll = viewer;
+                    gutterRef.Current = viewer;
                     viewer.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
                     viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
                     viewer.VerticalScrollMode = ScrollMode.Enabled;
@@ -418,29 +435,37 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                         gutter.Grid(row: 0, column: 0),
                         TextBox(text, value =>
                             {
-                                setText(value);
-                                setStatus(null);
+                                // Keep the caret where the user left it: the control
+                                // text is written back on every render, and a write
+                                // without an explicit offset moves the caret to the end.
+                                var offset = editorRef.Current?.SelectionStart ?? caret;
+                                CommitText(offset, value);
                             })
+                            // Write order matters. The TextBox descriptor applies its
+                            // own AcceptsReturn/TextWrapping before Text so a single-line
+                            // box cannot strip the document's line breaks; using Set for
+                            // the copy constructor would defeat that ordering, so these
+                            // two must stay fluent modifiers.
                             .AcceptsReturn(true)
                             .TextWrapping(wrap ? TextWrapping.Wrap : TextWrapping.NoWrap)
                             .FontFamily(AppTheme.Monospace)
                             .FontSize(14)
                             .AutomationName(Str.T("sftp.editor.contents", "File contents"))
+                            .IsSpellCheckEnabled(false)
                             .HAlign(HorizontalAlignment.Stretch)
                             .VAlign(VerticalAlignment.Stretch)
                             .Set(box =>
                             {
                                 editorRef.Current = box;
-                                box.IsSpellCheckEnabled = false;
+                                // Pin the caret after the text write: a TextBox whose
+                                // Text is assigned moves the caret to the end, and the
+                                // element's SelectionStart cannot be applied here because
+                                // the descriptor writes Text after it.
+                                box.SelectionStart = Math.Clamp(caret, 0, box.Text.Length);
+                                box.SelectionLength = 0;
                                 Microsoft.UI.Xaml.Controls.ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
                                 Microsoft.UI.Xaml.Controls.ScrollViewer.SetHorizontalScrollBarVisibility(box, ScrollBarVisibility.Auto);
-                            })
-                            .OnMountAdd(fe =>
-                            {
-                                if (fe is TextBox editor)
-                                {
-                                    AttachEditorScroll(editor);
-                                }
+                                AttachEditorScroll(box);
                             })
                             .Grid(row: 0, column: 1)))
                 .Padding(AppTheme.SpacingS)
@@ -552,19 +577,23 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             });
     }
 
+    /// <summary>
+    /// Keeps the line-number gutter in step with the editor. The handler is
+    /// attached once per control: the editor element is re-created on every
+    /// render, so subscribing unconditionally would stack a new handler on each
+    /// keystroke.
+    /// </summary>
     private void AttachEditorScroll(TextBox editor)
     {
+        if (ReferenceEquals(_editor, editor)) { return; }
+        _editor = editor;
+
         void Attach()
         {
-            var editorScroll = FindScrollViewer(editor);
-            if (editorScroll is null)
-            {
-                return;
-            }
-
+            if (FindScrollViewer(editor) is not { } editorScroll) { return; }
             editorScroll.ViewChanged += (_, _) =>
             {
-                _gutterScroll?.ChangeView(null, editorScroll.VerticalOffset, null, disableAnimation: true);
+                gutterRef.Current?.ChangeView(null, editorScroll.VerticalOffset, null, disableAnimation: true);
             };
         }
 
