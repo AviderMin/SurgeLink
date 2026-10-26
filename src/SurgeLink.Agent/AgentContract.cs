@@ -7,7 +7,8 @@ namespace SurgeLink.Agent;
 /// <summary>Versioned operations shared by CLI and MCP adapters.</summary>
 public sealed record AgentRequest(string Method, string? Session = null, string? Path = null, int Version = 1,
     string? Text = null, bool Submit = false, string? Key = null, long? Cursor = null,
-    long? ExpectedInputRevision = null, string? OperationId = null, string? View = null, string? CheckToken = null);
+    long? ExpectedInputRevision = null, string? OperationId = null, string? View = null, string? CheckToken = null,
+    string? ClientId = null, string? ClientName = null);
 
 public sealed record AgentResponse(bool Success, JsonElement? Data = null, string? ErrorCode = null, string? Message = null)
 {
@@ -23,6 +24,9 @@ public sealed record AgentSessionInfo(string Handle, string Label, string Protoc
 public sealed record AgentSessionTarget(string SessionId, string Server, int Port, string Username);
 
 public enum AgentAccessMode { None, Observe, Control }
+
+/// <summary>Advisory MCP presence, not an authenticated client identity or an access grant.</summary>
+public sealed record AgentMcpPeer(string Id, string Name, DateTimeOffset LastSeenUtc);
 
 public sealed record AgentFileAccess(string Label, string Operation, string Path);
 
@@ -51,10 +55,16 @@ public static class AgentEndpoint
         var processes = System.Diagnostics.Process.GetProcessesByName("SurgeLink");
         try
         {
-            if (processes.Length != 1)
-                throw new IOException("Start SurgeLink first; when multiple desktops are running, specify --instance PID.");
-            return processes[0].Id;
+            return SelectDesktopProcess(processes.Select(p => p.Id).ToArray());
         }
         finally { foreach (var process in processes) process.Dispose(); }
     }
+
+    /// <summary>Never silently choose between multiple desktop instances.</summary>
+    public static int SelectDesktopProcess(IReadOnlyList<int> processIds) => processIds.Count switch
+    {
+        0 => throw new IOException("Start SurgeLink first."),
+        1 => processIds[0],
+        _ => throw new IOException("Multiple SurgeLink desktops are running. Copy an instance-specific MCP configuration from the intended desktop's Agent panel."),
+    };
 }

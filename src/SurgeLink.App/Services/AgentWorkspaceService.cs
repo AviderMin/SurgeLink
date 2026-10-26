@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using SurgeLink.Agent;
 using SurgeLink.App.Sessions;
@@ -26,7 +25,6 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     private readonly Dictionary<string, string> _labels = new(StringComparer.Ordinal);
     private readonly Queue<AgentActivity> _activity = new();
     private readonly Dictionary<Guid, string> _handles = new();
-    private static readonly JsonSerializerOptions ConfigJson = new() { WriteIndented = true };
     private AgentPipeServer? _server;
     private long _revision;
     private long _accessRevision;
@@ -39,10 +37,15 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         _dispatcher = dispatcher;
         _logger = logger;
         _gateway.OperationCompleted += OnOperationCompleted;
+        _gateway.McpPeersChanged += Notify;
         workspace.SessionClosing += OnSessionClosingAsync;
         workspace.TerminalReplacing += OnTerminalReplacingAsync;
         McpHostPath = LocateExecutable("agent", "SurgeLink.AgentHost", "surgelink-agent-host.exe");
         CliPath = LocateExecutable("cli", "SurgeLink.Cli", "surgelink-cli.exe");
+        // Connection discovery is available before any session grant. An empty grant list
+        // exposes no terminal, file, monitoring or credential data.
+        try { _server = new AgentPipeServer(AgentEndpoint.ForProcess(Environment.ProcessId), _gateway); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { ReportError(ex); }
     }
 
     public long Revision => Interlocked.Read(ref _revision);
@@ -51,16 +54,15 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     public event EventHandler? Changed;
     public string McpHostPath { get; }
     public string CliPath { get; }
+    public bool McpHostAvailable => File.Exists(McpHostPath);
+    public IReadOnlyList<AgentMcpPeer> McpPeers => _gateway.McpPeers;
     public string? Error { get { lock (_gate) return _error; } }
     public IReadOnlyList<AgentActivity> Activity { get { lock (_gate) return _activity.Reverse().ToArray(); } }
     public AgentAccessMode GetMode(Guid tabId) => _gateway.GetMode(tabId.ToString());
     public bool IsShared(Guid tabId) => GetMode(tabId) != AgentAccessMode.None;
     public bool HasAccess => _workspace.Snapshot.Tabs.Any(t => IsShared(t.Id));
 
-    public string McpConfiguration => JsonSerializer.Serialize(new
-    {
-        mcpServers = new { surgelink = new { command = McpHostPath, args = new[] { "--instance", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) } } },
-    }, ConfigJson);
+    public string McpConfiguration => AgentMcpSetup.Configuration(McpHostPath);
 
     public Action Subscribe(Action listener)
     {
@@ -222,12 +224,15 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         for (var root = new DirectoryInfo(AppContext.BaseDirectory); root is not null; root = root.Parent)
         {
             if (!File.Exists(Path.Combine(root.FullName, "SurgeLink.slnx"))) continue;
-            foreach (var config in new[] { "Debug", "Release" })
-                foreach (var platform in new[] { "", "x64", "ARM64" })
-                {
-                    var candidate = Path.Combine(root.FullName, "src", project, "bin", platform, config, "net10.0", executable);
-                    if (File.Exists(candidate)) return candidate;
-                }
+            var platform = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
+                == System.Runtime.InteropServices.Architecture.Arm64 ? "ARM64" : "x64";
+            var candidate = (from config in new[] { "Debug", "Release" }
+                             from buildPlatform in new[] { platform, "" }
+                             let path = Path.Combine(root.FullName, "src", project, "bin", buildPlatform, config, "net10.0", executable)
+                             where File.Exists(path)
+                             orderby File.GetLastWriteTimeUtc(path) descending
+                             select path).FirstOrDefault();
+            if (candidate is not null) return candidate;
             break;
         }
         return installed;
@@ -250,7 +255,11 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
             _workspace.SessionClosing -= OnSessionClosingAsync;
             _workspace.TerminalReplacing -= OnTerminalReplacingAsync;
             try { if (_server is not null) await _server.DisposeAsync().ConfigureAwait(false); }
-            finally { _gateway.OperationCompleted -= OnOperationCompleted; }
+            finally
+            {
+                _gateway.OperationCompleted -= OnOperationCompleted;
+                _gateway.McpPeersChanged -= Notify;
+            }
         }
     }
 }

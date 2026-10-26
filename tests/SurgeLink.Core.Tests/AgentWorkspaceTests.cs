@@ -11,6 +11,30 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class AgentWorkspaceTests
 {
+    [Fact]
+    public async Task DesktopCanBeDiscoveredBeforeSharingAndPresenceDoesNotGrantAccess()
+    {
+        using var temp = new TempDirectory();
+        var catalog = new ProtocolCatalog();
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
+            new AutomationDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance);
+        var client = new AgentClient(AgentEndpoint.ForProcess(Environment.ProcessId));
+        var result = await client.SendAsync(new("sessions.list"));
+        Assert.True(result.Success);
+        Assert.Empty(result.Data!.Value.EnumerateArray());
+        Assert.False(service.HasAccess);
+        using var config = System.Text.Json.JsonDocument.Parse(service.McpConfiguration);
+        Assert.Empty(config.RootElement.GetProperty("mcpServers").GetProperty("surgelink").GetProperty("args").EnumerateArray());
+        Assert.True((await client.SendAsync(new("client.heartbeat", ClientId: new string('B', 48), ClientName: "Test MCP"))).Success);
+        Assert.Single(service.McpPeers);
+        Assert.False(service.HasAccess);
+        Assert.DoesNotContain(service.Activity, a => a.Operation == "client.heartbeat");
+    }
+
     [Theory]
     [InlineData(AgentAccessMode.Observe)]
     [InlineData(AgentAccessMode.Control)]

@@ -19,6 +19,7 @@
     <ProjectReference Include="..\..\src\SurgeLink.Protocols.Demo\SurgeLink.Protocols.Demo.csproj" />
     <Compile Include="..\..\src\SurgeLink.App\Services\InteractionService.cs" Link="AppLogic\InteractionService.cs" />
     <Compile Include="..\..\src\SurgeLink.App\Services\AgentWorkspaceService.cs" Link="AppLogic\AgentWorkspaceService.cs" />
+    <Compile Include="..\..\src\SurgeLink.App\Services\AgentMcpSetup.cs" Link="AppLogic\AgentMcpSetup.cs" />
     <Compile Include="..\..\src\SurgeLink.App\Services\AddressMasker.cs" Link="AppLogic\AddressMasker.cs" />
     <!-- Exercise UI-independent workspace ownership with the actual application sources. -->
     <Compile Include="..\..\src\SurgeLink.App\Sessions\WorkspaceStore.cs" Link="AppLogic\WorkspaceStore.cs" />

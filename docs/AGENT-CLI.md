@@ -14,8 +14,12 @@ control indicator. Revocation, human takeover or disconnection removes it.
 
 1. Open a connection, or use the offline Demo.
 2. Open the title-bar robot panel.
-3. Choose **Allow reading** or **Control terminal** for the desired connection.
-4. Copy the MCP configuration or CLI command from that same panel.
+3. In **Connect with MCP**, choose your client and copy its user setup command
+   or configuration. Register once in the client's user configuration so it is
+   available across workspaces, then reconnect MCP in that client.
+4. Choose **Allow reading** or **Control terminal** for the desired connection.
+   Ask the Agent to use SurgeLink for your task. The panel shows MCP client presence
+   separately from session access; connecting a client never grants a session.
 5. Use the panel's per-session Stop or Stop all actions to revoke access.
 
 Reading exposes host facts, the visible screen, retained incremental terminal
@@ -77,7 +81,47 @@ Build on Windows with .NET 10:
 dotnet build SurgeLink.slnx -c Debug -p:Platform=x64
 ```
 
-The panel copies an absolute CLI path and explicit desktop PID. A source solution
+The panel's **Copy Agent instructions** action copies a localized, ready-to-paste
+workflow with an absolute CLI path and explicit desktop PID in every example.
+It tells the Agent to execute `--help` and `sessions list` first, select and check
+the intended session, send input with the required token/revision/operation ID,
+and inspect output before reporting completion. Commands use local Windows
+PowerShell and work from any workspace on the same computer and Windows account;
+neither changing directory nor adding the CLI to PATH is necessary. The Agent
+must have a local command execution tool with access to the executable. This text
+guides the external Agent; it cannot force that application to invoke tools.
+Copy fresh instructions after restarting SurgeLink because the PID changes.
+
+CLI calls return output and exit; external Agents should capture stdout/stderr
+and the exit code without opening an interactive terminal window. Direct Windows
+process launchers should disable shell execution, redirect both output streams
+and suppress console-window creation. For example, with Python's standard library:
+
+```python
+import subprocess
+
+result = subprocess.run(
+    [r"C:\absolute\path\to\surgelink-cli.exe", "--help"],
+    shell=False,
+    capture_output=True,
+    encoding="utf-8",
+    creationflags=subprocess.CREATE_NO_WINDOW,
+)
+print(result.stdout)
+print(result.stderr)
+print(result.returncode)
+```
+
+Use the actual copied executable path, with arguments passed separately and no
+extra quotes embedded in the path. For session operations, include the copied
+`--instance PID`. In .NET, set `UseShellExecute=false`, `CreateNoWindow=true`,
+`RedirectStandardOutput=true` and `RedirectStandardError=true`, and drain both
+streams concurrently. A Windows Terminal popup reporting `0x800700e8` is a
+launch/console error; retry read-only `--help` through captured process execution
+to diagnose it. This popup does not establish whether any requested terminal
+input was delivered; preserve the operation ID and arguments for input retries.
+
+A source solution
 build normally places the CLI in src/SurgeLink.Cli/bin/Debug/net10.0; a direct
 project build with Platform=x64 adds x64 after bin. Release installers include
 cli/surgelink-cli.exe and agent/surgelink-agent-host.exe, each self-contained.
@@ -132,24 +176,65 @@ Results are always one JSON envelope: success, data, errorCode, message. Help is
 text. Exit codes: 0 success, 2 usage, 3 unavailable/transport timeout, 4 rejected or
 failed operation, 130 Ctrl+C cancellation.
 
-## MCP
+## MCP (primary Agent integration)
 
-Copy MCP configuration from the robot panel; it contains an absolute executable
-path and the current desktop PID. A typical stdio client configuration is:
+The panel provides setup guidance for Codex, Claude Code, Cursor and generic MCP
+clients. The configuration contains an absolute Host path and defaults to automatic
+desktop discovery, with no PID or workspace-specific working directory:
 
 ```json
 {
   "mcpServers": {
     "surgelink": {
       "command": "C:\\Users\\<user>\\AppData\\Local\\Programs\\SurgeLink\\agent\\surgelink-agent-host.exe",
-      "args": ["--instance", "12345"]
+      "args": []
     }
   }
 }
 ```
 
-Use the actual path/PID. Refresh the configuration after restarting the desktop.
-An empty args array enables automatic discovery when only one desktop is running.
+Use the actual path copied from your installation. Register in user configuration
+once; desktop restarts do not require configuration changes while that executable
+path stays the same. The Host resolves the running desktop again on each operation.
+Session grants and handles still expire on restart: share the desired sessions
+again and call `list_sessions` to obtain current handles.
+
+Only one SurgeLink desktop may be running for automatic discovery. When several
+are running, the Host reports `desktop_unavailable` rather than choosing one.
+In the intended desktop's panel, select **Bind to this desktop** and copy setup
+again. This adds `--instance PID`; bound configurations must be refreshed after
+that desktop restarts. Updating an existing client entry should replace only the
+`surgelink` entry, preserving all other MCP servers and client settings.
+
+User-level registration commands generated by the panel (local PowerShell):
+
+```powershell
+codex mcp add surgelink -- 'C:\absolute\path\to\surgelink-agent-host.exe'
+claude mcp add --transport stdio --scope user surgelink -- 'C:\absolute\path\to\surgelink-agent-host.exe'
+```
+
+Codex uses its user MCP configuration; Claude Code requires the explicit user
+scope. Cursor users merge the JSON `surgelink` entry into `mcpServers` in
+`~/.cursor/mcp.json`. Generic clients should use their user-level local stdio
+settings. The panel generates setup text; it does not execute these commands or
+edit external client configuration automatically. Client restart/reconnection may
+be necessary before newly configured tools appear. Client setup references:
+[Codex](https://developers.openai.com/codex/mcp/),
+[Claude Code](https://code.claude.com/docs/en/mcp),
+[Cursor](https://prod.cursor.com/help/customization/mcp).
+
+The desktop IPC starts with the application even before sharing. `list_sessions`
+returns a successful empty list until a session is authorized; all session
+operations still require an active grant. The MCP Host can advertise tools while
+the desktop is offline and reconnect when it becomes available.
+
+After a client discovers or calls tools, its Host sends a bounded presence
+heartbeat every 15 seconds. The panel shows recent clients and their self-reported
+names. Normal Host shutdown removes presence; after an unclean exit it expires
+after 90 seconds (panel refreshes every five seconds). Up to 32 active presence
+records are retained. Heartbeats are not added to activity history and never grant
+access. This is an advisory connection indicator, not per-client authentication,
+pairing or a guarantee that the external Agent will choose to call a tool.
 
 The tools are list_sessions, get_session_info, check_sessions, read_terminal, read_terminal_output,
 send_terminal_text, send_terminal_key, select_session, get_system_snapshot,
@@ -184,6 +269,8 @@ both entry points call AgentClient and the same desktop gateway.
 ## Input and observation contract
 
 The additive JSON contract remains version 1. Old read-only clients remain valid.
+Internal `client.heartbeat` / `client.disconnect` requests carry bounded `clientId`
+and `clientName` metadata for presence only; they are not MCP tools or capabilities.
 
 - terminal.screen includes text, dimensions, cursor, terminal modes, viewportOffset,
   inputRevision, outputCursor, isClosed, truncated and source=screen. It reads the

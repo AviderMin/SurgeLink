@@ -42,6 +42,8 @@ public sealed class McpAdapterTests
         Assert.Contains(tools, t => t.Name == "check_sessions");
         Assert.Equal("Check Sessions", McpAdapter.Tools.Single(t => t.Name == "check_sessions").Title);
         Assert.Contains(tools, t => t.Name == "read_terminal");
+        while (gateway.McpPeers.Count == 0) await Task.Delay(10, timeout.Token);
+        Assert.Single(gateway.McpPeers);
         var list = await client.CallToolAsync("list_sessions", cancellationToken: timeout.Token);
         Assert.NotEqual(true, list.IsError);
         Assert.Equal(handle, Assert.Single(list.StructuredContent!.Value.GetProperty("data").EnumerateArray()).GetProperty("handle").GetString());
@@ -51,6 +53,8 @@ public sealed class McpAdapterTests
         var expired = await client.CallToolAsync("read_terminal", new Dictionary<string, object?> { ["session"] = handle }, cancellationToken: timeout.Token);
         Assert.True(expired.IsError);
         Assert.Equal("session_unavailable", expired.StructuredContent!.Value.GetProperty("errorCode").GetString());
+        await client.DisposeAsync();
+        while (gateway.McpPeers.Count != 0) await Task.Delay(10, timeout.Token);
     }
 
     [Fact]

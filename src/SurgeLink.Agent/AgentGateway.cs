@@ -108,6 +108,8 @@ public sealed partial class AgentGateway
         catch (Exception)
         { result = AgentResponse.Error("operation_failed", "The operation failed. Check the desktop connection."); }
         // Never log arbitrary caller-supplied strings or file/terminal payloads.
+        // Heartbeats are connection metadata, not user activity; do not flood history/logs.
+        if (request.Method is "client.heartbeat" or "client.disconnect") return result;
         var auditMethod = IsKnownMethod(request.Method) ? request.Method : "unknown";
         var auditHandle = request.Session is { Length: 48 } handle && handle.All(char.IsAsciiHexDigit) ? handle : null;
         if (OperationCompleted is { } completed)
@@ -121,6 +123,7 @@ public sealed partial class AgentGateway
     {
         ct.ThrowIfCancellationRequested();
         if (request.Version != 1) return AgentResponse.Error("version_mismatch", "Expected contract version 1.");
+        if (request.Method is "client.heartbeat" or "client.disconnect") return UpdateMcpPresence(request);
         if (request.Method == "sessions.list")
         {
             lock (_gate) return AgentResponse.Ok(_grants.Values
