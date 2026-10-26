@@ -36,6 +36,44 @@ public sealed class AgentPipeServerTests
     }
 
     [Fact]
+    public async Task HeldConnectionsDoNotStopTheListenerPermanently()
+    {
+        var gateway = new AgentGateway();
+        var name = $"SurgeLink.Tests.{Guid.NewGuid():N}";
+        await using var server = new AgentPipeServer(name, gateway);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+        // Hold idle connections open so accepted pipes keep occupying server
+        // instances. The listener must keep serving requests while they are held
+        // and must still accept clients after they are released.
+        var held = new List<System.IO.Pipes.NamedPipeClientStream>();
+        try
+        {
+            for (var i = 0; i < 8; i++)
+            {
+                var pipe = new System.IO.Pipes.NamedPipeClientStream(".", name,
+                    System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+                await pipe.ConnectAsync(5000, timeout.Token);
+                held.Add(pipe);
+            }
+
+            var whileHeld = await new AgentClient(name).SendAsync(new("sessions.list"), timeout.Token);
+            Assert.True(whileHeld.Success);
+
+            foreach (var pipe in held) { await pipe.DisposeAsync(); }
+            held.Clear();
+            await Task.Delay(500, timeout.Token);
+
+            var after = await new AgentClient(name).SendAsync(new("sessions.list"), timeout.Token);
+            Assert.True(after.Success);
+        }
+        finally
+        {
+            foreach (var pipe in held) { await pipe.DisposeAsync(); }
+        }
+    }
+
+    [Fact]
     public async Task ClosingServerCancelsRequestsAndWaitsForTheirCleanup()
     {
         var approvalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

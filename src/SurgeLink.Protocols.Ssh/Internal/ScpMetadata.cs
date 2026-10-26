@@ -56,7 +56,11 @@ internal static class ScpMetadata
     internal static string BuildHomeCommand() => "sh -c " + Quote(Functions + "\n" + """
         home=$(pwd -P && printf '.') || exit 1
         home=${home%.}
-        home=${home%?}
+        # pwd -P always ends with one newline. Strip it only when it is not the
+        # sole "/" of a root login; ${home%?} would turn "/" into an empty path.
+        if [ "$home" != "/" ]; then
+            home=${home%?}
+        fi
         identity=$(hex "$home") || exit 1
         printf 'SURGELINK-PWD-1\000%s\000END\000' "$identity"
         """);

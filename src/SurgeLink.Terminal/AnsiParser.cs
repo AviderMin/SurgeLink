@@ -273,7 +273,19 @@ internal sealed class AnsiParser
         if (_oscEscape)
         {
             _oscEscape = false;
+            if (value == (byte)'\\')
+            {
+                // ESC \ is the string terminator: dispatch the payload.
+                FinishOsc();
+                return;
+            }
+
+            // A non-ST escape aborts the string. Dispatch what was collected so far
+            // and hand the byte to the normal escape handling: an OSC followed by
+            // ESC [ is a new CSI, not more title text. Otherwise the following
+            // control sequence and plain text would be swallowed until a BEL/ST.
             FinishOsc();
+            FeedEscape(value);
             return;
         }
 
@@ -322,13 +334,16 @@ internal sealed class AnsiParser
             _stringEscape = false;
             if (value == (byte)'\\')
             {
+                // ESC \ is ST: the control string is complete.
                 _state = ParserState.Ground;
-            }
-            else if (value == EscapeByte)
-            {
-                _stringEscape = true;
+                return;
             }
 
+            // A non-ST escape aborts the unsupported string instead of treating
+            // the rest of the stream as payload. FeedEscape then decides whether
+            // the byte introduces a new CSI/OSC/string or is a plain final.
+            _state = ParserState.Ground;
+            FeedEscape(value);
             return;
         }
 

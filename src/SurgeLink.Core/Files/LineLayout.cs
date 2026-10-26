@@ -7,7 +7,10 @@ namespace SurgeLink.Core.Files;
 /// </summary>
 public static class LineLayout
 {
-    /// <summary>Counts logical lines: a final line break does not open a new line.</summary>
+    /// <summary>
+    /// Counts the lines the editor displays. A final line break opens an empty
+    /// line, so "a\n" is two lines and looks the same to <see cref="LineAt"/>.
+    /// </summary>
     public static int CountLines(string? text)
     {
         if (string.IsNullOrEmpty(text)) { return 1; }
@@ -16,8 +19,7 @@ public static class LineLayout
         {
             if (text[index] == '\n') { count++; }
         }
-        // "a\n" has one line of content; the trailing newline only terminates it.
-        return text[^1] == '\n' ? count - 1 : count;
+        return count;
     }
 
     /// <summary>1-based line number of a UTF-16 caret offset, clamped to the text.</summary>

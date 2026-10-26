@@ -16,6 +16,8 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger _logger;
     private readonly IAppSettingsStore? _settings;
+    private readonly SemaphoreSlim _resizeGate = new(1, 1);
+    private long _resizeRequest;
     private int _repaintScheduled;
     private int _closed;
 
@@ -116,7 +118,12 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         return true;
     }
 
-    /// <summary>Resizes the emulator and tells the server about the new PTY size.</summary>
+    /// <summary>
+    /// Resizes the emulator and tells the server about the new PTY size.
+    /// Remote resizes are serialized and only the newest requested size is sent:
+    /// overlapping SizeChanged events must not let an older request reach the PTY
+    /// after a newer one, or the remote dimensions diverge from the local screen.
+    /// </summary>
     public async Task ResizeAsync(int columns, int rows, CancellationToken cancellationToken = default)
     {
         if (columns <= 0 || rows <= 0)
@@ -124,8 +131,10 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
             return;
         }
 
+        long request;
         lock (Emulator.SyncRoot)
         {
+            request = ++_resizeRequest;
             if (Emulator.Columns == columns && Emulator.Rows == rows)
             {
                 return;
@@ -134,7 +143,23 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
             Emulator.Resize(columns, rows);
         }
 
-        await _remote.ResizeAsync(columns, rows, cancellationToken).ConfigureAwait(false);
+        await _resizeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // A later request superseded this one while it waited; that request
+            // sends the final size, so this one must not overwrite it.
+            if (Interlocked.Read(ref _resizeRequest) != request)
+            {
+                return;
+            }
+
+            await _remote.ResizeAsync(columns, rows, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _resizeGate.Release();
+        }
+
         RaiseInvalidated();
     }
 

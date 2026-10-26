@@ -10,12 +10,12 @@ public sealed class LineLayoutTests
     [InlineData("one line", 1)]
     [InlineData("a\nb", 2)]
     [InlineData("a\nb\nc", 3)]
-    [InlineData("a\nb\n", 2)]          // A trailing break terminates the last line.
-    [InlineData("a\n\n", 2)]           // The blank line between is still a line.
-    [InlineData("\n", 1)]
-    [InlineData("\r\n", 1)]
-    [InlineData("a\r\nb\r\n", 2)]
-    public void CountLinesTreatsFinalBreakAsTerminator(string? text, int expected)
+    [InlineData("a\nb\n", 3)]          // A trailing break opens the final empty line.
+    [InlineData("a\n\n", 3)]           // The blank line between is still a line.
+    [InlineData("\n", 2)]
+    [InlineData("\r\n", 2)]
+    [InlineData("a\r\nb\r\n", 3)]
+    public void CountLinesCountsTheTrailingEmptyLine(string? text, int expected)
     {
         Assert.Equal(expected, LineLayout.CountLines(text));
     }
@@ -44,8 +44,11 @@ public sealed class LineLayoutTests
     public void GutterTextAndCountLinesAgree()
     {
         const string document = "first\nsecond\nthird\n";
-        var gutter = LineLayout.GutterText(LineLayout.CountLines(document));
-        Assert.Equal(["1", "2", "3"], gutter.Split('\n'));
+        var lineCount = LineLayout.CountLines(document);
+        var gutter = LineLayout.GutterText(lineCount);
+        Assert.Equal(["1", "2", "3", "4"], gutter.Split('\n'));
+        // The gutter and the caret mapping must agree about the final line.
+        Assert.Equal(lineCount, LineLayout.LineAt(document, document.Length));
     }
 
     [Theory]

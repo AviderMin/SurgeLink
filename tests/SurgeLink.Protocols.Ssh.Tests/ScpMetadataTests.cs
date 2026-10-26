@@ -141,6 +141,16 @@ public sealed class ScpMetadataTests
         Assert.StartsWith("/", ScpMetadata.ParseHome(output));
     }
 
+    [PosixShellFact]
+    public async Task ActualShellHomeProtocolKeepsTheRootDirectoryIntact()
+    {
+        // Change into / before running the same script: a root login prints "/"
+        // and the old suffix strip turned it into an empty path.
+        var (code, output, error) = await ExecuteAsync("cd / || exit 1\n" + ScpMetadata.BuildHomeCommand());
+        Assert.True(code == 0, error);
+        Assert.Equal("/", ScpMetadata.ParseHome(output));
+    }
+
     [Theory]
     [InlineData("/data/..\\victim.txt")]
     [InlineData("/data/report.txt ")]

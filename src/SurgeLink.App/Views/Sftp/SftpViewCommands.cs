@@ -111,7 +111,8 @@ internal static class SftpViewCommands
         IReadOnlyList<RemoteFileEntry> selected,
         FileTransferQueue queue,
         Func<Task<StorageFolder?>> pickFolder,
-        Action<SftpBanner?> setBanner)
+        Action<SftpBanner?> setBanner,
+        CancellationToken cancellationToken = default)
     {
         var files = selected.ToList();
         if (files.Count == 0)
@@ -131,13 +132,20 @@ internal static class SftpViewCommands
                 return;
             }
 
+            // The session can disconnect or the tab can close while the native
+            // picker is open. The queue is already disposed in that case, so
+            // do not enqueue work that can only fail.
+            cancellationToken.ThrowIfCancellationRequested();
+            var localFolder = folder.Path;
             foreach (var entry in files)
             {
-                queue.Enqueue(SftpOperations.CreateDownload(entry, folder.Path), fileSystem);
+                cancellationToken.ThrowIfCancellationRequested();
+                queue.Enqueue(SftpOperations.CreateDownload(entry, localFolder), fileSystem);
             }
 
             setBanner(null);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             setBanner(new SftpBanner(InfoBarSeverity.Error, Str.T("sftp.command.download", "Download"), ex.Message));

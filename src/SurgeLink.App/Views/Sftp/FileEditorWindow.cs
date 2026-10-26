@@ -50,11 +50,14 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var dirty = !string.Equals(text, savedText, StringComparison.Ordinal);
         var (loadFailed, setLoadFailed) = UseState(false, threadSafe: true);
         var (confirmation, setConfirmation) = UseState(0);
-        // Caret offset, tracked independently of the text so the editor can put
-        // the caret back after a re-render. Reading it from the control while
-        // rendering is not an option: during a re-render the control still holds
-        // the previous value.
+        // Caret offset and selected length, tracked independently of the text so
+        // the editor can restore them after a re-render. Reading them from the
+        // control while rendering is not an option: during a re-render the
+        // control still holds the previous value. The length matters because a
+        // find result must stay selected; pinning only the start would collapse
+        // the match and break "find next" and "replace".
         var (caret, setCaret) = UseState(0);
+        var (selectionLength, setSelectionLength) = UseState(0);
         var window = UseWindow();
         var pickers = UseMemo(() => window is null ? null : new WindowStoragePicker(window.NativeWindow), window!);
         var allowClose = UseRef(false);
@@ -76,10 +79,11 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 
         // One place that turns a text change into editor state, so the caret
         // bookkeeping can never be forgotten by a caller.
-        void CommitText(int caretOffset, string value)
+        void CommitText(int caretOffset, string value, int selectedLength = 0)
         {
             setText(value);
             setCaret(caretOffset);
+            setSelectionLength(selectedLength);
             setStatus(null);
         }
 
@@ -105,7 +109,11 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 setSearchMessage(Str.T("sftp.editor.find.none", "No matches"));
                 return;
             }
+            // Record the match before re-rendering: the render callback restores
+            // this selection instead of leaving a collapsed caret.
             editor.Select(index, query.Length);
+            setCaret(index);
+            setSelectionLength(query.Length);
             setSearchMessage(Str.T("sftp.editor.find.found", "Match selected"));
         }
 
@@ -115,7 +123,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             if (string.Equals(editor.SelectedText, query, comparison))
             {
                 var start = editor.SelectionStart;
-                var updated = string.Concat(editor.Text.AsSpan(0, start), replacement, editor.Text.AsSpan(start + query.Length));
+                var selected = editor.SelectionLength;
+                var updated = string.Concat(editor.Text.AsSpan(0, start), replacement, editor.Text.AsSpan(start + selected));
                 editor.Text = updated;
                 editor.Select(start + replacement.Length, 0);
                 CommitText(start + replacement.Length, updated);
@@ -134,7 +143,9 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 return;
             }
             editor.Text = updated;
-            CommitText(editor.SelectionStart, updated);
+            var clampedCaret = Math.Min(editor.SelectionStart, updated.Length);
+            editor.Select(clampedCaret, 0);
+            CommitText(clampedCaret, updated);
             setSearchMessage(Str.T("sftp.editor.find.replaced", "All matches replaced"));
         }
 
@@ -435,11 +446,22 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                         gutter.Grid(row: 0, column: 0),
                         TextBox(text, value =>
                             {
-                                // Keep the caret where the user left it: the control
-                                // text is written back on every render, and a write
-                                // without an explicit offset moves the caret to the end.
-                                var offset = editorRef.Current?.SelectionStart ?? caret;
-                                CommitText(offset, value);
+                                // Keep the caret and selection where the user left them:
+                                // the control text is written back on every render, and a
+                                // write without an explicit offset moves the caret to the
+                                // end. Programmatic replacements supply their own state
+                                // through CommitText instead.
+                                if (editorRef.Current is { } current)
+                                {
+                                    setCaret(current.SelectionStart);
+                                    setSelectionLength(current.SelectionLength);
+                                    setText(value);
+                                    setStatus(null);
+                                }
+                                else
+                                {
+                                    CommitText(caret, value);
+                                }
                             })
                             // Write order matters. The TextBox descriptor applies its
                             // own AcceptsReturn/TextWrapping before Text so a single-line
@@ -457,12 +479,14 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                             .Set(box =>
                             {
                                 editorRef.Current = box;
-                                // Pin the caret after the text write: a TextBox whose
-                                // Text is assigned moves the caret to the end, and the
+                                // Restore the caret and the selection after the text
+                                // write: a TextBox whose Text is assigned collapses its
+                                // selection and moves the caret to the end, and the
                                 // element's SelectionStart cannot be applied here because
-                                // the descriptor writes Text after it.
+                                // the descriptor writes Text after it. A find result must
+                                // survive the status-message re-render that follows it.
                                 box.SelectionStart = Math.Clamp(caret, 0, box.Text.Length);
-                                box.SelectionLength = 0;
+                                box.SelectionLength = Math.Clamp(selectionLength, 0, box.Text.Length - box.SelectionStart);
                                 Microsoft.UI.Xaml.Controls.ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
                                 Microsoft.UI.Xaml.Controls.ScrollViewer.SetHorizontalScrollBarVisibility(box, ScrollBarVisibility.Auto);
                                 AttachEditorScroll(box);

@@ -87,6 +87,28 @@ public sealed class OscTests
     }
 
     [Fact]
+    public void OscAbortedByNonTerminatorEscapeDoesNotSwallowFollowingCsi()
+    {
+        var terminal = new TestTerminal();
+        terminal.Feed("\u001b]0;title\u001b[31mR\u001b[0m");
+
+        Assert.Equal("title", terminal.Modes.WindowTitle);
+        Assert.Equal("R", terminal.Line(0));
+    }
+
+    [Fact]
+    public void OscAbortedByEscapeIsDispatchedAcrossSplitFeeds()
+    {
+        var terminal = new TestTerminal();
+        terminal.Feed("\u001b]0;title\u001b");
+        terminal.Feed("[32mG\u001b[0m");
+
+        Assert.Equal("title", terminal.Modes.WindowTitle);
+        Assert.Equal("G", terminal.Line(0));
+        Assert.Equal(TerminalColor.FromIndex(2), terminal.Cell(0, 0).Foreground);
+    }
+
+    [Fact]
     public void OscDoesNotWriteToTheScreen()
     {
         var terminal = new TestTerminal();

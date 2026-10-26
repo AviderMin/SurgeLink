@@ -399,7 +399,8 @@ internal sealed class SftpView : Component<SftpViewProps>
         {
             if (!IsOnline()) { return; }
             _ = SftpViewCommands.DownloadAsync(
-                fileSystem!, selected, queue, pickers.PickFolderAsync, setBanner);
+                fileSystem!, selected, queue, pickers.PickFolderAsync, setBanner,
+                operationLifetime.Current?.Token ?? new CancellationToken(true));
         }
 
         void HandleListKey(object sender, KeyRoutedEventArgs args)

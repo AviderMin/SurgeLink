@@ -7,6 +7,7 @@ namespace SurgeLink.Agent;
 public sealed class AgentPipeServer : IAsyncDisposable
 {
     private const int MaximumConnections = 64;
+    private static readonly TimeSpan ListenRetryDelay = TimeSpan.FromMilliseconds(250);
     private readonly string _pipeName;
     private readonly AgentGateway _gateway;
     private readonly CancellationTokenSource _shutdown = new();
@@ -36,15 +37,48 @@ public sealed class AgentPipeServer : IAsyncDisposable
         {
             while (!_shutdown.IsCancellationRequested)
             {
-                await pipe.WaitForConnectionAsync(_shutdown.Token).ConfigureAwait(false);
-                var accepted = pipe;
-                pipe = CreatePipe();
-                TrackConnection(ServeAsync(accepted));
+                NamedPipeServerStream? accepted = null;
+                try
+                {
+                    await pipe.WaitForConnectionAsync(_shutdown.Token).ConfigureAwait(false);
+                    accepted = pipe;
+
+                    // Create the next listener before serving, so a request is never
+                    // dropped. When all MaximumConnections instances are held, this
+                    // fails; keep the accepted pipe and retry the listener later
+                    // instead of silently leaving the server without an endpoint.
+                    while (true)
+                    {
+                        try
+                        {
+                            pipe = CreatePipe();
+                            break;
+                        }
+                        catch (IOException) when (!_shutdown.IsCancellationRequested)
+                        {
+                            await Task.Delay(ListenRetryDelay, _shutdown.Token).ConfigureAwait(false);
+                        }
+                    }
+
+                    TrackConnection(ServeAsync(accepted));
+                    accepted = null;
+                }
+                catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+                catch (ObjectDisposedException) when (_shutdown.IsCancellationRequested) { }
+                catch (IOException)
+                {
+                    // A broken or aborted wait must not end the listener. Back off
+                    // briefly so a persistent failure cannot spin the loop.
+                    try { await Task.Delay(ListenRetryDelay, _shutdown.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+                }
+                finally
+                {
+                    // Only release the accepted pipe when it was not handed off.
+                    if (accepted is not null) { await accepted.DisposeAsync().ConfigureAwait(false); }
+                }
             }
         }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
-        catch (ObjectDisposedException) when (_shutdown.IsCancellationRequested) { }
-        catch (IOException) { /* Preserve the existing best-effort desktop IPC lifecycle. */ }
         finally { await pipe.DisposeAsync().ConfigureAwait(false); }
     }
 
