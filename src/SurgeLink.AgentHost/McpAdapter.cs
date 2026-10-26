@@ -11,6 +11,8 @@ public sealed class McpAdapter(Func<AgentRequest, CancellationToken, Task<AgentR
 
     private static readonly Definition[] Definitions =
     [
+        new("list_desktops", "desktops.list", "Diagnose SurgeLink desktop connections without shell commands or reading local configuration/credentials. List running desktop PIDs, executable paths, reachability and authorized session counts. Use select_desktop when several are running or a previously configured PID expired. This does not grant session access.", [], []),
+        new("select_desktop", "desktops.select", "Choose the intended desktop by processId from list_desktops for this MCP connection only. Does not change saved client configuration or grant session access. Omit processId to return to automatic discovery, including overriding an obsolete startup --instance. After selecting, call list_sessions and obtain fresh session checks before input. Never switch/retry an uncertain input automatically.", [], ["processId"], false),
         new("list_sessions", "sessions.list", "Start here for remote tasks through SurgeLink, from any workspace. List shared connected sessions, their active state and terminalControl capability. An empty list means the user must share a session in the desktop Agent panel. Handles expire on revocation, reconnection or desktop restart.", [], []),
         new("get_session_info", "sessions.info", "Read host facts and capabilities for a shared session.", ["session"], []),
         new("check_sessions", "sessions.check", "MANDATORY before EACH new terminal text/key operation. Check the chosen server, port, session ID, configured login, connection/active state and current screen against your intended target. Effective shell user after su/nested SSH/containers is unknown. Returns a single-use checkToken valid for 2 minutes and screen.inputRevision. A newer check replaces the previous one.", ["session"], []),
@@ -53,7 +55,8 @@ public sealed class McpAdapter(Func<AgentRequest, CancellationToken, Task<AgentR
             response = await send(new AgentRequest(definition.Method, Text("session"), Text("path"),
                 Text: Text("text"), Submit: arguments.TryGetValue("submit", out var submit) && submit.GetBoolean(),
                 Key: Text("key"), Cursor: Number("cursor"), ExpectedInputRevision: Number("expectedInputRevision"),
-                OperationId: Text("operationId"), View: Text("view"), CheckToken: Text("checkToken")), ct).ConfigureAwait(false);
+                OperationId: Text("operationId"), View: Text("view"), CheckToken: Text("checkToken"),
+                DesktopProcessId: arguments.TryGetValue("processId", out var pid) ? pid.GetInt32() : null), ct).ConfigureAwait(false);
         }
         var structured = JsonSerializer.SerializeToElement(response, AgentJson.Options);
         return new CallToolResult
@@ -74,6 +77,7 @@ public sealed class McpAdapter(Func<AgentRequest, CancellationToken, Task<AgentR
             {
                 "cursor" or "expectedInputRevision" => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) && number >= 0,
                 "submit" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
+                "processId" => value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var pid) && pid > 0,
                 _ => value.ValueKind == JsonValueKind.String && (name == "text" || !string.IsNullOrWhiteSpace(value.GetString())),
             };
             if (!valid) return false;
@@ -89,6 +93,7 @@ public sealed class McpAdapter(Func<AgentRequest, CancellationToken, Task<AgentR
             {
                 "cursor" or "expectedInputRevision" => new { type = "integer", minimum = 0, description = "Cursor/revision from a previous terminal observation." },
                 "submit" => new { type = "boolean", description = "Press Enter after pasting. Default false." },
+                "processId" => new { type = "integer", minimum = 1, maximum = int.MaxValue, description = "Desktop processId from list_desktops. Omit to reset this MCP connection to automatic discovery." },
                 "operationId" => new { type = "string", description = "Unique ID for this input (letters, digits, dots, dashes or underscores). Keep the exact ID and arguments for retries." },
                 "checkToken" => new { type = "string", description = "Single-use token returned by check_sessions after verifying the target and screen. Keep the same token for an exact operation retry." },
                 "view" => new { type = "string", @enum = new[] { "terminal", "files", "monitor" } },

@@ -172,7 +172,7 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
                     .Margin(AppTheme.SpacingL, 0, AppTheme.SpacingL, AppTheme.SpacingL))
                     .Set(viewer => viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled).Grid(row: 1)))
             .Background(AppTheme.PanelBackground).BorderBrush(Theme.CardStroke).BorderThickness(1)
-            .CornerRadius(AppTheme.CardRadius).AutomationId("AgentPanel");
+            .CornerRadius(AppTheme.CardRadius).VAlign(VerticalAlignment.Stretch).AutomationId("AgentPanel");
     }
 
     private static string McpSetupHint(AgentMcpClient client) => client switch

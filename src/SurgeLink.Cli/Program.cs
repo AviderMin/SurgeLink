@@ -37,22 +37,31 @@ using var cancellation = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
 AgentResponse response;
 var exitCode = 0;
+int? desktop = null;
 try
 {
     var parsed = CliArguments.Parse(args);
-    var instance = AgentEndpoint.ResolveDesktopProcess(parsed.Instance);
-    response = await new AgentClient(AgentEndpoint.ForProcess(instance)).SendAsync(parsed.Request, cancellation.Token);
+    desktop = AgentEndpoint.ResolveDesktopProcess(parsed.Instance);
+    response = await new AgentClient(AgentEndpoint.ForProcess(desktop.Value)).SendAsync(parsed.Request, cancellation.Token);
     if (!response.Success) exitCode = 4;
 }
 catch (ArgumentException ex) { response = AgentResponse.Error("usage", ex.Message); exitCode = 2; }
+catch (AgentDesktopDiscoveryException ex) { response = AgentResponse.Error(ex.ErrorCode, ex.Message); exitCode = 3; }
 catch (OperationCanceledException)
 {
-    response = AgentResponse.Error(cancellation.IsCancellationRequested ? "cancelled" : "timeout", "The request was cancelled or expired.");
+    response = cancellation.IsCancellationRequested
+        ? AgentResponse.Error("cancelled", "The local request was cancelled; remote terminal input may be uncertain. Observe before retrying and preserve the original operation ID.")
+        : AgentResponse.Error("desktop_ipc_timeout", "SurgeLink did not respond before the request deadline. Observe uncertain terminal input before retrying with the exact same operation ID and arguments.");
     exitCode = cancellation.IsCancellationRequested ? 130 : 3;
 }
-catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException or PlatformNotSupportedException or JsonException)
+catch (TimeoutException)
 {
-    response = AgentResponse.Error("desktop_unavailable", "Cannot reach SurgeLink. Enable CLI access in the desktop and check --instance PID.");
+    response = AgentResponse.Error("desktop_ipc_timeout", $"Could not connect to desktop PID {desktop} within 3 seconds. Confirm that desktop is running and responsive, then retry. Do not treat this as permission being disabled; uncertain terminal input needs observation before an exact retry.");
+    exitCode = 3;
+}
+catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or JsonException)
+{
+    response = AgentResponse.Error("desktop_ipc_unavailable", $"Could not communicate with desktop PID {desktop}. Confirm it is running and the CLI uses the same Windows account. No separate CLI switch exists; share sessions in the Agent panel after connecting. Uncertain terminal input must not be resent with a new operation ID.");
     exitCode = 3;
 }
 Console.WriteLine(JsonSerializer.Serialize(response, AgentJson.Options));

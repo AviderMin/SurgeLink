@@ -21,8 +21,9 @@ public sealed class AgentWorkspaceTests
             new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
         var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
             new AutomationDispatcher(), NullLogger<WorkspaceStore>.Instance);
-        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance);
-        var client = new AgentClient(AgentEndpoint.ForProcess(Environment.ProcessId));
+        var pipeName = $"SurgeLink.Tests.{Guid.NewGuid():N}";
+        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance, pipeName);
+        var client = new AgentClient(pipeName);
         var result = await client.SendAsync(new("sessions.list"));
         Assert.True(result.Success);
         Assert.Empty(result.Data!.Value.EnumerateArray());
@@ -48,10 +49,11 @@ public sealed class AgentWorkspaceTests
         var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
             new AutomationDispatcher(), NullLogger<WorkspaceStore>.Instance);
         var tab = await workspace.OpenAsync(SessionProfile.New("demo", "demo", 0, "demo"), null, default);
-        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance);
+        var pipeName = $"SurgeLink.Tests.{Guid.NewGuid():N}";
+        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance, pipeName);
         Assert.Equal(AgentAccessMode.None, service.GetMode(tab.Id));
         await service.SetAccessAsync(tab, mode);
-        var client = new AgentClient(AgentEndpoint.ForProcess(Environment.ProcessId));
+        var client = new AgentClient(pipeName);
         var sessions = await client.SendAsync(new("sessions.list"));
         var handle = Assert.Single(sessions.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
         Assert.True((await client.SendAsync(new("files.list", handle, "/home/demo"))).Success);
@@ -79,9 +81,10 @@ public sealed class AgentWorkspaceTests
         var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
             new AutomationDispatcher(), NullLogger<WorkspaceStore>.Instance);
         var tab = await workspace.OpenAsync(SessionProfile.New("fake", "host.test", 22, "alice"), null, default);
-        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance);
+        var pipeName = $"SurgeLink.Tests.{Guid.NewGuid():N}";
+        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance, pipeName);
         await service.SetAccessAsync(tab, AgentAccessMode.Control);
-        var client = new AgentClient(AgentEndpoint.ForProcess(Environment.ProcessId));
+        var client = new AgentClient(pipeName);
         var listed = await client.SendAsync(new("sessions.list"));
         var handle = Assert.Single(listed.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
         var check = await client.SendAsync(new("sessions.check", handle));
@@ -116,13 +119,14 @@ public sealed class AgentWorkspaceTests
         var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
             new AutomationDispatcher(), NullLogger<WorkspaceStore>.Instance);
         var tab = await workspace.OpenAsync(SessionProfile.New("fake", "host.test", 22, "alice"), null, default);
-        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance);
+        var pipeName = $"SurgeLink.Tests.{Guid.NewGuid():N}";
+        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance, pipeName);
         var initialAccessRevision = service.AccessRevision;
         await service.SetAccessAsync(tab, AgentAccessMode.Control);
         Assert.Equal(AgentAccessMode.Control, service.GetMode(tab.Id));
         Assert.True(service.AccessRevision > initialAccessRevision);
         var controlAccessRevision = service.AccessRevision;
-        var client = new AgentClient(AgentEndpoint.ForProcess(Environment.ProcessId));
+        var client = new AgentClient(pipeName);
         var listed = await client.SendAsync(new("sessions.list"));
         var handle = Assert.Single(listed.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
         workspace.SetView(tab.Id, SessionViewKind.Files);

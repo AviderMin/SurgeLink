@@ -25,14 +25,16 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     private readonly Dictionary<string, string> _labels = new(StringComparer.Ordinal);
     private readonly Queue<AgentActivity> _activity = new();
     private readonly Dictionary<Guid, string> _handles = new();
+    private readonly string _pipeName;
     private AgentPipeServer? _server;
     private long _revision;
     private long _accessRevision;
     private long _activityId;
     private string? _error;
 
-    public AgentWorkspaceService(WorkspaceStore workspace, IUiDispatcher dispatcher, ILogger logger)
+    public AgentWorkspaceService(WorkspaceStore workspace, IUiDispatcher dispatcher, ILogger logger, string? pipeName = null)
     {
+        _pipeName = pipeName ?? AgentEndpoint.ForProcess(Environment.ProcessId);
         _workspace = workspace;
         _dispatcher = dispatcher;
         _logger = logger;
@@ -44,7 +46,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         CliPath = LocateExecutable("cli", "SurgeLink.Cli", "surgelink-cli.exe");
         // Connection discovery is available before any session grant. An empty grant list
         // exposes no terminal, file, monitoring or credential data.
-        try { _server = new AgentPipeServer(AgentEndpoint.ForProcess(Environment.ProcessId), _gateway); }
+        try { _server = new AgentPipeServer(_pipeName, _gateway); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { ReportError(ex); }
     }
 
@@ -94,7 +96,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
                     || tab.State != ConnectionState.Connected || tab.IsClosing || tab.IsReopeningTerminal
                     || tab.Terminal?.ReadScreen().InputRevision != revision) return;
                 if (mode == AgentAccessMode.Control && (tab.Terminal is null || tab.Terminal.IsClosed)) return;
-                _server ??= new AgentPipeServer(AgentEndpoint.ForProcess(Environment.ProcessId), _gateway);
+                _server ??= new AgentPipeServer(_pipeName, _gateway);
                 var handle = _gateway.GrantSession(tab.Id.ToString(), tab.Title, tab.Session, null,
                     terminal: tab.Terminal, allowControl: mode == AgentAccessMode.Control,
                     activate: (view, ct) => ActivateAsync(tab, view, ct),

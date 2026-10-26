@@ -38,7 +38,7 @@ public sealed class McpAdapterTests
         });
         await using var client = await McpClient.CreateAsync(transport, cancellationToken: timeout.Token);
         var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
-        Assert.Equal(11, tools.Count);
+        Assert.Equal(McpAdapter.Tools.Count, tools.Count);
         Assert.Contains(tools, t => t.Name == "check_sessions");
         Assert.Equal("Check Sessions", McpAdapter.Tools.Single(t => t.Name == "check_sessions").Title);
         Assert.Contains(tools, t => t.Name == "read_terminal");
