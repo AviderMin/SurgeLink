@@ -19,6 +19,22 @@ function Fail($label, $detail) {
   if ($detail) { Write-Output ("        " + $detail) }
   [void]$script:failures.Add($label)
 }
+function Stop-OwnApp {
+  if ($script:appPid -le 0) { return }
+  Stop-Process -Id $script:appPid -Force -ErrorAction SilentlyContinue
+  Wait-Process -Id $script:appPid -Timeout 10 -ErrorAction SilentlyContinue
+  for ($i = 0; $i -lt 50 -and (Get-Process -Id $script:appPid -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 100 }
+}
+function Restore-SettingsFile {
+  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    try {
+      if ($hadSettings) { [System.IO.File]::WriteAllBytes($settingsPath, $originalSettings) }
+      elseif (Test-Path $settingsPath) { Remove-Item -LiteralPath $settingsPath -Force }
+      return
+    } catch [System.IO.IOException] { Start-Sleep -Milliseconds 200 }
+  }
+  Write-Output "WARNING: could not restore the original settings file; check $settingsPath"
+}
 function Set-Language([int]$language) {
   New-Item -ItemType Directory -Force -Path $appData | Out-Null
   $file = Join-Path $appData 'settings.json'
@@ -46,11 +62,20 @@ function Invoke-Action($name, $type, [switch]$Select) {
   $out = & (Join-Path $PSScriptRoot "uia-action.ps1") @args 2>&1 | Out-String
   Write-Output ("        " + $out.Trim())
 }
-function Get-Control($name, $type) {
+function Get-Control($name, $type, $root = $null) {
   Add-Type -AssemblyName UIAutomationClient
   Add-Type -AssemblyName UIAutomationTypes
   $processCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $script:appPid)
-  $window = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $processCondition)
+  # Dialogs can be nested in a standalone editor window, so search every window
+  # owned by this process; otherwise the shell stays the preferred first match.
+  $window = if ($null -ne $root) { $root } else {
+    $shellWindow = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $processCondition) |
+      Where-Object { $_.Current.Name -eq "SurgeLink" } | Select-Object -First 1
+    if ($null -ne $shellWindow) { $shellWindow } else {
+      [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $processCondition)
+    }
+  }
+  if ($null -eq $window) { throw "SurgeLink window not found" }
   $nameCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $name)
   $controls = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $nameCondition)
   foreach ($control in $controls) {
@@ -190,6 +215,35 @@ if ($null -ne $editorWindow) {
     (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)))
   $editorText = $editorWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
   if ($null -ne $editorText) { Pass "editor shows file contents" } else { Fail "editor shows file contents" "File contents edit not found" }
+  if ($null -ne $editorText) {
+    # CRLF conversion must preserve every line, including the empty line.
+    $valuePattern = $editorText.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+    $crlfDocument = "first`r`n`r`ntarget"
+    $valuePattern.SetValue($crlfDocument)
+    Start-Sleep -Milliseconds 500
+    $findButton = $editorWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+      (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "Find (Ctrl+F)")))
+    $findButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 400
+    $findBox = $editorWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+      (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "Find in document")))
+    $findBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue("target")
+    Start-Sleep -Milliseconds 300
+    $nextButton = $editorWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+      (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "Next match (F3)")))
+    $nextButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 700
+    $actualText = $editorText.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(-1)
+    $normalizedText = $actualText.Replace("`r`n", "`n").Replace("`r", "`n")
+    $gutter = $editorWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+      [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
+        $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Pane -and $_.Current.Name.Replace(" ", "") -eq ("1" + [char]10 + "2" + [char]10 + "3")
+      } | Select-Object -First 1
+    if ($normalizedText -eq "first`n`ntarget" -and $null -ne $gutter) {
+      Pass "CRLF editing preserves empty lines, line numbers and content after find"
+    } else { Fail "CRLF editing preserves empty lines, line numbers and content after find" }
+    & (Join-Path $PSScriptRoot "dump-uia.ps1") -ProcessId $script:appPid -MaxDepth 15 2>&1 | Out-File -FilePath (Join-Path $artifacts "uia-03-editor-find.txt") -Encoding utf8
+  }
   try {
     $windowPattern = $editorWindow.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
     $windowPattern.Close()
@@ -197,6 +251,12 @@ if ($null -ne $editorWindow) {
     Fail "editor closes cleanly" $_.Exception.Message
   }
   Start-Sleep -Milliseconds 700
+  Start-Sleep -Seconds 2
+  & (Join-Path $PSScriptRoot "dump-uia.ps1") -ProcessId $script:appPid -MaxDepth 15 2>&1 | Out-File -FilePath (Join-Path $artifacts "uia-03-editor-close.txt") -Encoding utf8
+  $discard = Get-Control "Discard changes" "Button" $editorWindow
+  $discard.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  Start-Sleep -Milliseconds 700
+  Pass "editor discard confirmation closes a modified document"
 } else {
   Fail "editor opens in a standalone window" "Text editor window not found"
 }
@@ -204,12 +264,12 @@ if ($null -ne $editorWindow) {
 Step "File selection and name validation"
 Invoke-Action "Documents" "ListItem" -Select
 Start-Sleep -Milliseconds 300
-AssertEnabled "Download" $false "directory-only selection cannot download"
+AssertEnabled "Download" $true "directory selection can download a recursive archive"
 AssertEnabled "Delete" $true "single selection can delete"
 $second = Get-Control "demo.txt" "ListItem"
 $second.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).AddToSelection()
 Start-Sleep -Milliseconds 300
-AssertEnabled "Delete" $false "multiple selection cannot silently delete one entry"
+AssertEnabled "Delete" $true "multiple selection enables the confirmed batch delete"
 AssertEnabled "Rename" $false "multiple selection cannot rename one entry"
 Invoke-Action "New folder" "Button"
 Start-Sleep -Milliseconds 500
@@ -276,8 +336,7 @@ AssertMissing $reopened "Render error" "no render errors after reopening the edi
 # Phase 2: Chinese UI (the same build, language switched through settings)
 # ---------------------------------------------------------------------------
 Step "Chinese UI"
-Stop-Process -Id $script:appPid -Force -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 800
+Stop-OwnApp
 Set-Language 2
 Start-App
 Pass "app relaunched in Chinese"
@@ -290,7 +349,7 @@ foreach ($word in @(-join ([char]0x4f1a, [char]0x8bdd), -join ([char]0x8bbe, [ch
   if (Select-String -Path $cn -Pattern $word -SimpleMatch -Quiet) { Pass ("Chinese wording present: " + $word) } else { Fail ("Chinese wording present: " + $word) "" }
 }
 
-Stop-Process -Id $script:appPid -Force -ErrorAction SilentlyContinue
+Stop-OwnApp
 
 Write-Output ""
 Write-Output "================ SUMMARY ================"
@@ -301,10 +360,6 @@ Write-Output ("artifacts: " + $artifacts)
 if ($script:failures.Count -gt 0) { exit 1 }
 exit 0
 } finally {
-  if ($script:appPid -gt 0) { Stop-Process -Id $script:appPid -Force -ErrorAction SilentlyContinue }
-  if ($hadSettings) {
-    [System.IO.File]::WriteAllBytes($settingsPath, $originalSettings)
-  } elseif (Test-Path $settingsPath) {
-    Remove-Item -LiteralPath $settingsPath
-  }
+  Stop-OwnApp
+  Restore-SettingsFile
 }

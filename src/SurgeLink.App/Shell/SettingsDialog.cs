@@ -30,7 +30,27 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
         var store = services.Settings;
         var settings = UseExternalStore(store.Subscribe, () => store.Current);
         var (draft, setDraft) = UseState(store.Current);
+        var (saveError, setSaveError) = UseState<string?>(null);
         var closed = UseRef(false);
+        var dialogControl = UseRef<ContentDialog?>(null);
+        // PrimaryButtonClick runs before OnClosed. Keeping the native dialog open
+        // on a failed write preserves both the user's draft and their retry path.
+        UseEffect(() => () =>
+        {
+            if (dialogControl.Current is { } control) control.PrimaryButtonClick -= CancelFailedSave;
+        }, Array.Empty<object>());
+        void CancelFailedSave(ContentDialog sender, ContentDialogButtonClickEventArgs args)
+        {
+            System.Diagnostics.Debug.WriteLine("SETTINGS SAVE HANDLER CALLED");
+            if (!SettingsDialogSave.TryApply(store, draft, error =>
+                {
+                    Props.OnSaveFailed(error);
+                    setSaveError(error.Message);
+                }))
+            {
+                args.Cancel = true;
+            }
+        }
 
         var fontChoices = new List<string> { Str.T("shell.settings.fontFamily.auto", "(auto detect)") };
         fontChoices.AddRange(AppTheme.MonospaceCandidates);
@@ -166,28 +186,40 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
             VStack(AppTheme.SpacingL,
                 Caption(Str.T("shell.settings.subtitle", "Changes are applied when you save."))
                     .Foreground(Theme.SecondaryText).TextWrapping(TextWrapping.Wrap),
+                saveError is null ? Empty() : InfoBar(
+                    Str.T("shell.error.saveFailed", "Could not save changes"),
+                    Str.F("shell.settings.saveFailedRetry",
+                        "Your changes are still here. Check folder access and available disk space, then try saving again. {0}",
+                        saveError)) with
+                {
+                    Severity = InfoBarSeverity.Error,
+                    IsClosable = false,
+                },
                 content),
             "Settings",
             result =>
             {
                 if (closed.Current) return;
                 closed.Current = true;
-                if (result == ContentDialogResult.Primary)
+                if (dialogControl.Current is { } control)
                 {
-                    try { store.Update(_ => draft); }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    {
-                        Props.OnSaveFailed(ex);
-                    }
+                    control.PrimaryButtonClick -= CancelFailedSave;
+                    dialogControl.Current = null;
                 }
-
                 Props.OnClosed();
             },
             Str.T("common.save", "Save"),
             Str.T("common.cancel", "Cancel"),
             theme: ThemeController.ToElementTheme(settings.Theme),
             isOpen: !closed.Current,
-            contentWidth: AppDialog.ContentWidth);
+            contentWidth: AppDialog.ContentWidth,
+            onOpened: control =>
+            {
+                dialogControl.Current = control;
+                control.PrimaryButtonClick += CancelFailedSave;
+                control.Resources["SettingsSaveHandlerBound"] = true;
+                System.Diagnostics.Debug.WriteLine("SETTINGS SAVE HANDLER BOUND");
+            });
     }
 
     private static Element Section(string title, params Element[] rows) =>

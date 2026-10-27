@@ -21,7 +21,8 @@ if ($ProcessId -gt 0) {
 }
 $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
 $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $proc.Id)
-$win = $rootEl.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
+$win = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $cond) | Where-Object { $_.Current.Name -eq "SurgeLink" } | Select-Object -First 1
+if ($null -eq $win) { $win = $rootEl.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond) }
 if ($null -eq $win) { Write-Output "window not found"; exit 2 }
 $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
 $script:matches = New-Object System.Collections.ArrayList

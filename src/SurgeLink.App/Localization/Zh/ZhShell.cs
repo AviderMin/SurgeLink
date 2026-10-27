@@ -279,6 +279,7 @@ public static class ZhShell
         ["shell.titleBar.shortcut"] = "{0}（Alt+{1}）",
         ["shell.error.saveFailed"] = "无法保存更改",
         ["shell.error.saveFailedHint"] = "请检查文件夹访问权限和可用磁盘空间，然后重试。{0}",
+        ["shell.settings.saveFailedRetry"] = "更改仍保留在此窗口中。请检查文件夹访问权限和可用磁盘空间，然后再次保存。{0}",
         ["shell.demo.profileName"] = "演示会话",
         ["shell.workspace.tab.terminal"] = "终端",
         ["shell.workspace.tab.files"] = "文件",

@@ -208,7 +208,7 @@ internal sealed class ScreenBuffer
         for (int i = 0; i < Math.Max(1, count); i++)
         {
             int next = column + 1;
-            while (next < _columns - 1 && !_tabStops[next])
+            while (next < _columns - 1 && (!_tabStops[next] || _lines[_cursorRow].Cells[next].Width == CellWidth.Continuation))
             {
                 next++;
             }

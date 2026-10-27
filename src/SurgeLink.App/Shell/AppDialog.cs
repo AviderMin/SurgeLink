@@ -112,6 +112,8 @@ internal sealed class AppDialog : Component<AppDialogProps>
             control.RequestedTheme = Props.Theme;
             Resize();
             DialogAutomation.Tag(Props.AutomationPrefix)(control);
+            Props.OnOpened?.Invoke(control);
+            control.Resources["AppDialogAttachMarker"] = true;
         }).Opened(() =>
         {
             // Reactor owns the Opened subscription; tag again after its native

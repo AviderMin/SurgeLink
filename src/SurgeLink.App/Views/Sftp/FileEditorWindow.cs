@@ -112,8 +112,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             // Record the match before re-rendering: the render callback restores
             // this selection instead of leaving a collapsed caret.
             editor.Select(index, query.Length);
-            setCaret(index);
-            setSelectionLength(query.Length);
+            setCaret(EditorTextBuffer.ToDocumentOffset(source, index));
+            setSelectionLength(EditorTextBuffer.ToDocumentText(query).Length);
             setSearchMessage(Str.T("sftp.editor.find.found", "Match selected"));
         }
 
@@ -127,7 +127,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 var updated = string.Concat(editor.Text.AsSpan(0, start), replacement, editor.Text.AsSpan(start + selected));
                 editor.Text = updated;
                 editor.Select(start + replacement.Length, 0);
-                CommitText(start + replacement.Length, updated);
+                CommitText(EditorTextBuffer.ToDocumentOffset(updated, start + replacement.Length),
+                    EditorTextBuffer.ToDocumentText(updated));
             }
             FindMatch();
         }
@@ -145,7 +146,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             editor.Text = updated;
             var clampedCaret = Math.Min(editor.SelectionStart, updated.Length);
             editor.Select(clampedCaret, 0);
-            CommitText(clampedCaret, updated);
+            CommitText(EditorTextBuffer.ToDocumentOffset(updated, clampedCaret),
+                EditorTextBuffer.ToDocumentText(updated));
             setSearchMessage(Str.T("sftp.editor.find.replaced", "All matches replaced"));
         }
 
@@ -444,7 +446,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                         columns: [GridSize.Px(48), GridSize.Star()],
                         rows: [GridSize.Star()],
                         gutter.Grid(row: 0, column: 0),
-                        TextBox(text, value =>
+                        TextBox(EditorTextBuffer.ToEditorText(text), value =>
                             {
                                 // Keep the caret and selection where the user left them:
                                 // the control text is written back on every render, and a
@@ -453,9 +455,9 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                                 // through CommitText instead.
                                 if (editorRef.Current is { } current)
                                 {
-                                    setCaret(current.SelectionStart);
+                                    setCaret(EditorTextBuffer.ToDocumentOffset(value, current.SelectionStart));
                                     setSelectionLength(current.SelectionLength);
-                                    setText(value);
+                                    setText(EditorTextBuffer.ToDocumentText(value));
                                     setStatus(null);
                                 }
                                 else
@@ -485,8 +487,10 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                                 // element's SelectionStart cannot be applied here because
                                 // the descriptor writes Text after it. A find result must
                                 // survive the status-message re-render that follows it.
-                                box.SelectionStart = Math.Clamp(caret, 0, box.Text.Length);
-                                box.SelectionLength = Math.Clamp(selectionLength, 0, box.Text.Length - box.SelectionStart);
+                                var editorCaret = EditorTextBuffer.ToEditorOffset(text, caret);
+                                box.SelectionStart = Math.Clamp(editorCaret, 0, box.Text.Length);
+                                var selectionEnd = EditorTextBuffer.ToEditorOffset(text, caret + selectionLength);
+                                box.SelectionLength = Math.Clamp(selectionEnd - editorCaret, 0, box.Text.Length - box.SelectionStart);
                                 Microsoft.UI.Xaml.Controls.ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
                                 Microsoft.UI.Xaml.Controls.ScrollViewer.SetHorizontalScrollBarVisibility(box, ScrollBarVisibility.Auto);
                                 AttachEditorScroll(box);

@@ -153,7 +153,7 @@ public sealed class LinuxMonitorProbeTests
         var executor = new FakeExecutor(command =>
         {
             commands.Add(command);
-            return Task.FromResult(command.StartsWith("ps aux", StringComparison.Ordinal)
+            return Task.FromResult(command.StartsWith("LC_ALL=C ps aux", StringComparison.Ordinal)
                 ? new SshCommandResult(command, TopProcessesPsEo, string.Empty, 0)
                 : new SshCommandResult(command, string.Empty, "unsupported", 1));
         });
@@ -164,7 +164,7 @@ public sealed class LinuxMonitorProbeTests
         Assert.Equal(2, processes.Count);
         Assert.Equal(42d, processes[0].CpuPercent, 6);
         Assert.Equal(3, commands.Count);
-        Assert.StartsWith("ps aux", commands[2], StringComparison.Ordinal);
+        Assert.StartsWith("LC_ALL=C ps aux", commands[2], StringComparison.Ordinal);
     }
 
     [Fact]

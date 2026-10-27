@@ -102,7 +102,11 @@ internal sealed class SshCommandRunner
             captured.Write(buffer, 0, count);
         }
         ct.ThrowIfCancellationRequested();
-        using var reader = new StreamReader(new MemoryStream(captured.ToArray(), writable: false), encoding, detectEncodingFromByteOrderMarks: true);
-        return await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+        var bytes = captured.ToArray();
+        var preamble = encoding.GetPreamble();
+        // A stream may start with its encoding's signature, but arbitrary bytes or
+        // decoded U+FEFF content elsewhere must never be mistaken for a signature.
+        var start = preamble.Length > 0 && bytes.AsSpan().StartsWith(preamble) ? preamble.Length : 0;
+        return encoding.GetString(bytes, start, bytes.Length - start);
     }
 }

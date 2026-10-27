@@ -12,10 +12,10 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
 {
     private static readonly string[] TopProcessCommands =
     {
-        "ps -eo pid,user,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null",
-        "ps -eo pid,user,pcpu,pmem,rss,args --sort=-pcpu 2>/dev/null",
-        "ps aux 2>/dev/null",
-        "ps 2>/dev/null",
+        "LC_ALL=C ps -eo pid,user,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null",
+        "LC_ALL=C ps -eo pid,user,pcpu,pmem,rss,args --sort=-pcpu 2>/dev/null",
+        "LC_ALL=C ps aux 2>/dev/null",
+        "LC_ALL=C ps 2>/dev/null",
     };
 
     private readonly Func<string, CancellationToken, Task<SshCommandResult>> _executeCommand;

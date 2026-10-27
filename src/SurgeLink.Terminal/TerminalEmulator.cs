@@ -142,13 +142,9 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             BeginBatch();
             try
             {
-                // Any output from the remote side returns the view to the live tail.
-                if (_viewportOffset != 0)
-                {
-                    _viewportOffset = 0;
-                    MarkDirty();
-                }
-
+                // Preserve the reading position while the user is inspecting history.
+                // Appending history does not change the viewport offset; eviction is
+                // compensated in OnLineScrolledOff. ScrollToBottom resumes live output.
                 _parser.Feed(data);
             }
             finally
@@ -622,6 +618,13 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
 
         CellLine? evicted = _scrollback.Add(line);
+        if (_viewportOffset > 0 && evicted is not null)
+        {
+            // A full history drops its oldest line, reducing the offset to the
+            // content being read by one. Appending without eviction does not
+            // change that offset or the rows displayed in the viewport.
+            _viewportOffset--;
+        }
         return evicted ?? RentLine();
     }
 

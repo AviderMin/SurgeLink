@@ -14,6 +14,9 @@ public static class TerminalMouseEncoder
     {
         ArgumentNullException.ThrowIfNull(modes);
         if (!modes.MouseTracking || shift || column < 0 || row < 0) { return null; }
+        // Classic X10 reports reserve codes 66/67 for button-three transitions.
+        // Sending tilt wheels there creates phantom clicks; SGR can represent them.
+        if (!modes.SgrMouseEncoding && button is TerminalMouseButton.WheelLeft or TerminalMouseButton.WheelRight) { return null; }
         var tracking = modes.MouseTrackingMode;
         if (action == TerminalMouseAction.Move && (tracking is TerminalMouseTrackingMode.None or TerminalMouseTrackingMode.Buttons
             || (tracking == TerminalMouseTrackingMode.Drag && button == TerminalMouseButton.None))) { return null; }

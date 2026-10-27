@@ -17,7 +17,12 @@ public static class LineLayout
         var count = 1;
         for (var index = 0; index < text.Length; index++)
         {
-            if (text[index] == '\n') { count++; }
+            if (text[index] == '\r')
+            {
+                if (index + 1 < text.Length && text[index + 1] == '\n') { index++; }
+                count++;
+            }
+            else if (text[index] == '\n') { count++; }
         }
         return count;
     }
@@ -30,7 +35,12 @@ public static class LineLayout
         var line = 1;
         for (var index = 0; index < limit; index++)
         {
-            if (text[index] == '\n') { line++; }
+            if (text[index] == '\r')
+            {
+                if (index + 1 < limit && text[index + 1] == '\n') { index++; }
+                line++;
+            }
+            else if (text[index] == '\n') { line++; }
         }
         return line;
     }

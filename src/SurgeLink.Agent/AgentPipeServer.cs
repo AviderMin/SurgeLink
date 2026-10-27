@@ -106,7 +106,8 @@ public sealed class AgentPipeServer : IAsyncDisposable
             try { await AgentWire.WriteAsync(pipe, response, reply.Token).ConfigureAwait(false); }
             catch (AgentFrameTooLargeException) when (pipe.IsConnected && !reply.IsCancellationRequested)
             {
-                await AgentWire.WriteAsync(pipe, AgentResponse.Error("output_limit", "The result exceeds the transport limit."), reply.Token).ConfigureAwait(false);
+                await AgentWire.WriteAsync(pipe, AgentResponse.Error("output_limit",
+                    "The result exceeds the 1 MiB transport limit. Retry with a narrower request: read terminal output incrementally or read a smaller file/directory instead of listing everything."), reply.Token).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (ex is IOException or JsonException or OperationCanceledException) { }

@@ -161,7 +161,9 @@ public sealed partial class AgentGateway
                     if (grant.Terminal is not null) { result = AgentResponse.Ok(grant.Terminal.ReadScreen()); break; }
                     if (grant.ReadScreen is null) throw new NotSupportedException();
                     var screen = grant.ReadScreen();
-                    result = AgentResponse.Ok(new { source = "screen", text = screen[..Math.Min(screen.Length, 32768)], truncated = screen.Length > 32768 });
+                    var count = Math.Min(screen.Length, 32768);
+                    if (count > 0 && char.IsHighSurrogate(screen[count - 1])) count--;
+                    result = AgentResponse.Ok(new { source = "screen", text = screen[..count], truncated = count < screen.Length });
                     break;
                 case "terminal.output":
                     if (grant.Terminal is null) throw new NotSupportedException();

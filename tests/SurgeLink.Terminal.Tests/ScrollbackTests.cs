@@ -74,12 +74,14 @@ public sealed class ScrollbackTests
     }
 
     [Fact]
-    public void NewOutputResetsViewportOffset()
+    public void NewOutputPreservesHistoryReadingPosition()
     {
         TestTerminal terminal = WithHistory();
         terminal.Emulator.ScrollViewport(2);
         terminal.Feed("X");
-        Assert.Equal(0, terminal.Emulator.ViewportOffset);
+        Assert.Equal(2, terminal.Emulator.ViewportOffset);
+        Assert.Equal("1", terminal.Line(0));
+        terminal.Emulator.ScrollToBottom();
         Assert.Equal("5X", terminal.Line(2));
     }
 
