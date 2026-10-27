@@ -195,9 +195,19 @@ desktop discovery, with no PID or workspace-specific working directory:
 
 Use the actual path copied from your installation. Register in user configuration
 once; desktop restarts do not require configuration changes while that executable
-path stays the same. The Host resolves the running desktop again on each operation.
+path stays the same. Reconnect MCP after restarting the desktop so the client
+launches a fresh Host. The Host resolves the running desktop again on each operation.
 Session grants and handles still expire on restart: share the desired sessions
 again and call `list_sessions` to obtain current handles.
+
+The bundled helpers follow desktop lifetime. A Host bound with `--instance` or
+`select_desktop` exits when that exact desktop process exits, including when the
+MCP client keeps stdin open. Switching selection while the desktop is still
+running moves that lifetime binding to the new selection. In automatic mode,
+the Host exits when no SurgeLink desktops remain; starting it with no desktop
+running also exits. CLI requests cancel and exit if their target desktop exits.
+Closing one desktop does not terminate helpers bound to another desktop, and
+no external MCP client or unrelated process is terminated.
 
 Automatic discovery requires exactly one running desktop. The Host distinguishes
 `desktop_not_running`, `desktop_ambiguous`, `desktop_ipc_unavailable`,
@@ -207,8 +217,9 @@ states, not missing session permissions. With several desktops, call
 `select_desktop` with the intended `processId`. This changes routing for the
 current MCP connection only and never grants session access. To bind permanently
 from the intended desktop's panel, select **Bind to this desktop** and copy setup
-again. This adds `--instance PID`; after a restart, select the replacement using
-those tools instead of copying another configuration. A reused PID is checked by
+again. This adds `--instance PID`; that PID is valid only for this run. After a
+restart, refresh the explicit binding or use the default automatic configuration
+before reconnecting MCP. A reused PID is checked by
 process start time and must be explicitly selected again. Selecting without
 `processId` clears a manual or obsolete startup binding for this MCP connection;
 it does not edit the saved client configuration. Updating an existing client entry should replace only the `surgelink`

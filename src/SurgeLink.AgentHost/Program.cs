@@ -23,7 +23,7 @@ if (args.Length != 0)
 
 using var shutdown = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; shutdown.Cancel(); };
-var desktop = new DesktopConnection(instance);
+using var desktop = new DesktopConnection(instance);
 var adapter = new McpAdapter(desktop.SendAsync);
 
 // stdout belongs exclusively to MCP. No banners or console logging on this transport.
@@ -47,7 +47,20 @@ await using var server = McpServer.Create(new StdioServerTransport("SurgeLink", 
         },
     }, NullLoggerFactory.Instance);
 var presence = desktop.RunPresenceAsync(shutdown.Token);
-try { await server.RunAsync(shutdown.Token); }
+var lifetime = desktop.WaitForDesktopExitAsync(shutdown.Token);
+var serving = server.RunAsync(shutdown.Token);
+try
+{
+    await Task.WhenAny(serving, lifetime);
+    await shutdown.CancelAsync();
+    await serving;
+}
 catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
-finally { await shutdown.CancelAsync(); await presence; }
+finally
+{
+    await shutdown.CancelAsync();
+    await presence;
+    try { await lifetime; }
+    catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
+}
 return 0;

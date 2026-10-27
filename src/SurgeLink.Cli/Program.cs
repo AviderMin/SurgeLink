@@ -42,7 +42,8 @@ try
 {
     var parsed = CliArguments.Parse(args);
     desktop = AgentEndpoint.ResolveDesktopProcess(parsed.Instance);
-    response = await new AgentClient(AgentEndpoint.ForProcess(desktop.Value)).SendAsync(parsed.Request, cancellation.Token);
+    response = await AgentProcessLifetime.RunAsync(desktop.Value,
+        ct => new AgentClient(AgentEndpoint.ForProcess(desktop.Value)).SendAsync(parsed.Request, ct), cancellation.Token);
     if (!response.Success) exitCode = 4;
 }
 catch (ArgumentException ex) { response = AgentResponse.Error("usage", ex.Message); exitCode = 2; }

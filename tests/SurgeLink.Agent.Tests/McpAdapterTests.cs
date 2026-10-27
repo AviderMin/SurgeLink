@@ -27,7 +27,8 @@ public sealed class McpAdapterTests
     {
         var gateway = new AgentGateway((_, _) => Task.FromResult(false));
         var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession(), () => "hello from desktop");
-        var instance = System.Security.Cryptography.RandomNumberGenerator.GetInt32(1000000, int.MaxValue);
+        using var desktopProcess = HelperProcessLifetimeTests.IdleProcess();
+        var instance = desktopProcess.Process.Id;
         await using var server = new AgentPipeServer(AgentEndpoint.ForProcess(instance), gateway);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var transport = new StdioClientTransport(new StdioClientTransportOptions
@@ -63,7 +64,8 @@ public sealed class McpAdapterTests
         var terminal = new TerminalControlTests.TestAutomation();
         var gateway = new AgentGateway();
         var handle = TerminalControlTests.GrantControl(gateway, terminal);
-        var instance = System.Security.Cryptography.RandomNumberGenerator.GetInt32(1000000, int.MaxValue);
+        using var desktopProcess = HelperProcessLifetimeTests.IdleProcess();
+        var instance = desktopProcess.Process.Id;
         await using var desktop = new AgentPipeServer(AgentEndpoint.ForProcess(instance), gateway);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await using var client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions

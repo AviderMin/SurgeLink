@@ -1,17 +1,19 @@
 using System.Security.Cryptography;
+using System.Diagnostics;
 using SurgeLink.Agent;
 
 namespace SurgeLink.AgentHost;
 
 /// <summary>Re-discovers the desktop for each call, including after restarts. Presence never grants access.</summary>
 public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDesktop = null,
-    Func<IReadOnlyList<AgentDesktopProcess>>? discoverDesktops = null)
+    Func<IReadOnlyList<AgentDesktopProcess>>? discoverDesktops = null) : IDisposable
 {
     private readonly Func<int> _resolveDesktop = resolveDesktop ?? (discoverDesktops is null
         ? () => AgentEndpoint.ResolveDesktopProcess()
         : () => AgentEndpoint.SelectDesktopProcess(discoverDesktops().Select(p => p.ProcessId).ToArray()));
     private readonly Func<IReadOnlyList<AgentDesktopProcess>> _discoverDesktops = discoverDesktops ?? AgentEndpoint.DiscoverDesktopProcesses;
     private readonly object _orderedGate = new();
+    private readonly SemaphoreSlim _presenceGate = new(1, 1);
     private Task _orderedOperations = Task.CompletedTask;
     private Task? _selectionBarrier;
     private int _selectedDesktop = instance ?? 0;
@@ -20,6 +22,7 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
     private string _clientName = "MCP";
     private int _lastDesktop;
     private SelectedDesktop? _selectedIdentity;
+    private long _selectionRevision;
 
     private int ResolveDesktop()
     {
@@ -96,6 +99,7 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
             // the selection, so it cannot overtake a write to the previous desktop.
             if (request.Method == "desktops.list") return await ListDesktopsAsync(ct).ConfigureAwait(false);
             if (request.Method == "desktops.select") return await SelectDesktopAsync(request.DesktopProcessId, ct).ConfigureAwait(false);
+            if (request.Method == "client.heartbeat") return await SendHeartbeatAsync(request, ct).ConfigureAwait(false);
             desktop = ResolveDesktop();
             if (CurrentDesktop() is { StartedUtc: not null } initial && Volatile.Read(ref _selectedIdentity)?.StartedUtc is { } started
                 && initial.StartedUtc != started)
@@ -186,9 +190,19 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
                 return DiscoveryError("desktop_ipc_unavailable", "That desktop's IPC endpoint is not reachable. Selection was not changed; call list_desktops to inspect other instances.");
         }
         // Probe and identity come from the same discovery result, not two inconsistent snapshots.
-        Volatile.Write(ref _selectedIdentity, processId is int selectedPid ? new(selectedPid, replacement?.StartedUtc) : null);
-        var previous = Interlocked.Exchange(ref _selectedDesktop, processId ?? 0);
-        if (previous != (processId ?? 0)) await RemovePresenceAsync(Interlocked.Exchange(ref _lastDesktop, 0)).ConfigureAwait(false);
+        await _presenceGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            int previous;
+            lock (_orderedGate)
+            {
+                Volatile.Write(ref _selectedIdentity, processId is int selectedPid ? new(selectedPid, replacement?.StartedUtc) : null);
+                previous = Interlocked.Exchange(ref _selectedDesktop, processId ?? 0);
+                _selectionRevision++;
+            }
+            if (previous != (processId ?? 0)) await RemovePresenceAsync(Interlocked.Exchange(ref _lastDesktop, 0)).ConfigureAwait(false);
+        }
+        finally { _presenceGate.Release(); }
         return AgentResponse.Ok(new { selectedProcessId = processId, automatic = processId is null,
             instruction = "Desktop routing changed for this MCP connection only. Call list_sessions and verify the intended session before each terminal input. Existing session authorization is unchanged." });
     }
@@ -215,6 +229,21 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
         catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException or UnauthorizedAccessException) { }
     }
 
+    private async Task<AgentResponse> SendHeartbeatAsync(AgentRequest request, CancellationToken ct)
+    {
+        await _presenceGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var desktop = ResolveDesktop();
+            // A cancelled response does not prove the heartbeat was never
+            // registered. Remember the destination before sending for cleanup.
+            var previous = Interlocked.Exchange(ref _lastDesktop, desktop);
+            if (previous != desktop) { await RemovePresenceAsync(previous).ConfigureAwait(false); }
+            return await new AgentClient(AgentEndpoint.ForProcess(desktop)).SendAsync(request, ct).ConfigureAwait(false);
+        }
+        finally { _presenceGate.Release(); }
+    }
+
     public async Task RunPresenceAsync(CancellationToken ct)
     {
         try
@@ -225,12 +254,10 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
             {
                 try
                 {
-                    var desktop = ResolveDesktop();
                     using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     budget.CancelAfter(TimeSpan.FromSeconds(4));
-                    var result = await SendAsync(new("client.heartbeat", ClientId: _clientId,
+                    await SendAsync(new("client.heartbeat", ClientId: _clientId,
                         ClientName: Volatile.Read(ref _clientName)), budget.Token).ConfigureAwait(false);
-                    if (result.Success) Volatile.Write(ref _lastDesktop, desktop);
                 }
                 catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException or UnauthorizedAccessException or PlatformNotSupportedException)
                 { /* Desktop restart/offline is recoverable; tool discovery must still succeed. */ }
@@ -242,6 +269,66 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
             await RemovePresenceAsync(Volatile.Read(ref _lastDesktop)).ConfigureAwait(false);
         }
     }
+
+    /// <summary>Completes when the selected desktop exits, or automatic discovery has no desktops left.</summary>
+    public async Task WaitForDesktopExitAsync(CancellationToken ct)
+    {
+        Process? watched = null;
+        long watchedRevision = -1;
+        try
+        {
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+                int selected;
+                long revision;
+                SelectedDesktop? identity;
+                lock (_orderedGate)
+                {
+                    selected = _selectedDesktop;
+                    revision = _selectionRevision;
+                    identity = _selectedIdentity;
+                }
+
+                bool exited;
+                if (selected > 0)
+                {
+                    if (watchedRevision != revision)
+                    {
+                        watched?.Dispose();
+                        watched = null;
+                        try
+                        {
+                            watched = Process.GetProcessById(selected);
+                            _ = watched.SafeHandle;
+                        }
+                        catch (ArgumentException) { /* The desktop already exited. */ }
+                        watchedRevision = revision;
+                    }
+                    exited = watched is null || watched.HasExited
+                        || identity?.StartedUtc is { } started && watched.StartTime.ToUniversalTime() != started.UtcDateTime;
+                }
+                else
+                {
+                    watched?.Dispose();
+                    watched = null;
+                    watchedRevision = -1;
+                    exited = _discoverDesktops().Count == 0;
+                }
+
+                // A tool may have selected another instance during observation.
+                // Only end the host if this is still the same routing decision.
+                lock (_orderedGate)
+                {
+                    if (exited && revision == _selectionRevision && selected == _selectedDesktop) { return; }
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(250), ct).ConfigureAwait(false);
+            }
+        }
+        finally { watched?.Dispose(); }
+    }
+
+    public void Dispose() => _presenceGate.Dispose();
 
     private sealed record SelectedDesktop(int ProcessId, DateTimeOffset? StartedUtc);
 }
