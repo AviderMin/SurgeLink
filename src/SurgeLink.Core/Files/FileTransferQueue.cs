@@ -34,6 +34,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
     private Task? _worker;
     private DateTimeOffset _lastPublish = DateTimeOffset.MinValue;
     private bool _disposed;
+    private TaskCompletionSource? _disposeCompletion;
 
     /// <summary>Creates a queue; the logger is optional and used for shutdown diagnostics.</summary>
     public FileTransferQueue(ILogger? logger = null) => _logger = logger;
@@ -128,19 +129,42 @@ public sealed class FileTransferQueue : IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+    {
+        TaskCompletionSource completion;
+        var start = false;
+        lock (_gate)
+        {
+            if (_disposeCompletion is null)
+            {
+                _disposed = true;
+                _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                start = true;
+            }
+            completion = _disposeCompletion;
+        }
+        // Cancellation and notifications may call back into the queue.
+        if (start) { _ = CompleteDisposalAsync(completion); }
+        return new ValueTask(completion.Task);
+    }
+
+    private async Task CompleteDisposalAsync(TaskCompletionSource completion)
+    {
+        try
+        {
+            await DisposeCoreAsync().ConfigureAwait(false);
+            completion.TrySetResult();
+        }
+        catch (Exception exception) { completion.TrySetException(exception); }
+    }
+
+    private async Task DisposeCoreAsync()
     {
         Task? worker;
         TransferItem[] items;
         TransferItem[] pending;
         lock (_gate)
         {
-            if (_disposed)
-            {
-                return;
-            }
-
-            _disposed = true;
             items = _items.ToArray();
             pending = _pending.Select(job => job.Item).ToArray();
             _pending.Clear();
@@ -400,6 +424,11 @@ public sealed class FileTransferQueue : IAsyncDisposable
         while (pending.TryPop(out var directory))
         {
             token.ThrowIfCancellationRequested();
+            // A queued folder or child directory may have been replaced since
+            // it was selected/listed. Do not follow it outside the download tree.
+            var current = await fileSystem.StatAsync(directory.Remote, token).ConfigureAwait(false);
+            if (current.Kind != RemoteEntryKind.Directory)
+                throw new IOException("ZIP downloads require a directory: " + directory.Remote);
             var listing = await fileSystem.ListAsync(directory.Remote, token).ConfigureAwait(false);
             foreach (var entry in listing)
             {
@@ -437,6 +466,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
         {
             token.ThrowIfCancellationRequested();
             var entry = archive.CreateEntry(file.Archive, CompressionLevel.Optimal);
+            await RemoteFileAccess.RequireRegularFileAsync(fileSystem, file.Remote, token).ConfigureAwait(false);
             await using var source = await fileSystem.OpenReadAsync(file.Remote, token).ConfigureAwait(false);
             await using var target = entry.Open();
             int read;

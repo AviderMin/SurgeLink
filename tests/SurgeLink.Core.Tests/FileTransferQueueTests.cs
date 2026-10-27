@@ -7,6 +7,42 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class FileTransferQueueTests
 {
+    [Fact]
+    public async Task ConcurrentShutdownCallersBothWaitForActiveTransferCleanup()
+    {
+        using var temp = new TempDirectory();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fs = new FakeFileSystem
+        {
+            OpenReadOverride = async (_, token) =>
+            {
+                entered.TrySetResult();
+                try { await Task.Delay(Timeout.Infinite, token); }
+                finally { cancelled.TrySetResult(); await cleanup.Task; }
+                throw new InvalidOperationException("unreachable");
+            },
+        };
+        await using var queue = new FileTransferQueue();
+        var item = Download("/file", temp.File("file"), 1);
+        queue.Enqueue(item, fs);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var first = queue.DisposeAsync().AsTask();
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = queue.DisposeAsync().AsTask();
+        try
+        {
+            Assert.False(first.IsCompleted);
+            Assert.False(second.IsCompleted);
+        }
+        finally { cleanup.TrySetResult(); }
+        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(TransferStatus.Cancelled, item.Status);
+        Assert.Empty(queue.Snapshot);
+        Assert.False(File.Exists(item.LocalPath));
+    }
+
     [Theory]
     [InlineData(RemoteEntryKind.Other)]
     [InlineData(RemoteEntryKind.SymbolicLink)]
@@ -23,6 +59,34 @@ public sealed class FileTransferQueueTests
         Assert.Equal(TransferStatus.Failed, item.Status);
         Assert.Equal(0, fs.OpenReadCalls(item.RemotePath));
         Assert.False(File.Exists(item.LocalPath));
+    }
+
+    [Theory]
+    [InlineData("/remote/folder", RemoteEntryKind.SymbolicLink)]
+    [InlineData("/remote/folder/nested", RemoteEntryKind.SymbolicLink)]
+    [InlineData("/remote/folder/nested/file", RemoteEntryKind.SymbolicLink)]
+    [InlineData("/remote/folder/nested/file", RemoteEntryKind.Other)]
+    public async Task FolderDownloadRechecksEntryTypesBeforeTraversalAndReading(string changedPath, RemoteEntryKind kind)
+    {
+        using var temp = new TempDirectory();
+        var fs = new FakeFileSystem
+        {
+            StatOverride = path => path == changedPath
+                ? new RemoteFileEntry { Name = path[(path.LastIndexOf('/') + 1)..], FullPath = path, Kind = kind }
+                : null,
+        };
+        fs.Listings["/remote/folder"] = [new() { Name = "nested", FullPath = "/remote/folder/nested", Kind = RemoteEntryKind.Directory }];
+        fs.Listings["/remote/folder/nested"] = [new() { Name = "file", FullPath = "/remote/folder/nested/file", Kind = RemoteEntryKind.File }];
+        fs.Files["/remote/folder/nested/file"] = "outside folder"u8.ToArray();
+        var item = FolderDownload(temp.File("folder.zip"));
+        await using var queue = new FileTransferQueue();
+        queue.Enqueue(item, fs);
+        Assert.True(await WaitAsync(() => !item.IsActive));
+        Assert.Equal(TransferStatus.Failed, item.Status);
+        Assert.Equal(0, fs.OpenReadCalls("/remote/folder/nested/file"));
+        if (changedPath != "/remote/folder/nested/file") { Assert.DoesNotContain(changedPath, fs.ListCalls); }
+        Assert.False(File.Exists(item.LocalPath));
+        Assert.Empty(Directory.GetFiles(temp.Root, ".surge-*.tmp"));
     }
 
     [Fact]
@@ -507,6 +571,10 @@ public sealed class FileTransferQueueTests
 
         public Func<string, Task>? ReadGate { get; set; }
 
+        public Func<string, RemoteFileEntry?>? StatOverride { get; init; }
+
+        public ConcurrentQueue<string> ListCalls { get; } = new();
+
         public bool SupportsPermissions => true;
 
         public int MaxConcurrentReads => Volatile.Read(ref _maxConcurrentReads);
@@ -517,17 +585,21 @@ public sealed class FileTransferQueueTests
 
         public Task<string> GetCurrentDirectoryAsync(CancellationToken cancellationToken) => Task.FromResult("/");
 
-        public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken cancellationToken) =>
-            Task.FromResult(Listings.TryGetValue(path, out var entries) ? entries : (IReadOnlyList<RemoteFileEntry>)Array.Empty<RemoteFileEntry>());
+        public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken cancellationToken)
+        {
+            ListCalls.Enqueue(path);
+            return Task.FromResult(Listings.TryGetValue(path, out var entries) ? entries : (IReadOnlyList<RemoteFileEntry>)Array.Empty<RemoteFileEntry>());
+        }
 
         public Task<RemoteFileEntry> StatAsync(string path, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (StatOverride?.Invoke(path) is { } overridden) { return Task.FromResult(overridden); }
             var entry = Listings.Values.SelectMany(entries => entries).FirstOrDefault(item => item.FullPath == path);
             return Task.FromResult(entry ?? new RemoteFileEntry
             {
                 Name = path[(path.LastIndexOf('/') + 1)..], FullPath = path,
-                Kind = Directories.ContainsKey(path) ? RemoteEntryKind.Directory : RemoteEntryKind.File,
+                Kind = Directories.ContainsKey(path) || Listings.ContainsKey(path) ? RemoteEntryKind.Directory : RemoteEntryKind.File,
                 Size = Files.TryGetValue(path, out var bytes) ? bytes.Length : 0,
             });
         }

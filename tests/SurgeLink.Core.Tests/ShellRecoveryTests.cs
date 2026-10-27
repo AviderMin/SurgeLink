@@ -13,6 +13,16 @@ namespace SurgeLink.Core.Tests;
 public sealed class ShellRecoveryTests
 {
     [Fact]
+    public async Task ShellClosureAfterDisconnectKeepsTheConnectionFailureMessage()
+    {
+        await using var harness = await Harness.OpenAsync();
+        harness.Session.RaiseStateChanged(ConnectionState.Connected, ConnectionState.Faulted, "Network connection lost.");
+        harness.Original.Exit();
+        Assert.Equal(ConnectionState.Faulted, harness.Tab.State);
+        Assert.Equal("Network connection lost.", harness.Tab.Message);
+    }
+
+    [Fact]
     public async Task ShellRecoveryKeepsTransportTabAndTransferQueue()
     {
         await using var harness = await Harness.OpenAsync();

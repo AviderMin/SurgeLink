@@ -95,12 +95,61 @@ public sealed class TerminalBridgeResponseTests
         Assert.DoesNotContain((90, 30), remote.Sizes);
         Assert.Equal((80, 24), remote.Sizes[^1]);
     }
+    [Fact]
+    public async Task DuplicateLayoutEventDoesNotSuppressThePendingRemoteSize()
+    {
+        var remote = new GatedResizeTerminal();
+        await using var bridge = new TerminalBridge(remote, new InlineDispatcher(), NullLogger.Instance);
+        var first = bridge.ResizeAsync(100, 40);
+        await remote.FirstResizeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var next = bridge.ResizeAsync(80, 24);
+        var duplicate = bridge.ResizeAsync(80, 24);
+        remote.ReleaseFirstResize.TrySetResult();
+        await Task.WhenAll(first, next, duplicate).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal((80, 24), remote.Sizes[^1]);
+        Assert.Single(remote.Sizes, size => size == (80, 24));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelledResizeCanRetryTheSameLocalSize(bool cancelWhileQueued)
+    {
+        var remote = new GatedResizeTerminal();
+        await using var bridge = new TerminalBridge(remote, new InlineDispatcher(), NullLogger.Instance);
+        using var cancellation = new CancellationTokenSource();
+        var first = bridge.ResizeAsync(100, 40, cancelWhileQueued ? default : cancellation.Token);
+        await remote.FirstResizeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var cancelled = cancelWhileQueued ? bridge.ResizeAsync(80, 24, cancellation.Token) : first;
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelled);
+        remote.ReleaseFirstResize.TrySetResult();
+        if (cancelWhileQueued) { await first; }
+        var size = cancelWhileQueued ? (80, 24) : (100, 40);
+        var calls = remote.Sizes.Count;
+        await bridge.ResizeAsync(size.Item1, size.Item2);
+        Assert.Equal(calls + 1, remote.Sizes.Count);
+        Assert.Equal(size, remote.Sizes[^1]);
+    }
+
+    [Fact]
+    public async Task FailedRemoteResizeCanRetryWithoutChangingTheWindowAgain()
+    {
+        var remote = new GatedResizeTerminal { ResizeFailure = new IOException("temporary resize failure") };
+        await using var bridge = new TerminalBridge(remote, new InlineDispatcher(), NullLogger.Instance);
+        await Assert.ThrowsAsync<IOException>(() => bridge.ResizeAsync(80, 24));
+        remote.ResizeFailure = null;
+        await bridge.ResizeAsync(80, 24);
+        Assert.Equal(new[] { (80, 24), (80, 24) }, remote.Sizes);
+    }
+
     private sealed class GatedResizeTerminal : IRemoteTerminal
     {
         private readonly object _gate = new();
         private readonly List<(int Columns, int Rows)> _sizes = [];
         public TaskCompletionSource FirstResizeEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseFirstResize { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Exception? ResizeFailure { get; set; }
         public IReadOnlyList<(int Columns, int Rows)> Sizes { get { lock (_gate) return _sizes.ToArray(); } }
         public int Columns => 120;
         public int Rows => 32;
@@ -112,6 +161,7 @@ public sealed class TerminalBridgeResponseTests
         public async Task ResizeAsync(int columns, int rows, CancellationToken cancellationToken = default)
         {
             lock (_gate) { _sizes.Add((columns, rows)); }
+            if (ResizeFailure is { } failure) { throw failure; }
             if (columns == 100)
             {
                 FirstResizeEntered.TrySetResult();

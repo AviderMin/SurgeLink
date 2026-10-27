@@ -63,6 +63,8 @@ public sealed class WorkspaceTab
 
     /// <summary>Prevents new external access once connection teardown starts.</summary>
     public bool IsClosing { get; internal set; }
+
+    internal EventHandler<SessionStateChangedEventArgs>? StateChangedHandler { get; set; }
 }
 
 /// <summary>Immutable view of the workspace used by the shell to render.</summary>
@@ -193,7 +195,11 @@ public sealed class WorkspaceStore
 
             var tab = new WorkspaceTab(Guid.NewGuid(), profile, session, terminal, new FileTransferQueue(_logger));
             openingTab = tab;
-            session.StateChanged += OnSessionStateChanged;
+            // Bind to the tab before the host probe. It is not published in the
+            // workspace yet, but disconnects during initialization still matter.
+            tab.StateChangedHandler = (_, args) => OnSessionStateChanged(tab, args);
+            session.StateChanged += tab.StateChangedHandler;
+            OnSessionStateChanged(tab, new SessionStateChangedEventArgs(tab.State, session.State));
             await ProbeHostInfoAsync(tab, session, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -231,9 +237,10 @@ public sealed class WorkspaceStore
         }
         catch
         {
-            if (session is not null) { session.StateChanged -= OnSessionStateChanged; }
             if (openingTab is not null)
             {
+                openingTab.IsClosing = true;
+                openingTab.Session.StateChanged -= openingTab.StateChangedHandler;
                 try { await openingTab.Transfers.DisposeAsync(); } catch (Exception ex) { _logger.LogDebug(ex, "Opening queue cleanup failed."); }
             }
             if (terminal is not null)
@@ -282,7 +289,7 @@ public sealed class WorkspaceStore
                 foreach (Func<WorkspaceTab, Task> handler in closing.GetInvocationList())
                     await handler(tab).ConfigureAwait(false);
 
-            tab.Session.StateChanged -= OnSessionStateChanged;
+            tab.Session.StateChanged -= tab.StateChangedHandler;
             // Attempt every cleanup even if an earlier resource fails to close.
             try { await tab.Transfers.DisposeAsync().ConfigureAwait(false); }
             catch (Exception ex) { _logger.LogWarning(ex, "Transfer queue cleanup failed for {TabId}", tab.Id); }
@@ -489,20 +496,11 @@ public sealed class WorkspaceStore
         }
     }
 
-    private void OnSessionStateChanged(object? sender, SessionStateChangedEventArgs e)
+    private void OnSessionStateChanged(WorkspaceTab tab, SessionStateChangedEventArgs e)
     {
-        if (sender is not IProtocolSession session)
-        {
-            return;
-        }
-
         _dispatcher.Post(() =>
         {
-            var tab = Snapshot.Tabs.FirstOrDefault(t => t.Session.SessionId == session.SessionId);
-            if (tab is null)
-            {
-                return;
-            }
+            if (tab.IsClosing) { return; }
 
             tab.State = e.NewState;
             tab.Message = e.Message;
@@ -513,13 +511,14 @@ public sealed class WorkspaceStore
                 _ = tab.Transfers.DisposeAsync().AsTask();
             }
 
-            Update(s => s, force: true);
+            if (Snapshot.Tabs.Contains(tab)) { Update(s => s, force: true); }
         });
     }
 
     private void OnTerminalClosed(WorkspaceTab tab, TerminalBridge terminal)
     {
-        if (tab.IsClosing || !Snapshot.Tabs.Contains(tab) || !ReferenceEquals(tab.Terminal, terminal)) { return; }
+        if (tab.IsClosing || tab.State != ConnectionState.Connected
+            || !Snapshot.Tabs.Contains(tab) || !ReferenceEquals(tab.Terminal, terminal)) { return; }
         // TerminalBridge dispatches Closed to the UI thread, so state can be updated directly.
         tab.Message = "Remote shell exited.";
         Update(s => s, force: true);

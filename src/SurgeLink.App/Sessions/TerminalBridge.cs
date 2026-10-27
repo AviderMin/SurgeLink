@@ -18,6 +18,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     private readonly IAppSettingsStore? _settings;
     private readonly SemaphoreSlim _resizeGate = new(1, 1);
     private long _resizeRequest;
+    private (int Columns, int Rows) _remoteSize;
     private int _repaintScheduled;
     private int _closed;
 
@@ -30,6 +31,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         _logger = logger;
         _settings = settings;
         Emulator = new TerminalEmulator(columns, rows, settings?.Current.TerminalScrollbackLines ?? 10000);
+        _remoteSize = (columns, rows);
         if (settings is not null) settings.Changed += OnSettingsChanged;
         Emulator.ResponseRequested += OnResponseRequested;
         _remote.OutputReceived += OnOutputReceived;
@@ -135,12 +137,10 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         lock (Emulator.SyncRoot)
         {
             request = ++_resizeRequest;
-            if (Emulator.Columns == columns && Emulator.Rows == rows)
+            if (Emulator.Columns != columns || Emulator.Rows != rows)
             {
-                return;
+                Emulator.Resize(columns, rows);
             }
-
-            Emulator.Resize(columns, rows);
         }
 
         await _resizeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -153,7 +153,13 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
                 return;
             }
 
-            await _remote.ResizeAsync(columns, rows, cancellationToken).ConfigureAwait(false);
+            // A duplicate layout event must still carry a pending or failed
+            // remote resize. Local dimensions alone do not confirm delivery.
+            if (_remoteSize != (columns, rows))
+            {
+                await _remote.ResizeAsync(columns, rows, cancellationToken).ConfigureAwait(false);
+                _remoteSize = (columns, rows);
+            }
         }
         finally
         {

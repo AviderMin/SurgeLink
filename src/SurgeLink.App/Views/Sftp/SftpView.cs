@@ -42,7 +42,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         // Hooks: constant order and count on every render.
         var settings = UseExternalStore(settingsStore.Subscribe, () => settingsStore.Current);
 
-        var (listingRequest, setListingRequest) = UseState((Path: Props.InitialPath, Revision: Guid.Empty));
+        var (listingRequest, setListingRequest) = UseState((Path: Props.InitialPath, Revision: Guid.Empty), threadSafe: true);
         var (cwd, setCwd) = UseState(Props.InitialPath ?? "/", threadSafe: true);
         var (entries, setEntries) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>(), threadSafe: true);
         var (loading, setLoading) = UseState(true, threadSafe: true);
@@ -145,31 +145,41 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         // A completion banner is view-local chrome; it is subscribed only while
         // this view is mounted. Progress updates belong to the child panel;
-        // only completion updates the browser's banner.
+        // completion updates the banner and reloads the current directory.
         UseEffect(
             () =>
             {
-                void OnFinished(TransferItem item) => setBanner(item.Status switch
+                var token = operationLifetime.Current?.Token ?? new CancellationToken(true);
+                void OnFinished(TransferItem item)
                 {
-                    TransferStatus.Completed => new SftpBanner(
-                        InfoBarSeverity.Success,
-                        item.Direction == TransferDirection.Upload
-                            ? Str.T("sftp.banner.uploadComplete", "Upload complete")
-                            : Str.T("sftp.banner.downloadComplete", "Download complete"),
-                        item.Name + " · " + DataFormat.Bytes(item.DoneBytes)),
-                    TransferStatus.Failed => new SftpBanner(
-                        InfoBarSeverity.Error,
-                        Str.T("sftp.banner.transferFailed", "Transfer failed"),
-                        item.Name + " · " + (item.Error ?? Str.T("sftp.transfers.unknownError", "unknown error"))),
-                    TransferStatus.Cancelled => new SftpBanner(InfoBarSeverity.Informational,
-                        Str.T("sftp.transfers.cancelled", "Transfer cancelled"), item.Name),
-                    _ => null,
-                });
+                    if (token.IsCancellationRequested) { return; }
+                    setBanner(item.Status switch
+                    {
+                        TransferStatus.Completed => new SftpBanner(
+                            InfoBarSeverity.Success,
+                            item.Direction == TransferDirection.Upload
+                                ? Str.T("sftp.banner.uploadComplete", "Upload complete")
+                                : Str.T("sftp.banner.downloadComplete", "Download complete"),
+                            item.Name + " · " + DataFormat.Bytes(item.DoneBytes)),
+                        TransferStatus.Failed => new SftpBanner(
+                            InfoBarSeverity.Error,
+                            Str.T("sftp.banner.transferFailed", "Transfer failed"),
+                            item.Name + " · " + (item.Error ?? Str.T("sftp.transfers.unknownError", "unknown error"))),
+                        TransferStatus.Cancelled => new SftpBanner(InfoBarSeverity.Informational,
+                            Str.T("sftp.transfers.cancelled", "Transfer cancelled"), item.Name),
+                        _ => null,
+                    });
+                    // Uploads can also leave completed children after failure or
+                    // cancellation. Refresh the latest navigation target without
+                    // returning to the folder captured when the upload began.
+                    if (item.Direction == TransferDirection.Upload) { Refresh(); }
+                }
 
                 queue.TransferFinished += OnFinished;
                 return () => queue.TransferFinished -= OnFinished;
             },
-            queue);
+            queue,
+            online);
 
         var sortKey = ((int)sortColumn) + "|" + (ascending ? "up" : "down") + "|" + (settings.ShowHiddenFiles ? "hidden" : "visible");
         var rows = UseMemo(
@@ -181,7 +191,7 @@ internal sealed class SftpView : Component<SftpViewProps>
         {
             if (!IsOnline()) { return; }
             setLoading(true);
-            setListingRequest((listingRequest.Path, Guid.NewGuid()));
+            setListingRequest((currentListing.Current.Path, Guid.NewGuid()));
         }
 
         void CloseDialog()

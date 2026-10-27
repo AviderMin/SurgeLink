@@ -11,6 +11,45 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class WorkspaceFailureTests
 {
+    [Theory]
+    [InlineData(ConnectionState.Disconnected)]
+    [InlineData(ConnectionState.Faulted)]
+    public async Task DisconnectDuringHostProbeIsVisibleWhenTheTabOpens(ConnectionState state)
+    {
+        var plugin = new FakeProtocolPlugin();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probe = new TaskCompletionSource<RemoteHostInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeProtocolSession(plugin.Descriptor)
+        {
+            HostInfoLoader = _ => { entered.TrySetResult(); return probe.Task; },
+        };
+        plugin.SessionFactory = _ => session;
+        var catalog = new ProtocolCatalog(); catalog.Register(plugin);
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new FailingStore(), credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var opening = workspace.OpenAsync(SessionProfile.New("fake", "host", 22, "user"), null, default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        session.RaiseStateChanged(ConnectionState.Connected, state, "Connection lost during initialization.");
+        probe.TrySetResult(session.HostInfo);
+        var tab = await opening.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            Assert.Equal(state, tab.State);
+            Assert.Equal("Connection lost during initialization.", tab.Message);
+            Assert.Equal(0, workspace.Snapshot.ConnectedServerCount);
+            Assert.False(workspace.Snapshot.IsConnecting);
+            var item = new SurgeLink.Core.Files.TransferItem
+            {
+                Id = "after-disconnect", Name = "file", RemotePath = "/file",
+                Direction = SurgeLink.Core.Files.TransferDirection.Upload,
+            };
+            Assert.Throws<InvalidOperationException>(() => tab.Transfers.Enqueue(item, new SurgeLink.Protocols.Demo.DemoFileSystem()));
+        }
+        finally { await workspace.CloseAsync(tab.Id); }
+    }
+
     [Fact]
     public async Task CancellationDuringUnresponsiveHostProbeReleasesSessionAndBusyState()
     {
