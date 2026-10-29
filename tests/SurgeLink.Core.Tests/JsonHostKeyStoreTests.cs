@@ -130,7 +130,7 @@ public sealed class JsonHostKeyStoreTests
     }
 
     [Fact]
-    public void CorruptFileLoadsAsEmptyStore()
+    public void CorruptFileRejectsVerificationInsteadOfTreatingItAsFirstUse()
     {
         using var temp = new TempDirectory();
         string path = temp.File("known-hosts.json");
@@ -138,7 +138,7 @@ public sealed class JsonHostKeyStoreTests
 
         var store = new JsonHostKeyStore(path);
 
-        Assert.Empty(store.List());
-        Assert.False(store.TryGetFingerprint("host:22", out _));
+        Assert.Throws<IOException>(() => store.List());
+        Assert.Throws<IOException>(() => store.TryGetFingerprint("host:22", out _));
     }
 }

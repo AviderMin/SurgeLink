@@ -99,6 +99,18 @@ public sealed class WindowsCpuParserTests
         Assert.Equal(0d, sample.PerCorePercent[1], 6);
     }
 
+    [Fact]
+    public void ParseBoundsSparseCoreIndexesInsteadOfAllocatingHugeArrays()
+    {
+        // A guest-supplied instance name with an enormous numeric index must not size the
+        // per-core result array; the row is ignored and the remaining cores still parse.
+        var sample = WindowsCpuParser.Parse("0|10\n999999999|50\n", null);
+
+        Assert.Single(sample.PerCorePercent);
+        Assert.Equal(10d, sample.PerCorePercent[0], 6);
+        Assert.Equal(10d, sample.TotalPercent, 6);
+    }
+
     [Theory]
     [InlineData(null, null)]
     [InlineData("", "")]

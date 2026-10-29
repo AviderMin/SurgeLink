@@ -1,4 +1,5 @@
 using System.Text;
+using System.Diagnostics;
 
 namespace SurgeLink.Protocols.Telnet;
 
@@ -18,6 +19,8 @@ internal sealed class TelnetCodec
     private byte _command;
     private bool _subnegotiationOverflow;
     private bool _afterCarriageReturn;
+    private long _negotiationWindow = Stopwatch.GetTimestamp();
+    private int _negotiations;
 
     public TelnetCodec(int columns, int rows, string terminalType)
     {
@@ -71,6 +74,7 @@ internal sealed class TelnetCodec
                     else _state = ParserState.Data; // NOP, GA and other standalone commands.
                     break;
                 case ParserState.Option:
+                    CountNegotiation();
                     Negotiate(_command, value, reply);
                     _state = ParserState.Data;
                     break;
@@ -81,6 +85,7 @@ internal sealed class TelnetCodec
                 case ParserState.SubnegotiationCommand:
                     if (value == Se)
                     {
+                        CountNegotiation();
                         if (!_subnegotiationOverflow && _subnegotiation.Count == 2 &&
                             _subnegotiation[0] == TerminalType && _subnegotiation[1] == 1 &&
                             _local[TerminalType] == OptionState.Yes)
@@ -99,6 +104,18 @@ internal sealed class TelnetCodec
             }
         }
         return (data.ToArray(), reply.ToArray());
+    }
+
+    private void CountNegotiation()
+    {
+        var now = Stopwatch.GetTimestamp();
+        if (Stopwatch.GetElapsedTime(_negotiationWindow, now) >= TimeSpan.FromSeconds(1))
+        {
+            _negotiationWindow = now;
+            _negotiations = 0;
+        }
+        if (++_negotiations > 128)
+            throw new IOException("The Telnet peer exceeded the negotiation rate limit.");
     }
 
     public byte[] Encode(ReadOnlySpan<byte> bytes)

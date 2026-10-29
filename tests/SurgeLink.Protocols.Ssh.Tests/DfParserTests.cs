@@ -5,6 +5,22 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 
 public sealed class DfParserTests
 {
+    [Theory]
+    [InlineData("9223372036854775807", "1", "1")]
+    [InlineData("1", "9223372036854775807", "1")]
+    [InlineData("1", "1", "9223372036854775807")]
+    public void UntrustedBlockCountsCannotOverflowOrProduceNegativeByteSizes(string total, string used, string available)
+    {
+        Assert.Empty(DfParser.Parse($"/dev/sda {total} {used} {available} 1% /\n"));
+    }
+
+    [Fact]
+    public void OverfullFileSystemRemainsVisibleWithNoAvailableSpace()
+    {
+        var disk = Assert.Single(DfParser.Parse("/dev/sda 100 120 -20 120% /\n"));
+        Assert.Equal(0, disk.AvailableBytes);
+        Assert.Equal(100 * 1024, disk.TotalBytes);
+    }
     private const string Sample = """
         Filesystem     1024-blocks      Used Available Capacity Mounted on
         /dev/sda1         102400000  45000000  52400000      47% /
@@ -31,6 +47,15 @@ public sealed class DfParserTests
         Assert.Equal("/dev/mapper/vg-data", data.FileSystem);
         Assert.Equal(204800000L * 1024, data.TotalBytes);
         Assert.Equal(100000000d / 204800000d, data.UsedFraction, 12);
+    }
+
+    [Fact]
+    public void ParseKeepsMountPointsThatContainSpaces()
+    {
+        var disk = Assert.Single(DfParser.Parse("/dev/sdb1 100 20 80 20% /mnt/my disk\n"));
+
+        Assert.Equal("/mnt/my disk", disk.MountPoint);
+        Assert.Equal(100L * 1024, disk.TotalBytes);
     }
 
     [Fact]

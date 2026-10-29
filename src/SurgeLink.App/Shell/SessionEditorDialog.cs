@@ -339,6 +339,9 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                         placeholderText: Str.T("shell.editor.groupPlaceholder", "e.g. Production"))
                     .AutomationName(groupLabel).AutomationId("SessionEditorGroup"));
             var fields = new List<Element>();
+            if (template is not null && services.Credentials.Get(template.Id)?.DecryptionFailed == true)
+                fields.Add(InfoBar(Str.T("shell.editor.secretUnavailableTitle", "Saved credential unavailable"),
+                    Str.T("shell.editor.secretUnavailableBody", "The saved secret could not be decrypted. Re-enter it, or turn off Remember to remove it.")).Warning());
             if (showErrors)
             {
                 var message = pickerError ?? string.Join(Environment.NewLine, errors);
@@ -477,6 +480,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             var existing = props.Mode == SessionEditorMode.Edit && template is not null
                 ? services.Credentials.Get(template.Id)
                 : null;
+            if (existing?.DecryptionFailed == true && password.Length == 0 && passphrase.Length == 0) return existing;
 
             if (isPassword)
             {

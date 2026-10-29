@@ -45,7 +45,7 @@ internal sealed class TerminalView : Component<TerminalViewProps>
         // TerminalBridge.Invalidated, so terminal output never re-renders Reactor.
         Element surface = new XamlHostElement(() => new TerminalSurface(bridge, settings, logger), UpdateSurface)
         {
-            TypeKey = "TerminalSurface:" + bridge.GetHashCode(),
+            TypeKey = "TerminalSurface:" + bridge.Id,
         };
         return Grid(columns: [GridSize.Star()], rows: [GridSize.Auto, GridSize.Star()],
             bridge.IsClosed ? HStack(AppTheme.SpacingM,

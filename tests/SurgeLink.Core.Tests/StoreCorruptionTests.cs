@@ -23,7 +23,9 @@ public sealed class StoreCorruptionTests
         using var temp = new TempDirectory();
         var path = temp.File("known-hosts.json");
         File.WriteAllText(path, json);
-        Assert.Empty(new JsonHostKeyStore(path).List());
+        var store = new JsonHostKeyStore(path); // Startup remains available for repair.
+        Assert.Throws<IOException>(() => store.List());
+        Assert.Throws<IOException>(() => store.TryGetFingerprint("host:22", out _));
     }
 
     [Theory]

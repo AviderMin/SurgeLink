@@ -12,6 +12,8 @@ namespace SurgeLink.App.Sessions;
 /// </summary>
 public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomation
 {
+    /// <summary>Stable, unique identity for native surface reconciliation across shell replacement.</summary>
+    public Guid Id { get; } = Guid.NewGuid();
     private readonly IRemoteTerminal _remote;
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger _logger;
@@ -96,16 +98,23 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         }
     }
 
-    /// <summary>Encodes and sends a key press.</summary>
-    public void SendKey(int virtualKey, bool control = false, bool alt = false, bool shift = false)
+    /// <summary>
+    /// Encodes and sends a key press. Returns <c>false</c> when the key has no
+    /// terminal encoding, so the caller can let the keyboard layout deliver the
+    /// character through CharacterReceived instead of swallowing it.
+    /// </summary>
+    public bool SendKey(int virtualKey, bool control = false, bool alt = false, bool shift = false)
     {
         byte[]? bytes;
         lock (Emulator.SyncRoot) bytes = TerminalInputEncoder.EncodeKey(virtualKey, control, alt, shift, Emulator.Modes);
-        if (bytes is { Length: > 0 })
+        if (bytes is not { Length: > 0 })
         {
-            MarkUserInput();
-            Send(bytes);
+            return false;
         }
+
+        MarkUserInput();
+        Send(bytes);
+        return true;
     }
 
     /// <summary>Reports a human mouse event, sharing serialization and Agent takeover with keyboard input.</summary>

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using SurgeLink.Core.Monitoring;
 using SurgeLink.Core.Protocols;
@@ -104,6 +105,14 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
                 : null;
             var networks = ReadSection(sections, MonitorScript.NetDevSection, NetDevParser.Parse) ?? Array.Empty<NetworkSample>();
             var disks = ReadSection(sections, MonitorScript.DiskUsageSection, text => DfParser.Parse(text)) ?? Array.Empty<DiskSample>();
+            var processCount = 0;
+            if (sections.TryGetValue(MonitorScript.ProcessCountSection, out var procsText)
+                && int.TryParse(procsText.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedProcessCount)
+                && parsedProcessCount >= 0)
+            {
+                processCount = parsedProcessCount;
+            }
+
             var diskIo = ReadSection(sections, MonitorScript.DiskStatsSection, DiskStatsParser.Parse);
             if (diskIo is not null)
             {
@@ -147,7 +156,7 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
                     Load1 = load?.Load1 ?? 0d,
                     Load5 = load?.Load5 ?? 0d,
                     Load15 = load?.Load15 ?? 0d,
-                    ProcessCount = load?.RunnableCount ?? 0,
+                    ProcessCount = processCount,
                     ThreadCount = load?.TotalThreads ?? 0,
                 },
                 Memory = memory,

@@ -6,6 +6,30 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 
 public sealed class PsParserTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ParseBoundsRowsAndFieldsBeforeRetainingThem(bool header)
+    {
+        var text = (header ? "PID USER %CPU RSS COMMAND\n" : "")
+            + string.Concat(Enumerable.Range(1, 2000).Select(i => $"{i} user 1 9223372036854775807 {new string('x', 5000)}\n"));
+        var rows = PsParser.Parse(text);
+        Assert.Equal(PsParser.MaximumProcessCount, rows.Count);
+        Assert.All(rows, row =>
+        {
+            Assert.True(row.CommandLine?.Length <= 4096);
+            Assert.True(row.Name.Length <= 4096);
+            Assert.True(row.ResidentBytes >= 0);
+        });
+    }
+
+    [Fact]
+    public void BoundedParsingStillFindsHighCpuProcessesLateInUnsortedOutput()
+    {
+        var text = "PID USER %CPU COMMAND\n" + string.Concat(Enumerable.Range(1, 1000).Select(i => $"{i} root {i} worker\n"));
+        var top = PsParser.TopByCpu(PsParser.Parse(text), 1);
+        Assert.Equal(1000, Assert.Single(top).ProcessId);
+    }
     private const string PsEoOutput = """
             PID USER     %CPU %MEM   RSS COMMAND
               1 root      0.0  0.1  1672 systemd

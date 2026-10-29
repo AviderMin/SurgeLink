@@ -1,8 +1,8 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Microsoft.UI.Reactor.Hosting;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
 using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
@@ -30,12 +30,6 @@ internal sealed record FileEditorWindowProps(
 internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 {
     private const int MaximumEditorBytes = 4 * 1024 * 1024;
-    // The gutter scroll viewer is created during render, so it is published
-    // through a ref: a replaced element would otherwise leave the scroll
-    // handler pinned to a detached control.
-    private readonly Ref<ScrollViewer?> gutterRef = new(null);
-    private TextBox? _editor;
-
     public override Element Render()
     {
         var props = Props;
@@ -50,19 +44,13 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var dirty = !string.Equals(text, savedText, StringComparison.Ordinal);
         var (loadFailed, setLoadFailed) = UseState(false, threadSafe: true);
         var (confirmation, setConfirmation) = UseState(0);
-        // Caret offset and selected length, tracked independently of the text so
-        // the editor can restore them after a re-render. Reading them from the
-        // control while rendering is not an option: during a re-render the
-        // control still holds the previous value. The length matters because a
-        // find result must stay selected; pinning only the start would collapse
-        // the match and break "find next" and "replace".
-        var (caret, setCaret) = UseState(0);
-        var (selectionLength, setSelectionLength) = UseState(0);
         var window = UseWindow();
         var pickers = UseMemo(() => window is null ? null : new WindowStoragePicker(window.NativeWindow), window!);
         var allowClose = UseRef(false);
         var operationBusy = UseRef(false);
         var document = UseRef<TextFileDocument?>(null);
+        // Preserve the file's original line-ending convention; the editor buffer itself is LF-canonical.
+        var documentNewLine = UseRef(TextLineEndings.Lf);
         var lifetime = UseMemo(() => new CancellationTokenSource(), props.FileSystem, target.FullPath);
         var (error, setError) = UseState<string?>(null, threadSafe: true);
         var (status, setStatus) = UseState<string?>(null, threadSafe: true);
@@ -76,16 +64,6 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var editorRef = UseRef<TextBox?>(null);
         var focusSearch = UseRef(false);
         var comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-
-        // One place that turns a text change into editor state, so the caret
-        // bookkeeping can never be forgotten by a caller.
-        void CommitText(int caretOffset, string value, int selectedLength = 0)
-        {
-            setText(value);
-            setCaret(caretOffset);
-            setSelectionLength(selectedLength);
-            setStatus(null);
-        }
 
         void OpenSearch(bool replace)
         {
@@ -109,11 +87,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 setSearchMessage(Str.T("sftp.editor.find.none", "No matches"));
                 return;
             }
-            // Record the match before re-rendering: the render callback restores
-            // this selection instead of leaving a collapsed caret.
             editor.Select(index, query.Length);
-            setCaret(EditorTextBuffer.ToDocumentOffset(source, index));
-            setSelectionLength(EditorTextBuffer.ToDocumentText(query).Length);
             setSearchMessage(Str.T("sftp.editor.find.found", "Match selected"));
         }
 
@@ -127,8 +101,6 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 var updated = string.Concat(editor.Text.AsSpan(0, start), replacement, editor.Text.AsSpan(start + selected));
                 editor.Text = updated;
                 editor.Select(start + replacement.Length, 0);
-                CommitText(EditorTextBuffer.ToDocumentOffset(updated, start + replacement.Length),
-                    EditorTextBuffer.ToDocumentText(updated));
             }
             FindMatch();
         }
@@ -146,8 +118,6 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             editor.Text = updated;
             var clampedCaret = Math.Min(editor.SelectionStart, updated.Length);
             editor.Select(clampedCaret, 0);
-            CommitText(EditorTextBuffer.ToDocumentOffset(updated, clampedCaret),
-                EditorTextBuffer.ToDocumentText(updated));
             setSearchMessage(Str.T("sftp.editor.find.replaced", "All matches replaced"));
         }
 
@@ -179,7 +149,6 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             if (dirty && !allowClose.Current) { setConfirmation(1); return false; }
             return true;
         });
-        var lineNumberTransform = UseMemo(() => new TranslateTransform());
 
         UseEffect(
             () =>
@@ -228,9 +197,12 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                     .ConfigureAwait(true);
                 var content = await BoundedTextFile.ReadDocumentAsync(stream, MaximumEditorBytes, cancellationToken).ConfigureAwait(true);
                 cancellationToken.ThrowIfCancellationRequested();
-                document.Current = content;
-                setText(content.Text);
-                setSavedText(content.Text);
+                documentNewLine.Current = TextLineEndings.Detect(content.Text);
+                // Editing works in canonical LF space; the original breaks are restored on save.
+                var canonical = EditorTextBuffer.ToDocumentText(content.Text);
+                document.Current = content with { Text = canonical };
+                setText(canonical);
+                setSavedText(canonical);
             }
             catch (OperationCanceledException)
             {
@@ -259,11 +231,14 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             try
             {
                 var baseline = document.Current ?? throw new InvalidOperationException("No loaded document.");
-                if ((long)baseline.Encoding.GetByteCount(snapshot) + baseline.Encoding.GetPreamble().Length > MaximumEditorBytes)
+                // Write the file back with its original line endings while the editor keeps LF internally.
+                var persisted = TextLineEndings.Apply(snapshot, documentNewLine.Current);
+                if ((long)baseline.Encoding.GetByteCount(persisted) + baseline.Encoding.GetPreamble().Length > MaximumEditorBytes)
                     throw new IOException(Str.T("sftp.editor.tooLarge", "This file is too large for the built-in text editor."));
                 var savedDocument = await RemoteTextEdit.SaveAsync(props.FileSystem, target.FullPath,
-                    baseline, snapshot, MaximumEditorBytes, token).ConfigureAwait(true);
-                document.Current = savedDocument;
+                    baseline, persisted, MaximumEditorBytes, token).ConfigureAwait(true);
+                // Keep the in-memory baseline canonical so subsequent edits stay in step with the editor.
+                document.Current = savedDocument with { Text = snapshot };
                 // Edits made while the write was in flight remain dirty.
                 if (!token.IsCancellationRequested)
                 {
@@ -320,7 +295,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 
         async Task ExportAsync()
         {
-            if (loading || operationBusy.Current || pickers is null) { return; }
+            if (loading || operationBusy.Current || pickers is null || document.Current is null) { return; }
             operationBusy.Current = true;
             setExporting(true);
             var snapshot = text;
@@ -329,7 +304,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             {
                 var file = await pickers.PickSaveFileAsync(Str.T("sftp.editor.textFiles", "Text files")).ConfigureAwait(true);
                 if (file is null) { return; }
-                await FileIO.WriteBytesAsync(file, [.. encoding.GetPreamble(), .. encoding.GetBytes(snapshot)]);
+                var persisted = TextLineEndings.Apply(snapshot, documentNewLine.Current);
+                await FileIO.WriteBytesAsync(file, [.. encoding.GetPreamble(), .. encoding.GetBytes(persisted)]);
                 setError(null);
                 setStatus(Str.T("sftp.editor.exported", "Saved a local copy."));
             }
@@ -352,9 +328,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             }, Str.T("sftp.editor.discard", "Discard changes"), Str.T("common.cancel", "Cancel"),
             ThemeController.ToElementTheme(settings.Theme));
 
-        var lineCount = LineLayout.CountLines(text);
+        var lineCount = UseMemo(() => LineLayout.CountLines(text), text);
         var characterCount = text.Length;
-        var lineNumbers = LineLayout.GutterText(lineCount);
         var statusText = error ?? (loading
             ? Str.T("sftp.editor.loading", "Loading file…")
             : saving
@@ -383,7 +358,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                         .IsEnabled(!loading && text.Length > 0),
                     Button(Str.T("sftp.editor.export", "Save local copy"), () => _ = ExportAsync()).SubtleButton()
                         .AutomationName(Str.T("sftp.editor.export", "Save local copy"))
-                        .IsEnabled(!loading && !saving && !exporting),
+                        .IsEnabled(!loading && !saving && !exporting && document.Current is not null),
                     Button(Icon(FontIcon("\uE721", fontSize: 16)), () => OpenSearch(false))
                         .AutomationName(Str.T("sftp.editor.find.title", "Find (Ctrl+F)"))
                         .SubtleButton().ToolTip(Str.T("sftp.editor.find.title", "Find (Ctrl+F)")),
@@ -421,81 +396,18 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         }
         else
         {
-            var gutter = ScrollViewer(
-                    TextBlock(lineNumbers)
-                        .FontFamily(AppTheme.Monospace)
-                        .FontSize(14)
-                        .LineHeight(20)
-                        .Foreground(Theme.SecondaryText)
-                        .TextAlignment(TextAlignment.Right)
-                        .Padding(0, 8, 8, 8)
-                        .Set(block => block.IsHitTestVisible = false))
-                .Set(viewer =>
+            Element surface = new XamlHostElement(() => new FileEditorSurface(), element =>
+            {
+                var editorSurface = (FileEditorSurface)element;
+                editorRef.Current = editorSurface.Editor;
+                editorSurface.TextEdited = value =>
                 {
-                    gutterRef.Current = viewer;
-                    viewer.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
-                    viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
-                    viewer.VerticalScrollMode = ScrollMode.Enabled;
-                    viewer.HorizontalScrollMode = ScrollMode.Disabled;
-                    viewer.IsHitTestVisible = false;
-                })
-                .Width(48);
-
-            body = Border(
-                    Grid(
-                        columns: [GridSize.Px(48), GridSize.Star()],
-                        rows: [GridSize.Star()],
-                        gutter.Grid(row: 0, column: 0),
-                        TextBox(EditorTextBuffer.ToEditorText(text), value =>
-                            {
-                                // Keep the caret and selection where the user left them:
-                                // the control text is written back on every render, and a
-                                // write without an explicit offset moves the caret to the
-                                // end. Programmatic replacements supply their own state
-                                // through CommitText instead.
-                                if (editorRef.Current is { } current)
-                                {
-                                    setCaret(EditorTextBuffer.ToDocumentOffset(value, current.SelectionStart));
-                                    setSelectionLength(current.SelectionLength);
-                                    setText(EditorTextBuffer.ToDocumentText(value));
-                                    setStatus(null);
-                                }
-                                else
-                                {
-                                    CommitText(caret, value);
-                                }
-                            })
-                            // Write order matters. The TextBox descriptor applies its
-                            // own AcceptsReturn/TextWrapping before Text so a single-line
-                            // box cannot strip the document's line breaks; using Set for
-                            // the copy constructor would defeat that ordering, so these
-                            // two must stay fluent modifiers.
-                            .AcceptsReturn(true)
-                            .TextWrapping(wrap ? TextWrapping.Wrap : TextWrapping.NoWrap)
-                            .FontFamily(AppTheme.Monospace)
-                            .FontSize(14)
-                            .AutomationName(Str.T("sftp.editor.contents", "File contents"))
-                            .IsSpellCheckEnabled(false)
-                            .HAlign(HorizontalAlignment.Stretch)
-                            .VAlign(VerticalAlignment.Stretch)
-                            .Set(box =>
-                            {
-                                editorRef.Current = box;
-                                // Restore the caret and the selection after the text
-                                // write: a TextBox whose Text is assigned collapses its
-                                // selection and moves the caret to the end, and the
-                                // element's SelectionStart cannot be applied here because
-                                // the descriptor writes Text after it. A find result must
-                                // survive the status-message re-render that follows it.
-                                var editorCaret = EditorTextBuffer.ToEditorOffset(text, caret);
-                                box.SelectionStart = Math.Clamp(editorCaret, 0, box.Text.Length);
-                                var selectionEnd = EditorTextBuffer.ToEditorOffset(text, caret + selectionLength);
-                                box.SelectionLength = Math.Clamp(selectionEnd - editorCaret, 0, box.Text.Length - box.SelectionStart);
-                                Microsoft.UI.Xaml.Controls.ScrollViewer.SetVerticalScrollBarVisibility(box, ScrollBarVisibility.Auto);
-                                Microsoft.UI.Xaml.Controls.ScrollViewer.SetHorizontalScrollBarVisibility(box, ScrollBarVisibility.Auto);
-                                AttachEditorScroll(box);
-                            })
-                            .Grid(row: 0, column: 1)))
+                    setText(value);
+                    setStatus(null);
+                };
+                editorSurface.Update(text, wrap, Str.T("sftp.editor.contents", "File contents"));
+            }) { TypeKey = "FileEditorSurface" };
+            body = Border(surface)
                 .Padding(AppTheme.SpacingS)
                 .Background(Theme.CardBackground)
                 .WithBorder(Theme.CardStroke)
@@ -603,56 +515,5 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                     windowRoot.RequestedTheme = theme;
                 }
             });
-    }
-
-    /// <summary>
-    /// Keeps the line-number gutter in step with the editor. The handler is
-    /// attached once per control: the editor element is re-created on every
-    /// render, so subscribing unconditionally would stack a new handler on each
-    /// keystroke.
-    /// </summary>
-    private void AttachEditorScroll(TextBox editor)
-    {
-        if (ReferenceEquals(_editor, editor)) { return; }
-        _editor = editor;
-
-        void Attach()
-        {
-            if (FindScrollViewer(editor) is not { } editorScroll) { return; }
-            editorScroll.ViewChanged += (_, _) =>
-            {
-                gutterRef.Current?.ChangeView(null, editorScroll.VerticalOffset, null, disableAnimation: true);
-            };
-        }
-
-        if (editor.IsLoaded)
-        {
-            Attach();
-        }
-        else
-        {
-            editor.Loaded += (_, _) => Attach();
-        }
-    }
-
-    private static ScrollViewer? FindScrollViewer(DependencyObject root)
-    {
-        var children = VisualTreeHelper.GetChildrenCount(root);
-        for (var index = 0; index < children; index++)
-        {
-            var child = VisualTreeHelper.GetChild(root, index);
-            if (child is ScrollViewer viewer)
-            {
-                return viewer;
-            }
-
-            var nested = FindScrollViewer(child);
-            if (nested is not null)
-            {
-                return nested;
-            }
-        }
-
-        return null;
     }
 }

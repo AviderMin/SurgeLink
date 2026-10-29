@@ -184,5 +184,9 @@ public sealed class EncryptedCredentialStoreTests
 
         Assert.NotNull(stored);
         Assert.Null(stored!.Password);
+        Assert.True(stored.DecryptionFailed);
+        Assert.Throws<IOException>(() => store.Save("profile-1", stored));
+        protector.ThrowOnUnprotect = false;
+        Assert.Equal("hunter2", store.Get("profile-1")!.Password);
     }
 }

@@ -329,6 +329,9 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
     private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
+    internal async Task InitializeAsync(CancellationToken cancellationToken) =>
+        _ = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+
     private async Task<SftpClient> EnsureConnectedAsync(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(IsDisposed, this);
@@ -417,6 +420,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 throw new ProtocolException(reason, ProtocolFailureKind.HostKey, exception);
             }
 
+            if (SshFileSystem.IsSftpUnavailable(exception)) throw new SftpUnavailableException(exception);
             throw SshErrorMapper.Map(exception, $"connect SFTP to {_factory.Endpoint}");
         }
     }

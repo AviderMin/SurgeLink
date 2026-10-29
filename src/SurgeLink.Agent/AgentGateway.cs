@@ -228,11 +228,12 @@ public sealed partial class AgentGateway
         public Func<bool>? IsActive { get; } = isActive;
         public Dictionary<string, (string Fingerprint, AgentResponse Response)> Inputs { get; } = new(StringComparer.Ordinal);
         public SessionCheck? Check { get; set; }
+        public bool InputOutcomeUnknown { get; set; }
         public CancellationTokenSource Lifetime { get; } = new();
         public SemaphoreSlim Serial { get; } = new(1, 1);
     }
 
-    private sealed record SessionCheck(string Token, DateTimeOffset ExpiresUtc, long InputRevision, bool IsActive);
+    private sealed record SessionCheck(string Token, DateTimeOffset ExpiresUtc, TerminalScreenSnapshot Screen, bool IsActive);
 
     private AgentResponse CheckSession(Grant grant)
     {
@@ -242,7 +243,7 @@ public sealed partial class AgentGateway
         if (screen.IsClosed) return AgentResponse.Error("terminal_unavailable", "The terminal is closed.");
         var active = grant.IsActive?.Invoke() ?? false;
         var expires = _timeProvider.GetUtcNow().AddMinutes(2);
-        var check = new SessionCheck(Convert.ToHexString(RandomNumberGenerator.GetBytes(24)), expires, screen.InputRevision, active);
+        var check = new SessionCheck(Convert.ToHexString(RandomNumberGenerator.GetBytes(24)), expires, screen, active);
         grant.Check = check;
         return AgentResponse.Ok(new
         {

@@ -1,4 +1,5 @@
 using SurgeLink.Core.Protocols;
+using Renci.SshNet.Common;
 using SurgeLink.Protocols.Ssh;
 using Xunit;
 
@@ -9,12 +10,19 @@ public sealed class SshFileSystemTests
     [Fact]
     public void DetectsSftpSubsystemFailure()
     {
-        var exception = new ProtocolException(
-            "SSH server rejected the request while trying to connect SFTP to example:22. Channel was closed.",
-            ProtocolFailureKind.ServerRejected,
-            new InvalidOperationException("Channel was closed."));
+        var exception = new SshException("Subsystem 'sftp' could not be executed.");
 
         Assert.True(SshFileSystem.IsSftpUnavailable(exception));
+    }
+
+    [Fact]
+    public void DoesNotFallbackForPeerControlledOperationOrDisconnectMessages()
+    {
+        Assert.False(SshFileSystem.IsSftpUnavailable(new SftpException(Renci.SshNet.Sftp.StatusCode.Failure, "sftp subsystem channel was closed")));
+        Assert.False(SshFileSystem.IsSftpUnavailable(new ProtocolException("sftp subsystem failed", ProtocolFailureKind.ServerRejected,
+            new SshException("Channel was closed."))));
+        Assert.False(SshFileSystem.IsSftpUnavailable(new SshConnectionException("Channel was closed.")));
+        Assert.True(SshFileSystem.IsSftpUnavailable(new SshException("Channel was closed.")));
     }
 
     [Fact]

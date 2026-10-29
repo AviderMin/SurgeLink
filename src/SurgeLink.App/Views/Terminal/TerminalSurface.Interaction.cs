@@ -404,7 +404,10 @@ internal sealed partial class TerminalSurface
         var emulator = _bridge.Emulator;
         lock (emulator.SyncRoot)
         {
-            emulator.Reset();
+            // Keep modes, SGR and the alternate screen intact: a remote application
+            // such as less or vim still believes it owns the alternate screen, so a
+            // full Reset would leave the two sides out of sync.
+            emulator.ClearDisplay();
         }
 
         ClearSelection();

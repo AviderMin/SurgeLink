@@ -30,6 +30,7 @@ public sealed class TerminalControlTests
         var retry = await gateway.ExecuteAsync(input, default);
         Assert.True(first.Success);
         Assert.Equal(first, retry);
+        Assert.Equal(first, await gateway.ExecuteAsync(input with { Path = "/ignored", Key = "ignored", Cursor = 123 }, default));
         Assert.Equal(1, terminal.Writes);
         Assert.Equal(1, selected);
         Assert.False(first.Data!.Value.GetProperty("commandCompletionKnown").GetBoolean());
@@ -47,6 +48,8 @@ public sealed class TerminalControlTests
         var input = await CheckedInputAsync(gateway, handle);
         Assert.Equal("input_outcome_unknown", (await gateway.ExecuteAsync(input, default)).ErrorCode);
         Assert.Equal("input_outcome_unknown", (await gateway.ExecuteAsync(input, default)).ErrorCode);
+        var next = await CheckedInputAsync(gateway, handle);
+        Assert.Equal("input_outcome_unknown", (await gateway.ExecuteAsync(next with { OperationId = "next" }, default)).ErrorCode);
         Assert.Equal(1, terminal.Writes);
     }
 
@@ -87,8 +90,9 @@ public sealed class TerminalControlTests
     {
         public int Writes { get; private set; }
         public bool FailWrite { get; init; }
+        public string ScreenText { get; set; } = "test";
         private long _revision;
-        public TerminalScreenSnapshot ReadScreen() => new("test", 80, 24, 0, 0, true, false, false, false, _revision, 0, false, false);
+        public TerminalScreenSnapshot ReadScreen() => new(ScreenText, 80, 24, 0, 0, true, false, false, false, _revision, 0, false, false);
         public TerminalOutputPage ReadOutput(long? cursor) => new("output", 6, 0, 6, false, false);
         public Task<TerminalInputReceipt> SendTextAsync(string text, bool submit, long expectedRevision, CancellationToken ct)
         {

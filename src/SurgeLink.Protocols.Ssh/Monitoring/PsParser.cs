@@ -15,6 +15,7 @@ public static class PsParser
     private const double MaximumReportedPercent = 10_000d;
 
     private const long BytesPerKilobyte = 1024;
+    private const int MaximumFieldLength = 4096;
 
     private static readonly string[] CommandColumns = { "COMMAND", "CMD", "COMM", "ARGS", "NAME" };
     private static readonly string[] CpuColumns = { "%CPU", "PCPU", "C" };
@@ -100,7 +101,7 @@ public static class PsParser
             return Array.Empty<RemoteProcessInfo>();
         }
 
-        var results = new List<RemoteProcessInfo>();
+        var results = new BoundedProcesses();
         for (var i = headerIndex + 1; i < lines.Length; i++)
         {
             var line = lines[i].Trim();
@@ -130,17 +131,17 @@ public static class PsParser
                 User = user.Length == 0 ? null : user,
                 CpuPercent = ParsePercent(ValueAt(tokens, map.Cpu)),
                 MemoryPercent = ParsePercent(ValueAt(tokens, map.Memory)),
-                ResidentBytes = Math.Max(0, ParseLong(ValueAt(tokens, map.Resident))) * BytesPerKilobyte,
+                ResidentBytes = Math.Clamp(ParseLong(ValueAt(tokens, map.Resident)), 0, long.MaxValue / BytesPerKilobyte) * BytesPerKilobyte,
                 CommandLine = command.Length == 0 ? null : command,
             });
         }
 
-        return results;
+        return results.InOutputOrder();
     }
 
     private static IReadOnlyList<RemoteProcessInfo> ParseHeaderless(string[] lines)
     {
-        var results = new List<RemoteProcessInfo>();
+        var results = new BoundedProcesses();
         foreach (var rawLine in lines)
         {
             var line = rawLine.Trim();
@@ -170,17 +171,32 @@ public static class PsParser
                 commandStart = 3;
             }
 
-            var command = string.Join(' ', tokens[commandStart..]);
+            var command = Bound(string.Join(' ', tokens[commandStart..]));
             results.Add(new RemoteProcessInfo
             {
                 ProcessId = processId,
                 Name = DeriveName(command),
-                User = tokens[1],
-                CommandLine = command.Length == 0 ? null : command,
+                User = Bound(tokens[1]),
+                CommandLine = command.Length == 0 ? null : Bound(command),
             });
         }
 
-        return results;
+        return results.InOutputOrder();
+    }
+
+    private sealed class BoundedProcesses
+    {
+        private readonly PriorityQueue<(RemoteProcessInfo Row, int Index), (double Cpu, int ReversePid)> _rows = new();
+        private int _index;
+
+        public void Add(RemoteProcessInfo row)
+        {
+            _rows.Enqueue((row, _index++), (row.CpuPercent, -row.ProcessId));
+            if (_rows.Count > MaximumProcessCount) _rows.Dequeue();
+        }
+
+        public IReadOnlyList<RemoteProcessInfo> InOutputOrder() =>
+            _rows.UnorderedItems.OrderBy(item => item.Element.Index).Select(item => item.Element.Row).ToArray();
     }
 
     private static ColumnMap MapColumns(string[] header)
@@ -257,7 +273,9 @@ public static class PsParser
     }
 
     private static string ValueAt(string[] tokens, int index) =>
-        index >= 0 && index < tokens.Length ? tokens[index] : string.Empty;
+        index >= 0 && index < tokens.Length ? Bound(tokens[index]) : string.Empty;
+
+    private static string Bound(string value) => value.Length <= MaximumFieldLength ? value : value[..MaximumFieldLength];
 
     private static double ParsePercent(string value)
     {

@@ -223,20 +223,20 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     {
         var installed = Path.Combine(AppContext.BaseDirectory, installedFolder, executable);
         if (File.Exists(installed)) return installed;
+#if DEBUG
         for (var root = new DirectoryInfo(AppContext.BaseDirectory); root is not null; root = root.Parent)
         {
             if (!File.Exists(Path.Combine(root.FullName, "SurgeLink.slnx"))) continue;
             var platform = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
                 == System.Runtime.InteropServices.Architecture.Arm64 ? "ARM64" : "x64";
-            var candidate = (from config in new[] { "Debug", "Release" }
-                             from buildPlatform in new[] { platform, "" }
-                             let path = Path.Combine(root.FullName, "src", project, "bin", buildPlatform, config, "net10.0", executable)
+            var candidate = (from buildPlatform in new[] { platform, "" }
+                             let path = Path.Combine(root.FullName, "src", project, "bin", buildPlatform, "Debug", "net10.0", executable)
                              where File.Exists(path)
-                             orderby File.GetLastWriteTimeUtc(path) descending
                              select path).FirstOrDefault();
             if (candidate is not null) return candidate;
             break;
         }
+#endif
         return installed;
     }
 

@@ -13,7 +13,8 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     public JsonHostKeyStore(string path)
     {
         _path = path;
-        _entries = Load(path);
+        // Defer disk errors to verification, where HostKeyVerifier denies trust.
+        _entries = new(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <inheritdoc />
@@ -78,7 +79,7 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     private void Persist(Dictionary<string, KnownHostEntry> entries) =>
         AtomicJsonFile.Write(_path, entries.Values.OrderBy(e => e.Endpoint, StringComparer.Ordinal).ToList());
 
-    private static Dictionary<string, KnownHostEntry> Load(string path, bool tolerateErrors = true)
+    private static Dictionary<string, KnownHostEntry> Load(string path, bool tolerateErrors = false)
     {
         var list = AtomicJsonFile.Read(path, new List<KnownHostEntry>(), tolerateErrors);
         var map = new Dictionary<string, KnownHostEntry>(StringComparer.OrdinalIgnoreCase);
@@ -86,7 +87,10 @@ public sealed class JsonHostKeyStore : IHostKeyStore
         {
             if (entry is null || string.IsNullOrWhiteSpace(entry.Endpoint)
                 || string.IsNullOrWhiteSpace(entry.Algorithm)
-                || string.IsNullOrWhiteSpace(entry.FingerprintSha256)) { continue; }
+                || string.IsNullOrWhiteSpace(entry.FingerprintSha256))
+                throw new IOException("The known-hosts store contains an invalid entry. Restore or repair it before connecting.");
+            if (map.ContainsKey(entry.Endpoint))
+                throw new IOException("The known-hosts store contains duplicate endpoints. Restore or repair it before connecting.");
             map[entry.Endpoint] = entry;
         }
 

@@ -41,7 +41,6 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
         }, Array.Empty<object>());
         void CancelFailedSave(ContentDialog sender, ContentDialogButtonClickEventArgs args)
         {
-            System.Diagnostics.Debug.WriteLine("SETTINGS SAVE HANDLER CALLED");
             if (!SettingsDialogSave.TryApply(store, draft, error =>
                 {
                     Props.OnSaveFailed(error);
@@ -74,7 +73,13 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
                     ComboBox(
                             LanguageNames(),
                             Optional<int>.Of(IndexOfLanguage(draft.Language)),
-                            index => setDraft(draft with { Language = LanguageOrder[index] }))
+                            index =>
+                            {
+                                if (index >= 0 && index < LanguageOrder.Length)
+                                {
+                                    setDraft(draft with { Language = LanguageOrder[index] });
+                                }
+                            })
                         .AutomationName(Str.T("shell.settings.language", "Interface language"))
                         .AutomationId("SettingsLanguage")
                         .MinWidth(200))),
@@ -143,7 +148,13 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
                             ScrollbackOptions.Select(lines => Str.F(
                                 "shell.settings.scrollback.value", "{0} lines", lines.ToString("N0"))).ToArray(),
                             Optional<int>.Of(ClosestIndex(ScrollbackOptions, draft.TerminalScrollbackLines)),
-                            index => setDraft(draft with { TerminalScrollbackLines = ScrollbackOptions[index] }))
+                            index =>
+                            {
+                                if (index >= 0 && index < ScrollbackOptions.Length)
+                                {
+                                    setDraft(draft with { TerminalScrollbackLines = ScrollbackOptions[index] });
+                                }
+                            })
                         .AutomationName(Str.T("shell.settings.scrollback", "Scrollback"))
                         .MinWidth(200))),
             Section(
@@ -155,7 +166,13 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
                             IntervalOptions.Select(seconds => Str.F(
                                 "shell.settings.monitorInterval.value", "{0} seconds", seconds)).ToArray(),
                             Optional<int>.Of(ClosestIndex(IntervalOptions, draft.MonitorIntervalSeconds)),
-                            index => setDraft(draft with { MonitorIntervalSeconds = IntervalOptions[index] }))
+                            index =>
+                            {
+                                if (index >= 0 && index < IntervalOptions.Length)
+                                {
+                                    setDraft(draft with { MonitorIntervalSeconds = IntervalOptions[index] });
+                                }
+                            })
                         .AutomationName(Str.T("shell.settings.monitorInterval", "Sample interval"))
                         .MinWidth(200))),
             Section(
@@ -215,10 +232,21 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
             contentWidth: AppDialog.ContentWidth,
             onOpened: control =>
             {
+                // AppDialog invokes OnOpened on every render and again when the
+                // native dialog opens; attaching each time would stack duplicate
+                // handlers whose stale drafts could later overwrite saved values.
+                if (ReferenceEquals(dialogControl.Current, control))
+                {
+                    return;
+                }
+
+                if (dialogControl.Current is { } previous)
+                {
+                    previous.PrimaryButtonClick -= CancelFailedSave;
+                }
+
                 dialogControl.Current = control;
                 control.PrimaryButtonClick += CancelFailedSave;
-                control.Resources["SettingsSaveHandlerBound"] = true;
-                System.Diagnostics.Debug.WriteLine("SETTINGS SAVE HANDLER BOUND");
             });
     }
 

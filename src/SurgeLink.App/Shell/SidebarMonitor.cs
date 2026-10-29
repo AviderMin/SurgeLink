@@ -15,6 +15,7 @@ namespace SurgeLink.App.Shell;
 internal sealed record SidebarMonitorProps(
     IRemoteSystemMonitor? Monitor,
     bool HasActiveSession,
+    bool IsConnected,
     IAppSettingsStore Settings);
 
 /// <summary>
@@ -73,7 +74,7 @@ internal sealed class SidebarMonitor : Component<SidebarMonitorProps>
 
         if (monitor is null)
         {
-            return BuildPlaceholder(Props.HasActiveSession);
+            return BuildPlaceholder(Props.HasActiveSession, Props.IsConnected);
         }
 
         var history = historyRef.Current!;
@@ -159,18 +160,22 @@ internal sealed class SidebarMonitor : Component<SidebarMonitorProps>
                 .FontFamily(AppTheme.Monospace)
                 .TextTrimming(TextTrimming.CharacterEllipsis));
 
-    private static Element BuildPlaceholder(bool hasActiveSession) =>
-        Border(
+    private static Element BuildPlaceholder(bool hasActiveSession, bool isConnected)
+    {
+        // Distinguish "no session open", "session not connected" and "connected
+        // protocol without counters": the old two-state message claimed a
+        // disconnected session did not expose performance counters.
+        var message = !hasActiveSession
+            ? Str.T("shell.sidebar.monitor.noSession", "Open a session to see live performance.")
+            : !isConnected
+                ? Str.T("shell.sidebar.monitor.disconnected", "Reconnect the session to see live performance.")
+                : Str.T("shell.sidebar.monitor.unavailable", "This session does not expose performance counters.");
+        return Border(
                 VStack(
                     AppTheme.SpacingXs,
                     Caption(Str.T("shell.sidebar.monitor.title", "Remote monitor"))
                         .Foreground(Theme.SecondaryText),
-                    Caption(Str.T(hasActiveSession
-                            ? "shell.sidebar.monitor.unavailable"
-                            : "shell.sidebar.monitor.noSession",
-                            hasActiveSession
-                                ? "This session does not expose performance counters."
-                                : "Open a session to see live performance."))
+                    Caption(message)
                         .Foreground(Theme.SecondaryText)
                         .TextWrapping(TextWrapping.Wrap)))
             .Padding(AppTheme.SpacingM)
@@ -179,6 +184,7 @@ internal sealed class SidebarMonitor : Component<SidebarMonitorProps>
             .CornerRadius(AppTheme.CardRadius)
             .AutomationId("SidebarMonitor")
             .AutomationName(Str.T("shell.sidebar.monitor.automation", "Remote monitor"));
+    }
 
     private static int Normalize(int seconds) => Intervals.Contains(seconds) ? seconds : 2;
 }

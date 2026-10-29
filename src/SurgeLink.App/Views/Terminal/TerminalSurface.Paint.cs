@@ -347,7 +347,7 @@ internal sealed partial class TerminalSurface
         }
 
         _loggedLayout = signature;
-        _logger.LogInformation(
+        _logger.LogDebug(
             "Terminal painted {Columns}x{Rows} grid with {Runs} text runs, {Bands} background bands, {Elements} elements total",
             _paintedColumns,
             _paintedRowCount,

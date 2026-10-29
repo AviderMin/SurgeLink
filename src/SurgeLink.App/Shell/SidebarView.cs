@@ -105,6 +105,7 @@ internal sealed class SidebarView : Component<SidebarProps>
                 Component<SidebarMonitor, SidebarMonitorProps>(new SidebarMonitorProps(
                         props.Snapshot.ActiveTab is { State: SurgeLink.Core.Sessions.ConnectionState.Connected } activeTab ? activeTab.Session.Monitor : null,
                         props.Snapshot.ActiveTab is not null,
+                        props.Snapshot.ActiveTab is { State: SurgeLink.Core.Sessions.ConnectionState.Connected },
                         services.Settings))
                     .Grid(row: 3)) with
         {

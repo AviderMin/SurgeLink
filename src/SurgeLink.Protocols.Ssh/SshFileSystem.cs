@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Renci.SshNet.Common;
 using SurgeLink.Core.Files;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Protocols.Ssh.Internal;
@@ -20,6 +21,7 @@ internal sealed class SshFileSystem : IRemoteFileSystem, IAsyncDisposable
     private readonly SemaphoreSlim _switchLock = new(1, 1);
     private readonly object _lifecycleGate = new();
     private ScpFileSystem? _scp;
+    private bool _sftpReady;
     private int _disposed;
 
     internal SshFileSystem(SshConnectionFactory factory, SshProtocolOptions options, ILogger logger)
@@ -131,55 +133,49 @@ internal sealed class SshFileSystem : IRemoteFileSystem, IAsyncDisposable
             return await operation(scp, cancellationToken).ConfigureAwait(false);
         }
 
-        try
-        {
-            return await operation(_sftp, cancellationToken).ConfigureAwait(false);
-        }
-        catch (ProtocolException exception) when (IsSftpUnavailable(exception))
+        if (!Volatile.Read(ref _sftpReady))
         {
             await _switchLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                lock (_lifecycleGate)
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                scp = Volatile.Read(ref _scp);
+                if (scp is null && !_sftpReady)
                 {
-                    ObjectDisposedException.ThrowIf(_disposed != 0, this);
-                    scp = _scp;
-                    if (scp is null)
+                    try
                     {
-                        _logger.LogInformation(exception, "SFTP is unavailable; switching the file system to SCP fallback.");
-                        scp = new ScpFileSystem(_factory, _options, _logger);
-                        Volatile.Write(ref _scp, scp);
+                        await _sftp.InitializeAsync(cancellationToken).ConfigureAwait(false);
+                        Volatile.Write(ref _sftpReady, true);
+                    }
+                    catch (SftpUnavailableException exception)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        lock (_lifecycleGate)
+                        {
+                            ObjectDisposedException.ThrowIf(_disposed != 0, this);
+                            _logger.LogInformation(exception, "SFTP is unavailable; switching the file system to SCP fallback.");
+                            scp = new ScpFileSystem(_factory, _options, _logger);
+                            Volatile.Write(ref _scp, scp);
+                        }
+                        await _sftp.DisposeAsync().ConfigureAwait(false);
                     }
                 }
-                await _sftp.DisposeAsync().ConfigureAwait(false);
             }
             finally
             {
                 _switchLock.Release();
             }
-
-            return await operation(scp!, cancellationToken).ConfigureAwait(false);
         }
+        // Select the transport before any file operation. An operation that fails
+        // after side effects is never retried over a different transport.
+        return await operation((IRemoteFileSystem?)scp ?? _sftp, cancellationToken).ConfigureAwait(false);
     }
 
     internal static bool IsSftpUnavailable(Exception exception)
     {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
-        {
-            var message = current.Message;
-            if (string.IsNullOrEmpty(message))
-            {
-                continue;
-            }
-
-            if (message.Contains("sftp", StringComparison.OrdinalIgnoreCase) &&
-                (message.Contains("channel was closed", StringComparison.OrdinalIgnoreCase) ||
-                 message.Contains("subsystem", StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        // SSH.NET 2026.0.0 emits these fixed messages during subsystem startup.
+        // Do not inspect wrapped operation errors, file paths or peer status text.
+        return exception.GetType() == typeof(SshException) && exception.Message is
+            "Subsystem 'sftp' could not be executed." or "Channel was closed.";
     }
 }

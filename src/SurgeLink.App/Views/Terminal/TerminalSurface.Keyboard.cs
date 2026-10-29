@@ -152,9 +152,15 @@ internal sealed partial class TerminalSurface
             return;
         }
 
-        _bridge.SendKey(key, control, alt, shift);
-        e.Handled = true;
-        _suppressCharacterInput = true;
+        if (_bridge.SendKey(key, control, alt, shift))
+        {
+            e.Handled = true;
+            _suppressCharacterInput = true;
+        }
+        // Keys the encoder cannot map (for example the extra < > | key on a German
+        // layout, VK_OEM_102) are deliberately left unhandled so CharacterReceived
+        // can deliver the layout-specific character. Previously they were marked
+        // handled and silently produced nothing.
     }
 
     private void OnCharacterReceived(object sender, CharacterReceivedRoutedEventArgs e)

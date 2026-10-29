@@ -27,6 +27,9 @@ public static class MonitorScript
     /// <summary>Section name of the <c>df -kP</c> output.</summary>
     public const string DiskUsageSection = "df";
 
+    /// <summary>Section name of the live process (thread group) count.</summary>
+    public const string ProcessCountSection = "procs";
+
     /// <summary>The complete script; missing files simply leave an empty section behind.</summary>
     public static string Command { get; } = BuildCommand();
 
@@ -49,10 +52,14 @@ public static class MonitorScript
             "cat /proc/diskstats 2>/dev/null",
             Mark(DiskUsageSection),
             "LC_ALL=C df -kP 2>/dev/null",
+            Mark(ProcessCountSection),
+            // One entry per thread group leader: a real process count, unlike loadavg's runnable field.
+            "ls -1 /proc 2>/dev/null | grep -c '^[0-9][0-9]*$'",
         };
 
         return string.Join('\n', lines);
     }
 
-    private static string Mark(string section) => "printf '%s\\n' '" + MonitorOutput.MarkerPrefix + section + "'";
+    // A preceding command may end without a newline; start each frame on its own line.
+    private static string Mark(string section) => "printf '\\n%s\\n' '" + MonitorOutput.MarkerPrefix + section + "'";
 }

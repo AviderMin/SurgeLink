@@ -42,11 +42,15 @@ supplies the policy that permits reads for a connection after the user enables
 Allow reading or Control terminal; revocation invalidates its handle. An injected
 host policy is evaluated for every file operation and need not display a dialog.
 
-Human typing, pasting or sending a terminal key immediately revokes that terminal's
+Human typing or sending a terminal key revokes that terminal's
 Agent handle before queuing the human input. Writes are serialized, and an Agent
 paste plus optional Enter is one transport write. Stop prevents further Agent
 input; it does not terminate an already running remote command. The user can
 send Ctrl+C deliberately in the terminal.
+
+Pasting reads the clipboard asynchronously. Revocation happens when the clipboard
+read completes and the resulting input is queued; an Agent write may finish while
+that read is pending. Use Stop first when clipboard access must not overlap Agent input.
 
 ## Mandatory Check Sessions before terminal input
 
@@ -62,10 +66,15 @@ The server returns a random `checkToken`, `expiresUtc` and `screen.inputRevision
 Pass that token as `checkToken` / `--check-token` and the revision with the input.
 A token expires after two minutes and is consumed by one new input. A newer check
 replaces the older check for that handle. Revocation/reconnection, an input revision
-change or a change in the target's active state makes the old check unusable.
+change, a screen/output/mode change, or a change in the target's active state makes the old check unusable.
 The gateway rejects missing/stale checks with `session_check_required` before writing.
 Exact retries of an already recorded operation retain the original token/arguments
 and return the stored acknowledgement, even after its token expires.
+
+Screen checks are repeated after tab activation and under the desktop screen lock
+when reserving input. A remote PTY can still change after that reservation; checks
+do not prove remote command semantics. A write with an uncertain outcome blocks new
+input on that handle until the human inspects the terminal and renews desktop control.
 
 This enforces the check step, not an Agent's understanding of the target. It does
 not establish shell readiness or command completion, nor replace the external

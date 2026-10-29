@@ -6,6 +6,9 @@ public static class ZhShell
     /// <summary>Key -> 中文 mapping. Keep keys prefixed with <c>shell.</c>.</summary>
     public static IReadOnlyDictionary<string, string> Map { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["shell.editor.secretUnavailableTitle"] = "保存的凭据不可用",
+        ["shell.editor.secretUnavailableBody"] = "无法解密保存的密钥。请重新输入，或取消“记住”以删除它。",
+        ["shell.prompt.secretDecryptFailed"] = "无法解密保存的密钥。请为本次连接重新输入；原有保存数据将保留。",
         ["shell.agent.title"] = "Agent",
         ["shell.error.closeFailed"] = "无法关闭会话",
         ["shell.agent.tabControlled"] = "Agent 已接管此会话",
@@ -238,6 +241,7 @@ public static class ZhShell
         ["shell.sidebar.monitor.write"] = "写",
         ["shell.sidebar.monitor.unavailable"] = "此会话未提供性能计数器。",
         ["shell.sidebar.monitor.noSession"] = "打开会话后显示实时性能。",
+        ["shell.sidebar.monitor.disconnected"] = "重新连接会话后可查看实时性能。",
         ["shell.sidebar.monitor.automation"] = "远程监控",
         ["shell.sidebar.group.other"] = "会话",
         ["shell.sidebar.empty.noSessions"] = "尚未保存任何会话",

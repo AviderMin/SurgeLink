@@ -75,7 +75,7 @@ public static class DfParser
 
             if (!TryParseLong(tokens[offset], out var blocks) ||
                 !TryParseLong(tokens[offset + 1], out var used) ||
-                !TryParseLong(tokens[offset + 2], out var available))
+                !TryParseLong(tokens[offset + 2], out var available, allowNegative: true))
             {
                 continue;
             }
@@ -87,11 +87,12 @@ public static class DfParser
 
             samples.Add(new DiskSample
             {
-                MountPoint = tokens[offset + 4],
+                // The mount point is the final column and may itself contain spaces.
+                MountPoint = string.Join(' ', tokens[(offset + 4)..]),
                 FileSystem = device,
                 TotalBytes = blocks * BytesPerKilobyte,
                 UsedBytes = used * BytesPerKilobyte,
-                AvailableBytes = available * BytesPerKilobyte,
+                AvailableBytes = Math.Max(0, available) * BytesPerKilobyte,
             });
         }
 
@@ -119,6 +120,7 @@ public static class DfParser
         return false;
     }
 
-    private static bool TryParseLong(string token, out long value) =>
-        long.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    private static bool TryParseLong(string token, out long value, bool allowNegative = false) =>
+        long.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out value)
+        && value <= long.MaxValue / BytesPerKilobyte && (allowNegative || value >= 0);
 }

@@ -48,7 +48,11 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
             if (busy.Current) return;
             busy.Current = true;
             setWorking(true);
+            // SetAccessAsync normally reports failures through Agent.Error, but a
+            // throw on the UI thread would escape this async void handler and
+            // terminate the process. Record it and leave the panel retryable.
             try { await agent.SetAccessAsync(tab, mode); }
+            catch (Exception ex) { CrashLog.Write("AgentChangeAccess", ex); }
             finally { busy.Current = false; setWorking(false); }
         }
 

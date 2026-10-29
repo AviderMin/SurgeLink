@@ -6,6 +6,21 @@ namespace SurgeLink.Protocols.Telnet.Tests;
 public sealed class TelnetCodecTests
 {
     [Fact]
+    public void NegotiationFloodIsBoundedAcrossPacketBoundaries()
+    {
+        var codec = Create();
+        Assert.Throws<IOException>(() =>
+        {
+            for (var i = 0; i < 1000; i++)
+            {
+                codec.Receive([255]);
+                codec.Receive([251]);
+                codec.Receive([1]);
+                codec.Receive([255, 252, 1]);
+            }
+        });
+    }
+    [Fact]
     public void CommandsAndEscapedIacSurviveEveryPacketSplit()
     {
         byte[] wire = [(byte)'A', 255, 251, 1, 255, 255, 255, 241, (byte)'B', 255, 250, 42, 9, 255, 240, (byte)'C'];

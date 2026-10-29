@@ -6,6 +6,23 @@ namespace SurgeLink.Agent.Tests;
 public sealed class SessionCheckTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScreenChangeWithoutHumanInputInvalidatesCheck(bool duringActivation)
+    {
+        var gateway = new AgentGateway();
+        var terminal = new TerminalControlTests.TestAutomation();
+        var handle = TerminalControlTests.GrantControl(gateway, terminal, (_, _) =>
+        {
+            if (duringActivation) terminal.ScreenText = "nested ssh / different prompt";
+            return Task.CompletedTask;
+        });
+        var input = await TerminalControlTests.CheckedInputAsync(gateway, handle);
+        if (!duringActivation) terminal.ScreenText = "nested ssh / different prompt";
+        Assert.Equal("session_check_required", (await gateway.ExecuteAsync(input, default)).ErrorCode);
+        Assert.Equal(0, terminal.Writes);
+    }
+    [Theory]
     [InlineData("terminal.text")]
     [InlineData("terminal.key")]
     public async Task MissingCheckBlocksInputBeforeSelectingOrWriting(string method)

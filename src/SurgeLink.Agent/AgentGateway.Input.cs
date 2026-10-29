@@ -13,12 +13,21 @@ public sealed partial class AgentGateway
         if (request.OperationId is not { Length: > 0 and <= 128 } operationId
             || !operationId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.'))
             return AgentResponse.Error("invalid_arguments", "An operationId of 1-128 ASCII letters, digits, dots, dashes or underscores is required.");
-        var fingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request, AgentJson.Options)));
+        // Only arguments that affect this operation participate in replay identity.
+        var fingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            request.Method, request.ExpectedInputRevision, request.CheckToken,
+            text = request.Method == "terminal.text" ? request.Text : null,
+            submit = request.Method == "terminal.text" && request.Submit,
+            key = request.Method == "terminal.key" ? request.Key : null,
+        }, AgentJson.Options)));
         if (grant.Inputs.TryGetValue(operationId, out var prior))
             return prior.Fingerprint == fingerprint ? prior.Response
                 : AgentResponse.Error("operation_conflict", "This operation ID was already used with different arguments.");
         if (grant.Inputs.Count >= 1024)
             return AgentResponse.Error("operation_limit", "Renew terminal control in the desktop for a new handle before more input.");
+        if (grant.InputOutcomeUnknown)
+            return AgentResponse.Error("input_outcome_unknown", "A previous PTY write may be partial. Inspect the terminal and renew terminal control in the desktop before sending more input.");
         if (request.ExpectedInputRevision is not >= 0)
             return AgentResponse.Error("invalid_arguments", "expectedInputRevision from read_terminal is required.");
         if (request.Method == "terminal.text" && (request.Text is null || request.Text.Length > 16384 || request.Text.Length == 0 && !request.Submit))
@@ -27,7 +36,7 @@ public sealed partial class AgentGateway
             return AgentResponse.Error("invalid_arguments", "Supply a terminal key such as Enter, Tab, Ctrl+C or Up.");
 
         if (grant.Check is not { } check || request.CheckToken != check.Token || _timeProvider.GetUtcNow() >= check.ExpiresUtc
-            || request.ExpectedInputRevision != check.InputRevision || grant.Terminal.ReadScreen().InputRevision != check.InputRevision
+            || request.ExpectedInputRevision != check.Screen.InputRevision || grant.Terminal.ReadScreen() != check.Screen
             || (grant.IsActive?.Invoke() ?? false) != check.IsActive)
             return AgentResponse.Error("session_check_required", "Run Check Sessions (sessions.check/check_sessions), verify the target and screen, then supply its checkToken and input revision before each new terminal operation.");
         grant.Check = null;
@@ -38,12 +47,12 @@ public sealed partial class AgentGateway
             // Replaying the same operation never selects a tab or writes again.
             if (grant.Activate is not null) await grant.Activate("terminal", ct).ConfigureAwait(false);
             ThrowIfCancelled(grant, ct);
-            if (_timeProvider.GetUtcNow() >= check.ExpiresUtc || grant.Terminal.ReadScreen().InputRevision != check.InputRevision
+            if (_timeProvider.GetUtcNow() >= check.ExpiresUtc || grant.Terminal.ReadScreen() != check.Screen
                 || grant.Activate is not null && grant.IsActive is not null && !grant.IsActive())
                 return AgentResponse.Error("session_check_required", "The target changed or the check expired while selecting the terminal. Run Check Sessions again.");
             var receipt = request.Method == "terminal.text"
-                ? await grant.Terminal.SendTextAsync(request.Text!, request.Submit, request.ExpectedInputRevision.Value, ct).ConfigureAwait(false)
-                : await grant.Terminal.SendKeyAsync(request.Key!, request.ExpectedInputRevision.Value, ct).ConfigureAwait(false);
+                ? await grant.Terminal.SendCheckedTextAsync(request.Text!, request.Submit, check.Screen, ct).ConfigureAwait(false)
+                : await grant.Terminal.SendCheckedKeyAsync(request.Key!, check.Screen, ct).ConfigureAwait(false);
             response = AgentResponse.Ok(new { operationId, receipt.InputRevision, receipt.OutputCursor, receipt.AcceptedBytes,
                 receipt.Submitted, status = "input_sent", commandCompletionKnown = false });
         }
@@ -53,6 +62,7 @@ public sealed partial class AgentGateway
         catch (ArgumentException) { response = AgentResponse.Error("invalid_arguments", "Unsupported terminal key or input."); }
         catch (InvalidOperationException) { response = AgentResponse.Error("terminal_unavailable", "The terminal is closed or unavailable."); }
         catch (Exception) { response = AgentResponse.Error("input_outcome_unknown", "The input outcome is uncertain. Observe the terminal before continuing."); }
+        if (response.ErrorCode == "input_outcome_unknown") grant.InputOutcomeUnknown = true;
         grant.Inputs.Add(operationId, (fingerprint, response));
         // Do not replace a successful acknowledgement with cancellation after bytes were accepted.
         return response;

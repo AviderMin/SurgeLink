@@ -5,6 +5,8 @@ namespace SurgeLink.Protocols.Ssh.Monitoring;
 /// <summary>Parses the CPU lines of <c>/proc/stat</c>, tolerating 2.6 era short lines.</summary>
 public static class ProcStatParser
 {
+    /// <summary>Bounds sparse peer-supplied CPU indices and the rendered core list.</summary>
+    public const int MaximumCoreCount = 4096;
     /// <summary>Parses the <c>cpu</c> and <c>cpuN</c> lines of a <c>/proc/stat</c> snapshot.</summary>
     /// <param name="text">Raw <c>/proc/stat</c> contents; may be <c>null</c> or truncated.</param>
     /// <returns>The parsed sample, or <c>null</c> when no CPU line could be read.</returns>
@@ -97,6 +99,7 @@ public static class ProcStatParser
             return false;
         }
 
-        return int.TryParse(name.AsSpan(3), NumberStyles.Integer, CultureInfo.InvariantCulture, out coreIndex) && coreIndex >= 0;
+        return int.TryParse(name.AsSpan(3), NumberStyles.None, CultureInfo.InvariantCulture, out coreIndex)
+            && coreIndex is >= 0 and < MaximumCoreCount;
     }
 }

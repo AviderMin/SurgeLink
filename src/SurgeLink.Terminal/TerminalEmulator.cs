@@ -216,6 +216,33 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
     }
 
+    /// <summary>
+    /// Clears the active screen and the scrollback without touching terminal modes,
+    /// the SGR pen or the alternate-screen state. This is the "clear" action a user
+    /// expects from a context menu: unlike <see cref="Reset"/> it does not drop a
+    /// remote application out of the alternate screen or turn off mouse reporting.
+    /// </summary>
+    public void ClearDisplay()
+    {
+        lock (_sync)
+        {
+            BeginBatch();
+            try
+            {
+                // Erase with the default cell, not whatever colour the remote left active.
+                _screen.EraseCell = TerminalCell.Blank;
+                _screen.EraseInDisplay(2);
+                _screen.SetCursor(0, 0);
+                ClearScrollback();
+                MarkDirty();
+            }
+            finally
+            {
+                EndBatch();
+            }
+        }
+    }
+
     /// <inheritdoc />
     public void ScrollViewport(int deltaLines)
     {

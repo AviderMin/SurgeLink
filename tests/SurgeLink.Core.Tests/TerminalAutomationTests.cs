@@ -8,6 +8,19 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class TerminalAutomationTests
 {
+    [Theory]
+    [InlineData("different prompt")]
+    [InlineData("\u001b[?1049h")]
+    public async Task CheckedInputRejectsRemoteScreenChangesWithoutAnInputRevisionChange(string output)
+    {
+        var remote = new AutomationRemote();
+        await using var bridge = Create(remote);
+        var expected = bridge.ReadScreen();
+        remote.Emit(output);
+        Assert.Equal(expected.InputRevision, bridge.ReadScreen().InputRevision);
+        await Assert.ThrowsAsync<TerminalInputConflictException>(() => bridge.SendCheckedTextAsync("change", true, expected, default));
+        Assert.Empty(remote.Writes);
+    }
     [Fact]
     public async Task TextAndSubmitAreOneAwaitedWriteInTheVisiblePty()
     {

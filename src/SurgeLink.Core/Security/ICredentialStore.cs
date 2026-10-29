@@ -3,6 +3,9 @@ namespace SurgeLink.Core.Security;
 /// <summary>Secret material remembered for a saved profile.</summary>
 public sealed record StoredCredential
 {
+    /// <summary>A stored secret exists but could not be decrypted; it must not be silently replaced.</summary>
+    public bool DecryptionFailed { get; init; }
+
     public string? Password { get; init; }
 
     public string? PrivateKeyPassphrase { get; init; }

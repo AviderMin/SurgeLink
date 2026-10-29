@@ -6,6 +6,26 @@ namespace SurgeLink.Core.Tests;
 public sealed class RemoteMonitorSamplerTests
 {
     [Fact]
+    public async Task SeparateMonitorInstancesCannotDeliverEachOthersSamples()
+    {
+        var firstMonitor = new IdentifiedMonitor(11);
+        var secondMonitor = new IdentifiedMonitor(22);
+        var first = new TaskCompletionSource<MonitorSample>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource<MonitorSample>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Assert.NotSame(RemoteMonitorSampler.For(firstMonitor), RemoteMonitorSampler.For(secondMonitor));
+        using var a = RemoteMonitorSampler.For(firstMonitor).Subscribe(TimeSpan.FromSeconds(1), false, s => first.TrySetResult(s), once: true);
+        using var b = RemoteMonitorSampler.For(secondMonitor).Subscribe(TimeSpan.FromSeconds(1), false, s => second.TrySetResult(s), once: true);
+        Assert.Equal(11, (await first.Task.WaitAsync(TimeSpan.FromSeconds(5))).Snapshot!.Cpu.TotalPercent);
+        Assert.Equal(22, (await second.Task.WaitAsync(TimeSpan.FromSeconds(5))).Snapshot!.Cpu.TotalPercent);
+    }
+
+    private sealed class IdentifiedMonitor(double identity) : IRemoteSystemMonitor
+    {
+        public TimeSpan RecommendedInterval => TimeSpan.FromSeconds(1);
+        public Task<SystemSnapshot> SampleAsync(CancellationToken ct) => Task.FromResult(new SystemSnapshot { Cpu = new CpuSample { TotalPercent = identity } });
+        public Task<IReadOnlyList<RemoteProcessInfo>> GetTopProcessesAsync(int count, CancellationToken ct) => Task.FromResult<IReadOnlyList<RemoteProcessInfo>>([]);
+    }
+    [Fact]
     public async Task SlowCallbackDoesNotBlockSubscriptionOrDisposal()
     {
         var sampler = RemoteMonitorSampler.For(new ImmediateMonitor());

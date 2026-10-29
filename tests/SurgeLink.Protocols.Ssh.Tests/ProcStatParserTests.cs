@@ -5,6 +5,16 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 
 public sealed class ProcStatParserTests
 {
+    [Theory]
+    [InlineData("2147483647")]
+    [InlineData("4096")]
+    [InlineData("-1")]
+    public void UntrustedSparseCoreIndexCannotAllocateAnUnboundedArray(string index)
+    {
+        var sample = ProcStatParser.Parse($"cpu 1 2 3 4\ncpu{index} 1 2 3 4\ncpu0 1 2 3 4\n");
+        Assert.NotNull(sample);
+        Assert.Single(sample.PerCore);
+    }
     private const string ModernSample = """
         cpu  4325435 1234 2345456 38342456 23456 0 1234 0 0 0
         cpu0 1081358 308 586364 9585614 5864 0 308 0 0 0

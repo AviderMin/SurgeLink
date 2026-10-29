@@ -373,7 +373,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
         {
             throw new IOException("The download destination does not match its file name.");
         }
-        Directory.CreateDirectory(directory);
+        using var directoryLease = LocalDownloadPath.LockDirectory(directory);
         var temporary = Path.Combine(directory, ".surge-" + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {

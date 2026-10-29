@@ -35,8 +35,10 @@ public sealed class AgentPipeServerTests
         Assert.True((await slow.WaitAsync(timeout.Token)).Success);
     }
 
-    [Fact]
-    public async Task HeldConnectionsDoNotStopTheListenerPermanently()
+    [Theory]
+    [InlineData(64)]
+    [InlineData(65)]
+    public async Task HeldConnectionsDoNotStopTheListenerPermanently(int count)
     {
         var gateway = new AgentGateway();
         var name = $"SurgeLink.Tests.{Guid.NewGuid():N}";
@@ -49,7 +51,7 @@ public sealed class AgentPipeServerTests
         var held = new List<System.IO.Pipes.NamedPipeClientStream>();
         try
         {
-            for (var i = 0; i < 8; i++)
+            for (var i = 0; i < count; i++)
             {
                 var pipe = new System.IO.Pipes.NamedPipeClientStream(".", name,
                     System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);

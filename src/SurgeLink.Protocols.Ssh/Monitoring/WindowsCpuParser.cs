@@ -21,6 +21,10 @@ public sealed record WindowsCpuSample
 /// <summary>Parses the CPU sections of a Windows monitor sample.</summary>
 public static class WindowsCpuParser
 {
+    // Bounds a sparse per-processor instance name supplied by the guest. Without this,
+    // one row named with a huge index allocates a matching array and exhausts memory.
+    private const int MaximumCoreIndex = ProcStatParser.MaximumCoreCount;
+
     /// <summary>
     /// Parses the perf formatted per processor section and the <c>Win32_Processor</c>
     /// fallback section. Missing or malformed lines degrade to zero.
@@ -56,7 +60,8 @@ public static class WindowsCpuParser
                     continue;
                 }
 
-                if (int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) && index >= 0)
+                if (int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index)
+                    && index is >= 0 and < MaximumCoreIndex)
                 {
                     cores[index] = percent;
                     if (index > maximumCoreIndex)

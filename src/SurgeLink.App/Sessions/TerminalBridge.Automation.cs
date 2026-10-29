@@ -31,20 +31,34 @@ public sealed partial class TerminalBridge
     public TerminalOutputPage ReadOutput(long? cursor) => _output.Read(cursor);
 
     public Task<TerminalInputReceipt> SendTextAsync(string text, bool submit, long expectedRevision, CancellationToken ct) =>
+        SendTextCoreAsync(text, submit, expectedRevision, ct);
+
+    public Task<TerminalInputReceipt> SendCheckedTextAsync(string text, bool submit, TerminalScreenSnapshot expected, CancellationToken ct) =>
+        SendTextCoreAsync(text, submit, expected.InputRevision, ct, expected);
+
+    private Task<TerminalInputReceipt> SendTextCoreAsync(string text, bool submit, long expectedRevision, CancellationToken ct,
+        TerminalScreenSnapshot? expected = null) =>
         WriteAgentAsync(() =>
         {
             var paste = TerminalInputEncoder.EncodePaste(text, Emulator.Modes);
             return submit ? [.. paste, (byte)'\r'] : paste;
-        }, submit, expectedRevision, ct);
+        }, submit, expectedRevision, ct, expected);
 
     public Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct)
+        => SendKeyCoreAsync(key, expectedRevision, ct);
+
+    public Task<TerminalInputReceipt> SendCheckedKeyAsync(string key, TerminalScreenSnapshot expected, CancellationToken ct)
+        => SendKeyCoreAsync(key, expected.InputRevision, ct, expected);
+
+    private Task<TerminalInputReceipt> SendKeyCoreAsync(string key, long expectedRevision, CancellationToken ct, TerminalScreenSnapshot? expected = null)
     {
         var chord = TerminalKeyChord.Parse(key);
         return WriteAgentAsync(() => TerminalInputEncoder.EncodeKey(chord.VirtualKey, chord.Control, chord.Alt, chord.Shift, Emulator.Modes)
-            ?? throw new ArgumentException("Unsupported terminal key."), chord.VirtualKey == 0x0D, expectedRevision, ct);
+            ?? throw new ArgumentException("Unsupported terminal key."), chord.VirtualKey == 0x0D, expectedRevision, ct, expected);
     }
 
-    private async Task<TerminalInputReceipt> WriteAgentAsync(Func<byte[]> encode, bool submitted, long expectedRevision, CancellationToken ct)
+    private async Task<TerminalInputReceipt> WriteAgentAsync(Func<byte[]> encode, bool submitted, long expectedRevision, CancellationToken ct,
+        TerminalScreenSnapshot? expected = null)
     {
         await _inputGate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -55,17 +69,18 @@ public sealed partial class TerminalBridge
             byte[] bytes;
             lock (Emulator.SyncRoot)
             {
+                if (expected is not null && ReadScreen() != expected) throw new TerminalInputConflictException();
                 bytes = encode();
+                if (bytes.Length == 0) throw new ArgumentException("Terminal input is empty.");
+                ct.ThrowIfCancellationRequested();
+                // Reserve while holding the screen lock so output cannot invalidate
+                // the checked view between comparison, encoding and reservation.
+                if (Interlocked.CompareExchange(ref _inputRevision, expectedRevision + 1, expectedRevision) != expectedRevision)
+                    throw new TerminalInputConflictException();
                 Emulator.ScrollToBottom();
             }
             RaiseInvalidated();
-            if (bytes.Length == 0) throw new ArgumentException("Terminal input is empty.");
-            // Human input can arrive while encoding waits for the screen lock.
-            // Reserve the observed revision atomically before the transport write.
-            ct.ThrowIfCancellationRequested();
             var revision = expectedRevision + 1;
-            if (Interlocked.CompareExchange(ref _inputRevision, revision, expectedRevision) != expectedRevision)
-                throw new TerminalInputConflictException();
             var outputCursor = _output.Cursor;
             try { await _remote.WriteAsync(bytes, ct).ConfigureAwait(false); }
             catch (Exception ex) { throw new TerminalInputUnknownException(ex); }

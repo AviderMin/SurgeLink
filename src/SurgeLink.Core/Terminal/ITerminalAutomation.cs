@@ -7,6 +7,18 @@ public interface ITerminalAutomation
     TerminalOutputPage ReadOutput(long? cursor);
     Task<TerminalInputReceipt> SendTextAsync(string text, bool submit, long expectedRevision, CancellationToken ct);
     Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct);
+
+    Task<TerminalInputReceipt> SendCheckedTextAsync(string text, bool submit, TerminalScreenSnapshot expected, CancellationToken ct)
+    {
+        if (ReadScreen() != expected) throw new TerminalInputConflictException();
+        return SendTextAsync(text, submit, expected.InputRevision, ct);
+    }
+
+    Task<TerminalInputReceipt> SendCheckedKeyAsync(string key, TerminalScreenSnapshot expected, CancellationToken ct)
+    {
+        if (ReadScreen() != expected) throw new TerminalInputConflictException();
+        return SendKeyAsync(key, expected.InputRevision, ct);
+    }
 }
 
 public sealed record TerminalScreenSnapshot(string Text, int Columns, int Rows, int CursorRow, int CursorColumn,

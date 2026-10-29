@@ -195,7 +195,7 @@ public sealed class SshSession : IProtocolSession
         lock (_gate)
         {
             if (IsDisposed) return Task.FromResult(_hostInfo);
-            if (_hostInfoTask?.IsCanceled == true) _hostInfoTask = null;
+            if (_hostInfoTask is { IsCanceled: true } or { IsFaulted: true }) _hostInfoTask = null;
             return _hostInfoTask ??= ProbeHostInfoAsync(cancellationToken);
         }
     }
@@ -323,7 +323,7 @@ public sealed class SshSession : IProtocolSession
         catch (Exception exception)
         {
             _logger.LogWarning(exception, "Host information probe for {SessionId} failed.", _sessionId);
-            return HostInfo;
+            throw;
         }
     }
 

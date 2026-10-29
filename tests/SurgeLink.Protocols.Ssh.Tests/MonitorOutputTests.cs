@@ -94,6 +94,7 @@ public sealed class MonitorScriptTests
         Assert.Contains("cat /proc/net/dev", command, StringComparison.Ordinal);
         Assert.Contains("cat /proc/diskstats", command, StringComparison.Ordinal);
         Assert.Contains("df -kP", command, StringComparison.Ordinal);
+        Assert.Contains("/proc", command, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -105,7 +106,7 @@ public sealed class MonitorScriptTests
                  {
                      MonitorScript.StatSection, MonitorScript.MemInfoSection, MonitorScript.LoadAvgSection,
                      MonitorScript.UptimeSection, MonitorScript.NetDevSection, MonitorScript.DiskStatsSection,
-                     MonitorScript.DiskUsageSection,
+                     MonitorScript.DiskUsageSection, MonitorScript.ProcessCountSection,
                  })
         {
             Assert.Contains(MonitorOutput.MarkerPrefix + section, command, StringComparison.Ordinal);

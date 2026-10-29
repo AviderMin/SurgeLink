@@ -1,4 +1,5 @@
 using SurgeLink.Core.Storage;
+using SurgeLink.Core.Security;
 
 namespace SurgeLink.App.Services;
 
@@ -17,7 +18,8 @@ internal static class CrashLog
         try
         {
             var path = Path.Combine(AppPaths.LogsDirectory, "crash-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
-            var text = $"{DateTimeOffset.Now:O} [{source}]{Environment.NewLine}{exception}{Environment.NewLine}";
+            Directory.CreateDirectory(AppPaths.LogsDirectory);
+            var text = $"{DateTimeOffset.Now:O} [{DiagnosticText.Escape(source)}]{Environment.NewLine}{DiagnosticText.Escape(exception?.ToString() ?? string.Empty)}{Environment.NewLine}";
             lock (Gate)
             {
                 File.AppendAllText(path, text);

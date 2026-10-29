@@ -63,7 +63,7 @@ public sealed class LinuxMonitorProbeTests
         Assert.Equal(1.5, snapshot.Cpu.Load1, 6);
         Assert.Equal(2.5, snapshot.Cpu.Load5, 6);
         Assert.Equal(3.5, snapshot.Cpu.Load15, 6);
-        Assert.Equal(4, snapshot.Cpu.ProcessCount);
+        Assert.Equal(123, snapshot.Cpu.ProcessCount);
         Assert.Equal(500, snapshot.Cpu.ThreadCount);
         Assert.Equal(1000000L * 1024, snapshot.Memory.TotalBytes);
         Assert.Equal(250000L * 1024, snapshot.Memory.AvailableBytes);
@@ -232,7 +232,8 @@ public sealed class LinuxMonitorProbeTests
         string uptime,
         string netDev,
         string diskStats,
-        string df)
+        string df,
+        string procs = "123\n")
     {
         var builder = new StringBuilder();
         Append(MonitorScript.StatSection, stat);
@@ -242,6 +243,7 @@ public sealed class LinuxMonitorProbeTests
         Append(MonitorScript.NetDevSection, netDev);
         Append(MonitorScript.DiskStatsSection, diskStats);
         Append(MonitorScript.DiskUsageSection, df);
+        Append(MonitorScript.ProcessCountSection, procs);
         return builder.ToString();
 
         void Append(string section, string content)

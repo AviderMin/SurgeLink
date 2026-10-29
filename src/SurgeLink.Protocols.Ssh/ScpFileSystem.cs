@@ -306,6 +306,9 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                     .ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
 
+                // SCP inherits a local file mode on some servers. The payload is
+                // inside a private staging directory; narrow its mode before commit.
+                await SetPermissionsAsync(remotePath, 0x180, cancellationToken).ConfigureAwait(false);
                 progress?.Report(new TransferProgress(new FileInfo(localPath).Length, expectedSize, remotePath));
             }
             finally

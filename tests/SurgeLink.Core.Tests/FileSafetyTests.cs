@@ -5,6 +5,21 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class FileSafetyTests
 {
+    [Fact]
+    public void DownloadDirectoryCreatesMissingChildrenAndPinsAncestorsUntilDisposed()
+    {
+        using var temp = new TempDirectory();
+        var destination = temp.PathOf("parent", "child");
+        using (LocalDownloadPath.LockDirectory(destination))
+        {
+            Assert.True(Directory.Exists(destination));
+            File.WriteAllText(Path.Combine(destination, "payload.txt"), "download");
+            if (OperatingSystem.IsWindows())
+                Assert.Throws<IOException>(() => Directory.Move(temp.PathOf("parent"), temp.PathOf("moved")));
+        }
+        Directory.Move(temp.PathOf("parent"), temp.PathOf("moved"));
+        Assert.Equal("download", File.ReadAllText(temp.PathOf("moved", "child", "payload.txt")));
+    }
     [Theory]
     [InlineData("..\\outside.txt")]
     [InlineData("C:\\outside.txt")]

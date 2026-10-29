@@ -3,6 +3,9 @@ namespace SurgeLink.Core.Files;
 /// <summary>Validates remote names before interpreting them as Windows download paths.</summary>
 public static class LocalDownloadPath
 {
+    /// <summary>Creates and secures the destination directory for the entire write/publish/cleanup lifetime.</summary>
+    public static IDisposable LockDirectory(string directory) => LocalDownloadDirectory.Open(directory);
+
     public static string Resolve(string directory, string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);

@@ -51,10 +51,13 @@ public sealed class EncryptedCredentialStore : ICredentialStore
                 return null;
             }
 
+            var password = Unprotect(entry.Password, out var passwordFailed);
+            var passphrase = Unprotect(entry.Passphrase, out var passphraseFailed);
             return new StoredCredential
             {
-                Password = Unprotect(entry.Password),
-                PrivateKeyPassphrase = Unprotect(entry.Passphrase),
+                Password = password,
+                PrivateKeyPassphrase = passphrase,
+                DecryptionFailed = passwordFailed || passphraseFailed,
             };
         }
     }
@@ -62,6 +65,8 @@ public sealed class EncryptedCredentialStore : ICredentialStore
     /// <inheritdoc />
     public void Save(string profileId, StoredCredential credential)
     {
+        if (credential.DecryptionFailed)
+            throw new IOException("A saved credential could not be decrypted. Re-enter it or explicitly turn off Remember before saving.");
         lock (_gate)
         {
             var entry = new Entry
@@ -105,8 +110,9 @@ public sealed class EncryptedCredentialStore : ICredentialStore
         return Convert.ToBase64String(_protector.Protect(Encoding.UTF8.GetBytes(plaintext)));
     }
 
-    private string? Unprotect(string? protectedBase64)
+    private string? Unprotect(string? protectedBase64, out bool failed)
     {
+        failed = false;
         if (string.IsNullOrEmpty(protectedBase64))
         {
             return null;
@@ -118,10 +124,12 @@ public sealed class EncryptedCredentialStore : ICredentialStore
         }
         catch (System.Security.Cryptography.CryptographicException)
         {
+            failed = true;
             return null;
         }
         catch (FormatException)
         {
+            failed = true;
             return null;
         }
     }

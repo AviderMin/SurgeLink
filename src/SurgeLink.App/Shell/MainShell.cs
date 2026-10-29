@@ -470,7 +470,9 @@ internal sealed class MainShell : Component
                     passphrase = await services.Interaction.RequestSecretAsync(
                         new SecretRequest(
                             Str.T("shell.prompt.passphrase.title", "Private key passphrase"),
-                            Str.T("shell.prompt.passphrase.body", "Enter the key passphrase, or leave it empty for an unencrypted key.")),
+                            stored?.DecryptionFailed == true
+                                ? Str.T("shell.prompt.secretDecryptFailed", "The saved secret could not be decrypted. Enter it again for this connection; the saved data will be kept.")
+                                : Str.T("shell.prompt.passphrase.body", "Enter the key passphrase, or leave it empty for an unencrypted key.")),
                         cancellationToken);
                     if (passphrase is null) { return null; }
                 }
@@ -497,8 +499,9 @@ internal sealed class MainShell : Component
                 var secret = await services.Interaction.RequestSecretAsync(
                     new SecretRequest(
                         Str.F("shell.prompt.password.title", "Password for {0}@{1}", profile.Username, profile.Host),
-                        Str.T("shell.prompt.password.body",
-                            "This login is not saved. Enter the password for this session."),
+                        stored?.DecryptionFailed == true
+                            ? Str.T("shell.prompt.secretDecryptFailed", "The saved secret could not be decrypted. Enter it again for this connection; the saved data will be kept.")
+                            : Str.T("shell.prompt.password.body", "This login is not saved. Enter the password for this session."),
                         IsPassword: true),
                     cancellationToken);
 

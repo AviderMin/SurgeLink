@@ -27,7 +27,7 @@ public sealed class AgentPipeServer : IAsyncDisposable
         _run = RunAsync(first);
     }
 
-    private NamedPipeServerStream CreatePipe(bool first = false) => new(_pipeName, PipeDirection.InOut, MaximumConnections,
+    private NamedPipeServerStream CreatePipe(bool first = false) => new(_pipeName, PipeDirection.InOut, MaximumConnections + 1,
         PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly | (first ? PipeOptions.FirstPipeInstance : 0));
 
     private async Task RunAsync(NamedPipeServerStream first)
@@ -43,10 +43,10 @@ public sealed class AgentPipeServer : IAsyncDisposable
                     await pipe.WaitForConnectionAsync(_shutdown.Token).ConfigureAwait(false);
                     accepted = pipe;
 
-                    // Create the next listener before serving, so a request is never
-                    // dropped. When all MaximumConnections instances are held, this
-                    // fails; keep the accepted pipe and retry the listener later
-                    // instead of silently leaving the server without an endpoint.
+                    // Serve before allocating another instance. Even at saturation,
+                    // the last accepted client must have a reader and a deadline.
+                    TrackConnection(ServeAsync(accepted));
+                    accepted = null;
                     while (true)
                     {
                         try
@@ -60,8 +60,6 @@ public sealed class AgentPipeServer : IAsyncDisposable
                         }
                     }
 
-                    TrackConnection(ServeAsync(accepted));
-                    accepted = null;
                 }
                 catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
                 catch (ObjectDisposedException) when (_shutdown.IsCancellationRequested) { }
@@ -98,7 +96,9 @@ public sealed class AgentPipeServer : IAsyncDisposable
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
             deadline.CancelAfter(TimeSpan.FromSeconds(60));
-            var request = await AgentWire.ReadAsync<AgentRequest>(pipe, deadline.Token).ConfigureAwait(false);
+            using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+            readDeadline.CancelAfter(TimeSpan.FromSeconds(2));
+            var request = await AgentWire.ReadAsync<AgentRequest>(pipe, readDeadline.Token).ConfigureAwait(false);
             var response = await _gateway.ExecuteAsync(request, deadline.Token).ConfigureAwait(false);
             using var reply = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
             reply.CancelAfter(TimeSpan.FromSeconds(2));
@@ -111,6 +111,14 @@ public sealed class AgentPipeServer : IAsyncDisposable
             }
         }
         catch (Exception ex) when (ex is IOException or JsonException or OperationCanceledException) { }
+        catch (Exception)
+        {
+            // Unexpected handler/serialization failures still produce a bounded reply.
+            using var reply = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+            reply.CancelAfter(TimeSpan.FromSeconds(2));
+            try { await AgentWire.WriteAsync(pipe, AgentResponse.Error("operation_failed", "The Agent request failed."), reply.Token).ConfigureAwait(false); }
+            catch (Exception) { /* The client may already have disconnected. */ }
+        }
         finally { await pipe.DisposeAsync().ConfigureAwait(false); }
     }
 

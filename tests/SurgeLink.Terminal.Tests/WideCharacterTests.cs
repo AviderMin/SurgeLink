@@ -2,6 +2,18 @@ namespace SurgeLink.Terminal.Tests;
 
 public sealed class WideCharacterTests
 {
+    [Theory]
+    [InlineData(0x2630, 2)] // Trigram: widened in modern Unicode.
+    [InlineData(0x1FAE9, 2)] // Modern emoji omitted from the old hand-maintained table.
+    [InlineData(0x1F321, 1)] // Thermometer is neutral without emoji presentation.
+    [InlineData(0x1F203, 1)] // Unassigned gap within the old broad symbol range.
+    [InlineData(0xFF00, 1)] // Unassigned; must not inherit a neighbouring fullwidth range.
+    public void UnicodeWidthPropertiesDoNotOvergeneralizeNeighbouringSymbols(int codePoint, int width)
+    {
+        var terminal = new TestTerminal(10, 4);
+        terminal.Feed(char.ConvertFromUtf32(codePoint));
+        Assert.Equal(width, terminal.Cursor.Column);
+    }
     [Fact]
     public void WideGlyphUsesTwoCells()
     {

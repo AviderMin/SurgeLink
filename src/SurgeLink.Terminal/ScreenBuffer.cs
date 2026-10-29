@@ -226,8 +226,11 @@ internal sealed class ScreenBuffer
         for (int i = 0; i < Math.Max(1, count); i++)
         {
             int previous = column - 1;
-            while (previous > 0 && !_tabStops[previous])
+            while (previous > 0
+                   && (!_tabStops[previous] || _lines[_cursorRow].Cells[previous].Width == CellWidth.Continuation))
             {
+                // A stop covered by the right half of a wide glyph is not a usable
+                // cursor position: stopping there and printing would erase half of it.
                 previous--;
             }
 
@@ -707,7 +710,19 @@ internal sealed class ScreenBuffer
         TerminalCell[] cells = _lines[row].Cells;
         column = Math.Clamp(column, 0, _columns - 1);
         count = Math.Clamp(count, 1, _columns);
-        ClearWidePair(cells, column);
+        // Inserting before a wide glyph shifts both of its halves right intact; only
+        // an insertion inside the pair (on its continuation) splits it. Clearing the
+        // pair unconditionally left the shifted right half as an orphan.
+        if (cells[column].Width == CellWidth.Continuation)
+        {
+            if (column > 0)
+            {
+                cells[column - 1] = EraseCell;
+            }
+
+            cells[column] = EraseCell;
+        }
+
         int shift = Math.Min(count, _columns - column);
         Array.Copy(cells, column, cells, column + shift, _columns - column - shift);
         for (int i = column; i < column + shift; i++)

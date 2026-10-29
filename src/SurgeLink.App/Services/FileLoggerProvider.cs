@@ -1,4 +1,5 @@
 using System.Text;
+using SurgeLink.Core.Security;
 using Microsoft.Extensions.Logging;
 
 namespace SurgeLink.App.Services;
@@ -28,7 +29,7 @@ public sealed class FileLoggerProvider : ILoggerProvider
             var path = Path.Combine(_directory, $"surge-{DateTime.Now:yyyyMMdd}.log");
             lock (_gate)
             {
-                File.AppendAllText(path, line + Environment.NewLine, Encoding.UTF8);
+                File.AppendAllText(path, DiagnosticText.Escape(line) + Environment.NewLine, Encoding.UTF8);
             }
         }
         catch (IOException)

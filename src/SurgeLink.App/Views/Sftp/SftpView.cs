@@ -73,7 +73,13 @@ internal sealed class SftpView : Component<SftpViewProps>
             () =>
             {
                 var cancellation = new CancellationTokenSource();
-                if (!online) { cancellation.Cancel(); }
+                if (!online)
+                {
+                    // A disconnect cancels in-flight work; clear the delete spinner so the
+                    // toolbar is usable again if the session reconnects to the same tab.
+                    cancellation.Cancel();
+                    setDeleting(false);
+                }
                 operationLifetime.Current = cancellation;
                 return () =>
                 {
