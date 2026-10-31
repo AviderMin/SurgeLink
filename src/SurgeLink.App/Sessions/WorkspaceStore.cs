@@ -452,7 +452,13 @@ public sealed class WorkspaceStore
                 profile = profile with { DetectedOperatingSystem = null };
             }
             _profiles.Upsert(profile);
-            if (credential is not null)
+            if (credential is { DecryptionFailed: true })
+            {
+                // The stored secret could not be decrypted. Leave the existing
+                // ciphertext untouched instead of throwing or deleting the user's
+                // data: the profile edit still commits and the UI still refreshes.
+            }
+            else if (credential is not null)
             {
                 _credentials.Save(profile.Id, credential);
             }

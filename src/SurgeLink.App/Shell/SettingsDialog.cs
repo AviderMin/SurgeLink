@@ -33,6 +33,11 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
         var (saveError, setSaveError) = UseState<string?>(null);
         var closed = UseRef(false);
         var dialogControl = UseRef<ContentDialog?>(null);
+        // The dialog's PrimaryButtonClick handler is bound only once (see onOpened),
+        // so it must read the latest draft from a stable holder instead of the
+        // draft captured by the render that attached it.
+        var draftRef = UseRef(draft);
+        draftRef.Current = draft;
         // PrimaryButtonClick runs before OnClosed. Keeping the native dialog open
         // on a failed write preserves both the user's draft and their retry path.
         UseEffect(() => () =>
@@ -41,7 +46,7 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
         }, Array.Empty<object>());
         void CancelFailedSave(ContentDialog sender, ContentDialogButtonClickEventArgs args)
         {
-            if (!SettingsDialogSave.TryApply(store, draft, error =>
+            if (!SettingsDialogSave.TryApply(store, draftRef.Current, error =>
                 {
                     Props.OnSaveFailed(error);
                     setSaveError(error.Message);
