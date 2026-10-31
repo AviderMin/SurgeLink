@@ -9,6 +9,7 @@ using SurgeLink.App.Sessions;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Sessions;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace SurgeLink.App.Shell;
@@ -72,6 +73,34 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
                 setCopied(Str.T("shell.agent.copied", "Copied"));
             }
             catch { setCopied(Str.T("shell.agent.copyFailed", "Could not access the clipboard.")); }
+        }
+
+        async void CopyCliFile()
+        {
+            if (busy.Current) return;
+            busy.Current = true;
+            setWorking(true);
+            try
+            {
+                // Keep each clipboard attachment intact even if instructions are copied again.
+                var folder = Path.Combine(Path.GetTempPath(), "SurgeLink", "AgentInstructions");
+                Directory.CreateDirectory(folder);
+                var path = Path.Combine(folder, $"SurgeLink-Agent-{Environment.ProcessId}-{Guid.NewGuid():N}.md");
+                await File.WriteAllTextAsync(path, "# SurgeLink Agent\n\n" + BuildCliInstructions(agent),
+                    new System.Text.UTF8Encoding(false));
+                var file = await StorageFile.GetFileFromPathAsync(path);
+                var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+                package.SetStorageItems(new[] { file });
+                Clipboard.SetContent(package);
+                Clipboard.Flush();
+                setCopied(Str.T("shell.agent.cliFileCopied", "Markdown file copied. Paste it into your Agent chat as an attachment."));
+            }
+            catch (Exception ex)
+            {
+                CrashLog.Write("AgentCopyCliFile", ex);
+                setCopied(Str.T("shell.agent.cliFileFailed", "Could not create or copy the Markdown file. Try again."));
+            }
+            finally { busy.Current = false; setWorking(false); }
         }
 
         Element SessionCard(WorkspaceTab tab)
@@ -168,10 +197,10 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
                             : VStack(AppTheme.SpacingM, activities)),
                     VStack(AppTheme.SpacingS,
                         BodyStrong(Str.T("shell.agent.cliFallback", "CLI for scripts and other Agents")),
-                        Button(Str.T("shell.agent.copyCli", "Copy Agent instructions"), () => Copy(BuildCliInstructions(agent)))
-                            .HAlign(HorizontalAlignment.Stretch)
-                            .AutomationName(Str.T("shell.agent.copyCli", "Copy Agent instructions")).AutomationId("AgentCopyCli"),
-                        Caption(Str.T("shell.agent.cliHint", "Paste into your Agent chat and add your task. Works from any workspace on this Windows computer. Copy again after restarting SurgeLink."))
+                        Button(Str.T("shell.agent.copyCli", "Copy Agent Markdown file"), CopyCliFile)
+                            .IsEnabled(!working).HAlign(HorizontalAlignment.Stretch)
+                            .AutomationName(Str.T("shell.agent.copyCli", "Copy Agent Markdown file")).AutomationId("AgentCopyCli"),
+                        Caption(Str.T("shell.agent.cliHint", "Paste the Markdown file into an Agent chat that accepts file attachments, then add your task. Works from any workspace on this Windows computer. Copy a new file after restarting SurgeLink."))
                             .TextWrapping(TextWrapping.Wrap).Foreground(Theme.SecondaryText)))
                     .Margin(AppTheme.SpacingL, 0, AppTheme.SpacingL, AppTheme.SpacingL))
                     .Set(viewer => viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled).Grid(row: 1)))
