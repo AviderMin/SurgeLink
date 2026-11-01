@@ -57,6 +57,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             ?? throw new InvalidOperationException("The session editor requires its owning window's storage picker.");
         var props = Props;
         var template = props.Existing;
+        var storedCredential = UseMemo(() => template is null ? null : services.Credentials.Get(template.Id), template!);
         var plugins = services.Protocols.Plugins;
         var settings = UseExternalStore(services.Settings.Subscribe, () => services.Settings.Current);
 
@@ -72,7 +73,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         var (keyPath, setKeyPath) = UseState(template?.PrivateKeyPath ?? string.Empty);
         var (password, setPassword) = UseState(string.Empty);
         var (passphrase, setPassphrase) = UseState(string.Empty);
-        var (remember, setRemember) = UseState(HasStoredSecret(services, template));
+        var (remember, setRemember) = UseState(storedCredential is not null);
         var (attempted, setAttempted) = UseState(false);
         var (pickerError, setPickerError) = UseState<string?>(null);
         var (protocolOptions, setProtocolOptions) = UseState<IReadOnlyDictionary<string, string>>(
@@ -339,7 +340,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                         placeholderText: Str.T("shell.editor.groupPlaceholder", "e.g. Production"))
                     .AutomationName(groupLabel).AutomationId("SessionEditorGroup"));
             var fields = new List<Element>();
-            if (template is not null && services.Credentials.Get(template.Id)?.DecryptionFailed == true)
+            if (storedCredential?.DecryptionFailed == true)
                 fields.Add(InfoBar(Str.T("shell.editor.secretUnavailableTitle", "Saved credential unavailable"),
                     Str.T("shell.editor.secretUnavailableBody", "The saved secret could not be decrypted. Re-enter it, or turn off Remember to remove it.")).Warning());
             if (showErrors)
@@ -519,9 +520,6 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
         return 0;
     }
-
-    private static bool HasStoredSecret(AppServices services, SessionProfile? profile) =>
-        profile is not null && services.Credentials.Get(profile.Id) is not null;
 
     /// <summary>Returns 0 for "use the protocol default" and -1 for an invalid value.</summary>
     private static int ParsePort(string text)

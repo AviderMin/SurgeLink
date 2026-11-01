@@ -465,7 +465,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
         foreach (var file in files)
         {
             token.ThrowIfCancellationRequested();
-            var entry = archive.CreateEntry(file.Archive, CompressionLevel.Optimal);
+            var entry = archive.CreateEntry(file.Archive, CompressionLevel.Fastest);
             await RemoteFileAccess.RequireRegularFileAsync(fileSystem, file.Remote, token).ConfigureAwait(false);
             await using var source = await fileSystem.OpenReadAsync(file.Remote, token).ConfigureAwait(false);
             await using var target = entry.Open();

@@ -18,7 +18,7 @@ public sealed class SshProtocolOptionsTests
         Assert.Equal(Encoding.UTF8, options.Encoding);
         Assert.False(options.UseLegacyAlgorithms);
         Assert.Null(options.PreferredKeyExchange);
-        Assert.Equal(4096, options.ShellBufferSize);
+        Assert.Equal(32768, options.ShellBufferSize);
         Assert.Equal(TimeSpan.FromSeconds(20), options.CommandTimeout);
         Assert.Equal(TimeSpan.FromSeconds(20), options.ConnectTimeout);
     }
@@ -91,7 +91,7 @@ public sealed class SshProtocolOptionsTests
     [InlineData("100", 256)]
     [InlineData("8192", 8192)]
     [InlineData("1000000", 65536)]
-    [InlineData("not-a-number", 4096)]
+    [InlineData("not-a-number", 32768)]
     public void ShellBufferSizeIsClamped(string value, int expected)
     {
         var options = new SshProtocolOptions(CreateRequest(new Dictionary<string, string> { ["shellBufferSize"] = value }));

@@ -14,9 +14,11 @@ public static class LiteralTextSearch
         }
         // Search by match start so a previous match can end after the caret.
         var lastStart = text.Length - query.Length;
-        for (var index = Math.Min(start, lastStart); index >= 0; index--)
+        var limit = Math.Min(start, lastStart);
+        if (limit >= 0)
         {
-            if (text.AsSpan(index, query.Length).Equals(query.AsSpan(), comparison)) { return index; }
+            var index = text.AsSpan(0, limit + query.Length).LastIndexOf(query.AsSpan(), comparison);
+            if (index >= 0) return index;
         }
         return text.LastIndexOf(query, comparison);
     }

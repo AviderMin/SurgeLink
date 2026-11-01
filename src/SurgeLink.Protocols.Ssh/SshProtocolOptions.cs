@@ -40,7 +40,7 @@ public sealed class SshProtocolOptions
     /// <summary>Default TERM value.</summary>
     public const string DefaultTerminalType = "xterm-256color";
 
-    private const int DefaultShellBufferSize = 4096;
+    private const int DefaultShellBufferSize = 32 * 1024;
     private const int MinimumShellBufferSize = 256;
     private const int MaximumShellBufferSize = 64 * 1024;
     private const double DefaultCommandTimeoutSeconds = 20d;
