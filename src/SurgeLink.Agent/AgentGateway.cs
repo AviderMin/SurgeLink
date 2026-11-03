@@ -61,6 +61,34 @@ public sealed partial class AgentGateway
         }
     }
 
+    /// <summary>Pauses every grant for this connection while a human types; returns true only when one was running.</summary>
+    public bool SuspendForHuman(string connectionKey)
+    {
+        lock (_gate) return SetHumanOperating(connectionKey, true);
+    }
+
+    /// <summary>Clears a human pause without changing the grant or its handle; returns true only on a real change.</summary>
+    public bool ResumeFromHuman(string connectionKey)
+    {
+        lock (_gate) return SetHumanOperating(connectionKey, false);
+    }
+
+    public bool IsHumanOperating(string connectionKey)
+    {
+        lock (_gate) return _grants.Values.Any(g => g.ConnectionKey == connectionKey && g.HumanOperating);
+    }
+
+    private bool SetHumanOperating(string connectionKey, bool operating)
+    {
+        var changed = false;
+        foreach (var grant in _grants.Values.Where(g => g.ConnectionKey == connectionKey && g.HumanOperating != operating))
+        {
+            grant.HumanOperating = operating;
+            changed = true;
+        }
+        return changed;
+    }
+
     public Task RevokeAsync(string connectionKey)
     {
         Grant[] removed;
@@ -101,6 +129,7 @@ public sealed partial class AgentGateway
     {
         AgentResponse result;
         try { result = await ExecuteCoreAsync(request, cancellationToken).ConfigureAwait(false); }
+        catch (AgentOperationPausedException) { result = HumanOperatingError(); }
         catch (OperationCanceledException) { result = AgentResponse.Error("cancelled", "The request expired or session access was revoked."); }
         catch (NotSupportedException) { result = AgentResponse.Error("unsupported", "This session does not support that operation."); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.DecoderFallbackException)
@@ -127,18 +156,23 @@ public sealed partial class AgentGateway
         if (request.Method == "sessions.list")
         {
             lock (_gate) return AgentResponse.Ok(_grants.Values
-                .Where(g => g.Session.State == ConnectionState.Connected).Select(g => g.Info with { IsActive = g.IsActive?.Invoke() ?? false }).ToArray());
+                .Where(g => g.Session.State == ConnectionState.Connected)
+                .Select(g => g.Info with { IsActive = g.IsActive?.Invoke() ?? false, UserOperating = g.HumanOperating }).ToArray());
         }
         if (!IsKnownMethod(request.Method))
             return AgentResponse.Error("unknown_method", "Unknown Agent operation.");
         Grant? grant;
         lock (_gate) _grants.TryGetValue(request.Session ?? "", out grant);
         if (grant is null) return AgentResponse.Error("session_unavailable", "The session is not shared or its handle has expired.");
+        // A human owns the terminal now: fail fast before any IO or queueing behind Agent work.
+        if (IsHumanOperating(grant)) return HumanOperatingError();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, grant.Lifetime.Token);
         ct = linked.Token;
         await grant.Serial.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Input may have arrived while this request waited; never execute IO after the pause.
+            if (IsHumanOperating(grant)) return HumanOperatingError();
             ThrowIfCancelled(grant, ct);
             if (grant.Session.State != ConnectionState.Connected)
                 return AgentResponse.Error("session_unavailable", "The session is disconnected.");
@@ -212,6 +246,14 @@ public sealed partial class AgentGateway
         ct.ThrowIfCancellationRequested();
     }
 
+    private bool IsHumanOperating(Grant grant)
+    {
+        lock (_gate) return grant.HumanOperating;
+    }
+
+    private static AgentResponse HumanOperatingError() => AgentResponse.Error("user_operating",
+        "User is operating this terminal. Stop all current operations and wait for the user to return control; do not retry or re-acquire the session.");
+
     private static bool IsKnownMethod(string method) => method is "sessions.list" or "sessions.info" or "sessions.activate" or "sessions.check"
         or "terminal.screen" or "terminal.output" or "terminal.text" or "terminal.key"
         or "monitor.snapshot" or "files.list" or "files.read";
@@ -226,6 +268,7 @@ public sealed partial class AgentGateway
         public ITerminalAutomation? Terminal { get; } = terminal;
         public Func<string, CancellationToken, Task>? Activate { get; } = activate;
         public Func<bool>? IsActive { get; } = isActive;
+        public bool HumanOperating { get; set; }
         public Dictionary<string, (string Fingerprint, AgentResponse Response)> Inputs { get; } = new(StringComparer.Ordinal);
         public SessionCheck? Check { get; set; }
         public bool InputOutcomeUnknown { get; set; }

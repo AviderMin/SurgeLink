@@ -18,7 +18,7 @@ public sealed record AgentResponse(bool Success, JsonElement? Data = null, strin
 
 public sealed record AgentSessionInfo(string Handle, string Label, string Protocol, RemoteHostInfo Host,
     bool Terminal, bool Files, bool Monitor, bool TerminalControl = false, bool IsActive = false,
-    AgentSessionTarget? Target = null);
+    AgentSessionTarget? Target = null, bool UserOperating = false);
 
 /// <summary>Connection identity captured when desktop access is granted; username is the configured login, not a probed effective shell user.</summary>
 public sealed record AgentSessionTarget(string SessionId, string Server, int Port, string Username);

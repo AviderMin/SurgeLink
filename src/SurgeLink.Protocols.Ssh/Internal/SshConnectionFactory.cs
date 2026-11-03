@@ -82,6 +82,8 @@ internal sealed class SshConnectionFactory
         };
 
         ApplyAlgorithmPreferences(info);
+        if (_context.WebAuthenticationPrompt is { } webPrompt)
+            info.AuthenticationBanner += new SshWebAuthentication(Endpoint, webPrompt, budget, cancellationToken).Handle;
         return info;
     }
 

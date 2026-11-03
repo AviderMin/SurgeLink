@@ -62,6 +62,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     public IReadOnlyList<AgentActivity> Activity { get { lock (_gate) return _activity.Reverse().ToArray(); } }
     public AgentAccessMode GetMode(Guid tabId) => _gateway.GetMode(tabId.ToString());
     public bool IsShared(Guid tabId) => GetMode(tabId) != AgentAccessMode.None;
+    public bool IsHumanOperating(Guid tabId) => _gateway.IsHumanOperating(tabId.ToString());
     public bool HasAccess => _workspace.Snapshot.Tabs.Any(t => IsShared(t.Id));
 
     public string McpConfiguration => AgentMcpSetup.Configuration(McpHostPath);
@@ -84,6 +85,22 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         }
         long generation;
         lock (_gate) { if (_disposed) return; generation = _stopGeneration; }
+        // Resuming after a human pause only clears the flag: the grant and its handle stay valid.
+        if (mode == AgentAccessMode.Control && GetMode(tab.Id) == AgentAccessMode.Control && IsHumanOperating(tab.Id))
+        {
+            await _accessChanges.WaitAsync();
+            try
+            {
+                lock (_gate)
+                {
+                    if (_disposed || generation != _stopGeneration || !_workspace.Snapshot.Tabs.Contains(tab)
+                        || tab.State != ConnectionState.Connected || tab.IsClosing || tab.IsReopeningTerminal) return;
+                }
+                if (_gateway.ResumeFromHuman(tab.Id.ToString())) Record(tab.Title, "access", "human_resumed");
+            }
+            finally { _accessChanges.Release(); }
+            return;
+        }
         var revision = tab.Terminal?.ReadScreen().InputRevision;
         await _accessChanges.WaitAsync();
         try
@@ -109,16 +126,20 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
                 _error = null;
                 if (mode == AgentAccessMode.Control && tab.Terminal is { } terminal)
                 {
-                    EventHandler handler = (_, _) => { _ = RevokeForHumanAsync(tab); };
+                    // A human at the keyboard pauses Agent operations instead of revoking the grant.
+                    EventHandler handler = (_, _) =>
+                    {
+                        if (_gateway.SuspendForHuman(tab.Id.ToString())) Record(tab.Title, "access", "human_input");
+                    };
                     _humanHandlers[tab.Id] = handler;
                     terminal.UserInput += handler;
                 }
             }
             // Input may land between the earlier revision check and event subscription.
-            // Once subscribed, subsequent input revokes through the handler as usual.
+            // Treat it as a human takeover: the grant stays valid but paused until the panel resumes it.
             if (mode == AgentAccessMode.Control && tab.Terminal?.ReadScreen().InputRevision != revision)
             {
-                await RevokeAsync(tab, "human_input");
+                if (_gateway.SuspendForHuman(tab.Id.ToString())) Record(tab.Title, "access", "human_input");
                 return;
             }
             Record(tab.Title, "access", mode == AgentAccessMode.Control ? "control_enabled" : "read_enabled");
@@ -133,12 +154,6 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         // Invoke all revocations before waiting: one slow transport must not retain other handles.
         try { await Task.WhenAll(_workspace.Snapshot.Tabs.Select(tab => RevokeAsync(tab, "revoked"))).ConfigureAwait(false); }
         catch (Exception ex) { ReportError(ex); throw; }
-    }
-
-    private async Task RevokeForHumanAsync(WorkspaceTab tab)
-    {
-        try { await RevokeAsync(tab, "human_input").ConfigureAwait(false); }
-        catch (Exception ex) { ReportError(ex); }
     }
 
     private async Task RevokeAsync(WorkspaceTab tab, string reason)
@@ -165,6 +180,8 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
             try
             {
                 ct.ThrowIfCancellationRequested();
+                // Human input may have paused this grant while this callback waited for the UI.
+                if (_gateway.IsHumanOperating(tab.Id.ToString())) throw new AgentOperationPausedException();
                 if (tab.IsClosing || !_workspace.Snapshot.Tabs.Contains(tab)) throw new InvalidOperationException("Connection is closing.");
                 var kind = view switch
                 {

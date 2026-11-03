@@ -32,7 +32,7 @@
 
 | 资产 | 暴露路径 | 现有防护 |
 |---|---|---|
-| 远端 shell 控制权（最高价值） | terminal.text / key | Control 授权 + check-token 流程 + 人工输入即撤销 |
+| 远端 shell 控制权（最高价值） | terminal.text / key | Control 授权 + check-token 流程 + 人工输入即暂停（user_operating），显式 Stop 才撤销 |
 | 远端文件数据（含远端凭据文件） | files.list / read | 随 Observe 授权开放，策略钩子可拦（见 R1） |
 | 终端输出与监控数据 | terminal.screen / output、monitor.snapshot | 有界出口（32K 字符 / 1 MiB 帧 / 500 条） |
 | 会话元数据（主机/端口/登录名） | sessions.list / info | 仅已共享会话可见；身份只报"配置的登录名" |
@@ -67,7 +67,7 @@
 | 写操作前置 | 每次输入需 check_sessions：2 分钟单次 token + 屏幕哈希 + inputRevision | AgentGateway.Input.cs:38-42 |
 | 重放与幂等 | operationId → SHA256 参数指纹映射，1024 条上限，同参重试只回放不重写 | AgentGateway.Input.cs:16-28 |
 | 失败安全 | input_outcome_unknown 锁死后续输入，需人工续期；不确定写不自动重发 | AgentGateway.Input.cs:29-30、65 |
-| 人优先 | 人工键入立即撤销控制；授权过程中的输入竞态也撤销 | AgentWorkspaceService.cs:110-123 |
+| 人优先 | 人工键入立即暂停 Agent 操作并返回 user_operating，显式 Stop 才撤销；授权过程中的输入竞态也转为暂停 | AgentWorkspaceService.cs:89-133 |
 | 出口有界 | 1 MiB 帧、屏幕 32K 字符、文件 128 KiB、目录 500 条、输入 16384 字符 | AgentWire.cs、AgentGateway.cs:164-197、AgentGateway.Input.cs:33 |
 | 超时有界 | 读 2s / 执行 60s / 回复 2s；连接上限 64 | AgentPipeServer.cs:9、97-104 |
 | 身份诚实 | 只声明"配置的登录名"，不探测、不冒充有效 shell 用户 | AgentContract.cs:23-24 |
@@ -82,7 +82,7 @@
 
 1. **只有用户能扩权**：授权只能从桌面面板产生；连接发现、presence、select_desktop 都不授予任何访问。
 2. **写操作必须锚定人在场验证**：每个状态变更动作（terminal.text/key）都要过屏幕状态绑定的单次 token——token 绑定的是**屏幕状态**而非身份，状态一变即失效，机械地阻止"基于过期认知行动"。
-3. **人优先于代理**：人工键入立即撤销控制；撤销即排水，迟到回调被双重取消检查拦截；成功确认不被事后取消覆盖。
+3. **人优先于代理**：人工键入立即暂停该终端的 Agent 操作，后续会话操作返回 user_operating，Agent 必须停止且不得重试或重新获取会话；只有显式 Stop 才撤销并排水，迟到回调被双重取消检查拦截；成功确认不被事后取消覆盖。
 4. **出口有界 + 身份诚实**：所有读操作在字节/条目/字符维度有上限；不宣称任何未经验证的事实（配置登录名 ≠ 有效 shell 用户；presence ≠ 身份；input_sent ≠ 命令完成）。
 5. **执法点在最后的可信决策点**：所有判定在桌面端 Gateway 收口，AgentHost/CLI 只传话；远端内容永远不能改变 grant 状态、token 或策略。
 
@@ -101,7 +101,7 @@
 
 ### R2 给 Control 授权加时效/活动上限
 
-- **现状**：Control 授权持续到人工撤销或人工输入；1024 条幂等缓存上限是雏形（AgentGateway.Input.cs:27-28）。
+- **现状**：Control 授权持续到显式 Stop；人工输入只会暂停（user_operating），Resume 后同一句柄继续可用；1024 条幂等缓存上限是雏形（AgentGateway.Input.cs:27-28）。
 - **建议**：空闲 N 分钟自动降级为 Observe，或单次 Control 授权最多支持 M 次输入后要求人工续期。把"授权窗口"从事件触发型收紧为**时间/次数有界型**。
 
 ### R3 协议层固化"数据/指令"分离
@@ -132,7 +132,7 @@
 | 条件 | 能做的 | 不能做的 |
 |---|---|---|
 | 仅 Observe 授权 | 读终端输出、监控快照、远端文件（→ R1 是最大缺口） | 输入、碰其他会话、拿本地凭据、自行扩权、超限传输 |
-| Control 授权 | 在该终端执行 = 用户自己在终端里能做的事；每次写过屏幕状态锚定 token | 绕过 token、在人工接管后继续、跨会话操作、改变授权状态 |
+| Control 授权 | 在该终端执行 = 用户自己在终端里能做的事；每次写过屏幕状态锚定 token | 绕过 token、在人工输入暂停后继续或重试、跨会话操作、改变授权状态 |
 
 **结论**：损害上限 = "用户显式共享的能力 × 共享存续时间"。边界闭合。R1 收紧后，Observe 的损害上限进一步降到"终端可见内容"。
 
@@ -159,6 +159,6 @@ SurgeLink 的 Agent 边界哲学已成型且质量很高：**授权最小化 + �
 | 管道 ACL 与帧界 | src/SurgeLink.Agent/AgentPipeServer.cs:30-31、93-123 |
 | MCP 工具面与参数校验 | src/SurgeLink.AgentHost/McpAdapter.cs:12-103 |
 | presence 咨询性 | src/SurgeLink.AgentHost/DesktopConnection.cs:7、AgentContract.cs:28 |
-| 桌面侧授权与人工撤销 | src/SurgeLink.App/Services/AgentWorkspaceService.cs:76-128 |
+| 桌面侧授权与人工暂停/恢复 | src/SurgeLink.App/Services/AgentWorkspaceService.cs:77-150 |
 | 文件策略钩子（恒真待改） | src/SurgeLink.App/Services/AgentWorkspaceService.cs:18 |
-| 面板授权 UI | src/SurgeLink.App/Shell/AgentPanel.cs:112-129 |
+| 面板授权 UI | src/SurgeLink.App/Shell/AgentPanel.cs:106-143 |

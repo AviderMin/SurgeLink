@@ -140,7 +140,7 @@ public interface IRemoteCommandExecutor
 ### 4. `ITerminalObservation` + `IControlledTerminalInput`
 
 - `ITerminalObservation`：在 `Emulator.SyncRoot` 下复制当前屏幕；另外建立有界输出环形缓冲区，带序号和游标。首期只开放 `source=screen`，不要假装屏幕快照能证明命令完成。
-- `IControlledTerminalInput`：返回可等待的写入结果，维护 `InputRevision`；用户一旦手动输入，立即撤销 Agent 的输入租约；alternate screen、鼠标模式、密码提示等场景默认拒绝。
+- `IControlledTerminalInput`：返回可等待的写入结果，维护 `InputRevision`；用户一旦手动输入，立即暂停 Agent 的输入并在后续调用返回 `user_operating`，显式 Stop 才撤销租约；alternate screen、鼠标模式、密码提示等场景默认拒绝。
 
 ### 5. `IFileMutation` / 写入协调器
 

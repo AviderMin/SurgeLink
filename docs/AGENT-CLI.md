@@ -8,7 +8,8 @@ above the workspace without resizing or remounting the terminal. The overlay hos
 Tabs with terminal control enabled show a small robot after the session title,
 before the native close button. Hovering identifies the session as controlled by
 Agent; the accessible tab name includes that status. Read-only sessions show no
-control indicator. Revocation, human takeover or disconnection removes it.
+control indicator. Explicit Stop, disconnection or a mode change removes it; typing in a
+controlled terminal pauses the Agent but keeps the indicator.
 
 ## Desktop access
 
@@ -20,7 +21,8 @@ control indicator. Revocation, human takeover or disconnection removes it.
 4. Choose **Allow reading** or **Control terminal** for the desired connection.
    Ask the Agent to use SurgeLink for your task. The panel shows MCP client presence
    separately from session access; connecting a client never grants a session.
-5. Use the panel's per-session Stop or Stop all actions to revoke access.
+5. Use the panel's per-session Stop or Stop all actions to revoke access. Typing in a
+   controlled terminal only pauses the Agent; use **Resume Agent** to continue.
 
 Reading exposes host facts, the visible screen, retained incremental terminal
 output, metrics, directory listings and text files. Control additionally exposes
@@ -42,15 +44,32 @@ supplies the policy that permits reads for a connection after the user enables
 Allow reading or Control terminal; revocation invalidates its handle. An injected
 host policy is evaluated for every file operation and need not display a dialog.
 
-Human typing or sending a terminal key revokes that terminal's
-Agent handle before queuing the human input. Writes are serialized, and an Agent
-paste plus optional Enter is one transport write. Stop prevents further Agent
-input; it does not terminate an already running remote command. The user can
-send Ctrl+C deliberately in the terminal.
+Human typing or sending a terminal key pauses that terminal's Agent operations
+before queuing the human input. The control grant and its handle remain valid,
+but every session-level operation on that handle returns `user_operating` until
+the user resumes Agent control in the panel. The Agent must then stop all
+operations, must not retry or re-acquire the session, and waits for the user.
+Writes are serialized, and an Agent paste plus optional Enter is one transport
+write. Only explicit **Stop** prevents further Agent input; it does not terminate
+an already running remote command. The user can send Ctrl+C deliberately in the
+terminal.
 
-Pasting reads the clipboard asynchronously. Revocation happens when the clipboard
+Pasting reads the clipboard asynchronously. The pause happens when the clipboard
 read completes and the resulting input is queued; an Agent write may finish while
 that read is pending. Use Stop first when clipboard access must not overlap Agent input.
+
+### Pause, resume and Stop
+
+Typing in a controlled terminal is a soft pause, not a revocation. The desktop
+sets `userOperating=true` for that session in `sessions.list`, returns
+`user_operating` for every other operation on the handle, and keeps the control
+grant. When the user finishes at the keyboard, **Resume Agent** in the session
+card clears the pause without issuing a new handle or new check token; the same
+handle resumes working. In the panel, the paused session's **Control terminal**
+button is shown as **Resume Agent** for this action. **Stop** (per session) and
+**Stop all** remain hard revocations: they invalidate handles and drain in-flight
+operations. Closing the session, replacing its terminal or dropping the connection
+also revokes.
 
 ## Mandatory Check Sessions before terminal input
 
@@ -74,7 +93,7 @@ and return the stored acknowledgement, even after its token expires.
 Screen checks are repeated after tab activation and under the desktop screen lock
 when reserving input. A remote PTY can still change after that reservation; checks
 do not prove remote command semantics. A write with an uncertain outcome blocks new
-input on that handle until the human inspects the terminal and renews desktop control.
+input on that handle until the human inspects the terminal and resumes Agent control.
 
 This enforces the check step, not an Agent's understanding of the target. It does
 not establish shell readiness or command completion, nor replace the external
@@ -314,7 +333,9 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   16,384 units; submit defaults to false.
 - Every human or Agent input changes inputRevision. A stale revision returns
   session_check_required when it invalidates a check, or input_conflict if it races
-  with the final PTY write. Human input also revokes the desktop control grant.
+  with the final PTY write. Human input also pauses the desktop control grant:
+  subsequent operations return user_operating until the user resumes Agent control.
+  Only explicit Stop revokes the grant.
 - Operation IDs are 1–128 ASCII letters/digits/dots/dashes/underscores. Exact retries
   under the same shared handle replay the acknowledgement; different arguments
   with the same ID return operation_conflict. The gateway retains at most 1,024
@@ -336,7 +357,7 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   full listing before this result bound. Paths and symlinks use server semantics,
   without a separate path sandbox.
 
-Error codes additionally include session_check_required, session_context_unavailable,
+Error codes additionally include user_operating, session_check_required, session_context_unavailable,
 control_required, invalid_arguments, input_conflict,
 operation_conflict, operation_limit, input_outcome_unknown, terminal_unavailable and
 invalid_cursor, desktop_not_running, desktop_ambiguous, desktop_ipc_unavailable,
@@ -382,7 +403,7 @@ python tools/check-repository.py
 ```
 
 Coverage includes actual CLI and SDK stdio-host processes, permission scopes,
-operation replay/conflicts, ambiguous writes, ordered PTY input, manual takeover,
+operation replay/conflicts, ambiguous writes, ordered PTY input, human pause and resume,
 desktop tab selection, concurrent IPC during slow reads, presence during slow
 requests, input/selection ordering, explicit multi-desktop recovery and PID-reuse
 identity checks, streaming Unicode/output gaps and unchanged protocol tests.

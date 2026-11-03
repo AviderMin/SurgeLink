@@ -9,6 +9,21 @@ namespace SurgeLink.Core.Tests;
 public sealed class TerminalAutomationTests
 {
     [Theory]
+    [InlineData(32766, true)]
+    [InlineData(32767, false)]
+    [InlineData(32768, false)]
+    public async Task ScreenLimitPreservesWholeSurrogatePairs(int prefixLength, bool includesEmoji)
+    {
+        var remote = new AutomationRemote();
+        await using var bridge = new TerminalBridge(remote, new AutomationDispatcher(), NullLogger.Instance, columns: 40000, rows: 1);
+        remote.Emit(new string('a', prefixLength) + "😀tail");
+        var screen = bridge.ReadScreen();
+        Assert.True(screen.Truncated);
+        Assert.Equal(new string('a', Math.Min(prefixLength, 32768)) + (includesEmoji ? "😀" : ""), screen.Text);
+        Assert.Equal(screen.Text, new UTF8Encoding(false, true).GetString(new UTF8Encoding(false, true).GetBytes(screen.Text)));
+    }
+
+    [Theory]
     [InlineData("different prompt")]
     [InlineData("\u001b[?1049h")]
     public async Task CheckedInputRejectsRemoteScreenChangesWithoutAnInputRevisionChange(string output)

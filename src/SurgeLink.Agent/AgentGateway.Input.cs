@@ -56,6 +56,7 @@ public sealed partial class AgentGateway
             response = AgentResponse.Ok(new { operationId, receipt.InputRevision, receipt.OutputCursor, receipt.AcceptedBytes,
                 receipt.Submitted, status = "input_sent", commandCompletionKnown = false });
         }
+        catch (AgentOperationPausedException) { response = HumanOperatingError(); }
         catch (TerminalInputConflictException) { response = AgentResponse.Error("input_conflict", "Input changed. Read the terminal again before a new operation."); }
         catch (TerminalInputUnknownException) { response = AgentResponse.Error("input_outcome_unknown", "The PTY write may be partial. Observe the terminal; do not automatically resend with a new operation ID."); }
         catch (OperationCanceledException) { response = AgentResponse.Error("cancelled", "Input was cancelled before writing."); }

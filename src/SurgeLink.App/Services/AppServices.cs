@@ -150,7 +150,12 @@ public sealed class AppServices : IAsyncDisposable
             hostKeys,
             hostKeyPrompt: (challenge, ct) => interaction!.RequestHostKeyTrustAsync(challenge, ct),
             interactivePrompt: (prompt, ct) => interaction!.RequestSecretAsync(
-                new SecretRequest("Authentication", prompt.Question, prompt.IsSecret), ct));
+                new SecretRequest("Authentication", prompt.Question, prompt.IsSecret), ct),
+            webAuthenticationPrompt: (challenge, ct) => interaction!.RequestConfirmationAsync(
+                new ConfirmationRequest(
+                    Str.T("shell.auth.webTitle", "Tailscale SSH authentication"),
+                    Str.F("shell.auth.webMessage", "Open the link to authenticate {0} in your browser, then continue. Cancel stops this connection; reconnect to request authentication again.", challenge.Endpoint),
+                    Str.T("shell.dialog.secret.continue", "Continue"), Str.T("common.cancel", "Cancel"), challenge.Uri), ct));
 
         interaction = new InteractionService(dispatcher);
         var settings = new AppSettingsStore(Path.Combine(AppPaths.Root, "settings.json"));

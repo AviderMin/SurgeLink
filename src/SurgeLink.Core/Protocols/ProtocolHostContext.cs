@@ -13,12 +13,14 @@ public sealed class ProtocolHostContext
         ILoggerFactory loggerFactory,
         Security.IHostKeyStore hostKeyStore,
         Func<HostKeyChallenge, CancellationToken, Task<HostKeyDecision>>? hostKeyPrompt = null,
-        Func<InteractivePrompt, CancellationToken, Task<string?>>? interactivePrompt = null)
+        Func<InteractivePrompt, CancellationToken, Task<string?>>? interactivePrompt = null,
+        Func<WebAuthenticationChallenge, CancellationToken, Task<bool>>? webAuthenticationPrompt = null)
     {
         LoggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         HostKeyStore = hostKeyStore ?? throw new ArgumentNullException(nameof(hostKeyStore));
         HostKeyPrompt = hostKeyPrompt;
         InteractivePrompt = interactivePrompt;
+        WebAuthenticationPrompt = webAuthenticationPrompt;
     }
 
     /// <summary>Logger factory scoped to the protocol implementation.</summary>
@@ -32,6 +34,9 @@ public sealed class ProtocolHostContext
 
     /// <summary>Asks the user for a keyboard-interactive answer (OTP, 2FA).</summary>
     public Func<InteractivePrompt, CancellationToken, Task<string?>>? InteractivePrompt { get; }
+
+    /// <summary>Shows a browser authentication link; false cancels this connection attempt.</summary>
+    public Func<WebAuthenticationChallenge, CancellationToken, Task<bool>>? WebAuthenticationPrompt { get; }
 
     /// <summary>Creates a logger for a protocol component.</summary>
     public ILogger<T> CreateLogger<T>() => LoggerFactory.CreateLogger<T>();
@@ -64,3 +69,6 @@ public sealed record HostKeyDecision(bool Trusted, bool Remember)
 
 /// <summary>A keyboard-interactive prompt raised during authentication.</summary>
 public sealed record InteractivePrompt(string Instruction, string Question, bool IsSecret, int Index, int Total);
+
+/// <summary>A server-requested browser check scoped to one connection attempt.</summary>
+public sealed record WebAuthenticationChallenge(string Endpoint, Uri Uri);

@@ -56,7 +56,7 @@ public sealed class PendingInteraction
 public sealed record SecretRequest(string Title, string Description, bool IsPassword = true);
 
 /// <summary>Yes/no request.</summary>
-public sealed record ConfirmationRequest(string Title, string Message, string PrimaryText = "Continue", string CloseText = "Cancel");
+public sealed record ConfirmationRequest(string Title, string Message, string PrimaryText = "Continue", string CloseText = "Cancel", Uri? WebUri = null);
 
 /// <summary>Free text request.</summary>
 public sealed record TextRequest(string Title, string Label, string? InitialValue = null);

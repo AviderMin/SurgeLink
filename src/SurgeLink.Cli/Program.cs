@@ -22,7 +22,9 @@ if (args is ["--help"] or ["-h"] or [])
         surgelink-cli files read --session HANDLE --path REMOTE_PATH [--instance PID] [--json]
 
         Open the robot button left of the four title-bar buttons, then allow reading or terminal control.
-        Terminal input uses the visible PTY. Human typing takes over and revokes access.
+        Terminal input uses the visible PTY. Human typing pauses the Agent and returns user_operating:
+        stop all operations, do not retry or re-acquire the session, and wait for the user to resume control.
+        Stop in the desktop panel revokes access.
         Before EACH new input, run sessions check. Verify server, session ID, login user and current screen.
         Pass its single-use checkToken and screen.inputRevision; checks expire after 2 minutes.
         The login user does not prove the effective shell user after su/nested SSH. Reuse exact arguments for retries.

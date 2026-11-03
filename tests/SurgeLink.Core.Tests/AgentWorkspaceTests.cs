@@ -11,6 +11,65 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class AgentWorkspaceTests
 {
+    [Theory]
+    [InlineData("sessions.activate")]
+    [InlineData("terminal.text")]
+    [InlineData("terminal.key")]
+    public async Task HumanPauseBlocksActivationAlreadyQueuedOnTheUi(string method)
+    {
+        using var temp = new TempDirectory();
+        var remote = new AutomationRemote();
+        var catalog = new ProtocolCatalog();
+        catalog.Register(new FakeProtocolPlugin { SessionFactory = _ => new FakeProtocolSession(new("fake", "Fake", 0, SessionCapabilities.Terminal)) { Terminal = remote } });
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
+            new AutomationDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var tab = await workspace.OpenAsync(SessionProfile.New("fake", "host.test", 22, "alice"), null, default);
+        var dispatcher = new DeferredDispatcher();
+        var pipeName = $"SurgeLink.Tests.{Guid.NewGuid():N}";
+        await using var service = new AgentWorkspaceService(workspace, dispatcher, NullLogger.Instance, pipeName);
+        await service.SetAccessAsync(tab, AgentAccessMode.Control);
+        var client = new AgentClient(pipeName);
+        var listed = await client.SendAsync(new("sessions.list"));
+        var handle = Assert.Single(listed.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
+        workspace.SetView(tab.Id, SessionViewKind.Files);
+        var check = await client.SendAsync(new("sessions.check", handle));
+        dispatcher.Defer = true;
+        var pending = client.SendAsync(new(method, handle, View: "terminal", Text: "agent", Key: "Enter",
+            ExpectedInputRevision: 0, OperationId: "deferred",
+            CheckToken: check.Data!.Value.GetProperty("checkToken").GetString()));
+        try
+        {
+            await dispatcher.Posted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            tab.Terminal!.SendText("human");
+            dispatcher.RunNext();
+            Assert.Equal("user_operating", (await pending.WaitAsync(TimeSpan.FromSeconds(5))).ErrorCode);
+            Assert.Equal(SessionViewKind.Files, tab.View);
+            Assert.Equal(new[] { "human" }, remote.Writes);
+            Assert.Equal(AgentAccessMode.Control, service.GetMode(tab.Id));
+        }
+        finally { dispatcher.Defer = false; dispatcher.Drain(); }
+        await workspace.CloseAsync(tab.Id);
+    }
+
+    private sealed class DeferredDispatcher : IUiDispatcher
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<Action> _queue = new();
+        public bool Defer { get; set; }
+        public bool IsOnUiThread => true;
+        public TaskCompletionSource Posted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Post(Action action)
+        {
+            if (!Defer) { action(); return; }
+            _queue.Enqueue(action);
+            Posted.TrySetResult();
+        }
+        public void RunNext() { Assert.True(_queue.TryDequeue(out var action)); action(); }
+        public void Drain() { while (_queue.TryDequeue(out var action)) action(); }
+    }
+
     [Fact]
     public async Task DesktopCanBeDiscoveredBeforeSharingAndPresenceDoesNotGrantAccess()
     {
@@ -107,7 +166,7 @@ public sealed class AgentWorkspaceTests
     }
 
     [Fact]
-    public async Task ControlUsesExistingVisibleTerminalAndHumanTypingRevokesHandle()
+    public async Task ControlUsesExistingVisibleTerminalAndHumanTypingPausesHandle()
     {
         using var temp = new TempDirectory();
         var remote = new AutomationRemote();
@@ -142,11 +201,24 @@ public sealed class AgentWorkspaceTests
         Assert.Contains("hello", (await client.SendAsync(new("terminal.screen", handle))).Data!.Value.GetProperty("text").GetString());
         Assert.Equal(controlAccessRevision, service.AccessRevision);
         tab.Terminal!.SendText("human");
-        Assert.Equal(AgentAccessMode.None, service.GetMode(tab.Id));
+        Assert.Equal(AgentAccessMode.Control, service.GetMode(tab.Id));
+        Assert.True(service.IsShared(tab.Id));
+        Assert.True(service.IsHumanOperating(tab.Id));
         Assert.True(service.AccessRevision > controlAccessRevision);
-        Assert.Equal("session_unavailable", (await client.SendAsync(new("terminal.key", handle, Key: "Enter", ExpectedInputRevision: 2, OperationId: "old-control"))).ErrorCode);
-        Assert.Contains(service.Activity, a => a.Outcome == "human_input");
+        Assert.Equal("user_operating", (await client.SendAsync(new("terminal.key", handle, Key: "Enter", ExpectedInputRevision: 2, OperationId: "old-control"))).ErrorCode);
+        Assert.Equal("user_operating", (await client.SendAsync(new("sessions.check", handle))).ErrorCode);
+        Assert.Contains(service.Activity, a => a.Operation == "access" && a.Outcome == "human_input");
         Assert.Equal(new[] { "echo hello\r", "human" }, remote.Writes);
+
+        var pausedAccessRevision = service.AccessRevision;
+        await service.SetAccessAsync(tab, AgentAccessMode.Control);
+        Assert.False(service.IsHumanOperating(tab.Id));
+        Assert.Equal(AgentAccessMode.Control, service.GetMode(tab.Id));
+        Assert.True(service.AccessRevision > pausedAccessRevision);
+        Assert.Contains(service.Activity, a => a.Operation == "access" && a.Outcome == "human_resumed");
+        var resumed = await client.SendAsync(new("sessions.check", handle));
+        Assert.True(resumed.Success);
+        Assert.Equal(handle, resumed.Data!.Value.GetProperty("session").GetProperty("handle").GetString());
         await workspace.CloseAsync(tab.Id);
     }
 }

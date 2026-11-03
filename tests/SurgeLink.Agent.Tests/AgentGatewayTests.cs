@@ -105,6 +105,112 @@ public sealed class AgentGatewayTests
     }
 
     [Theory]
+    [InlineData("sessions.info")]
+    [InlineData("sessions.check")]
+    [InlineData("sessions.activate")]
+    [InlineData("terminal.screen")]
+    [InlineData("terminal.output")]
+    [InlineData("terminal.text")]
+    [InlineData("terminal.key")]
+    [InlineData("monitor.snapshot")]
+    [InlineData("files.list")]
+    [InlineData("files.read")]
+    public async Task HumanPauseRejectsEverySessionOperationWithoutIo(string method)
+    {
+        var files = new CountingFiles();
+        var terminal = new CountingTerminal();
+        var gateway = new AgentGateway((_, _) => throw new InvalidOperationException("No file policy expected."));
+        var session = new TestSession { FileSystem = files };
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal,
+            allowControl: true, target: new AgentSessionTarget(session.SessionId, "server.test", 22, "alice"));
+        Assert.True(gateway.SuspendForHuman("tab"));
+
+        var response = await gateway.ExecuteAsync(
+            new(method, handle, "/config", Text: "typed", OperationId: "paused", ExpectedInputRevision: 0), default);
+
+        Assert.Equal("user_operating", response.ErrorCode);
+        Assert.Contains("do not retry or re-acquire", response.Message);
+        Assert.Equal(0, terminal.Calls);
+        Assert.Equal(0, files.ReadCount);
+        Assert.True(gateway.IsShared("tab"));
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Fact]
+    public async Task HumanPauseKeepsGrantVisibleAndFlaggedInSessionsList()
+    {
+        var gateway = new AgentGateway();
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession(), () => "screen");
+        Assert.True(gateway.SuspendForHuman("tab"));
+        Assert.True(gateway.IsHumanOperating("tab"));
+        Assert.True(gateway.IsShared("tab"));
+
+        var entry = Assert.Single((await gateway.ExecuteAsync(new("sessions.list"), default)).Data!.Value.EnumerateArray());
+        Assert.Equal(handle, entry.GetProperty("handle").GetString());
+        Assert.True(entry.GetProperty("userOperating").GetBoolean());
+
+        Assert.True(gateway.ResumeFromHuman("tab"));
+        entry = Assert.Single((await gateway.ExecuteAsync(new("sessions.list"), default)).Data!.Value.EnumerateArray());
+        Assert.False(entry.GetProperty("userOperating").GetBoolean());
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Fact]
+    public async Task ResumeFromHumanRestoresTheSameHandleWithoutReacquiringTheGrant()
+    {
+        var session = new TestSession();
+        var terminal = new CountingTerminal();
+        var gateway = new AgentGateway();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, allowControl: true,
+            target: new AgentSessionTarget(session.SessionId, "server.test", 22, "alice"));
+        Assert.True(gateway.SuspendForHuman("tab"));
+        Assert.Equal("user_operating", (await gateway.ExecuteAsync(new("sessions.check", handle), default)).ErrorCode);
+
+        Assert.True(gateway.ResumeFromHuman("tab"));
+        var check = await gateway.ExecuteAsync(new("sessions.check", handle), default);
+        Assert.True(check.Success);
+        Assert.Equal(handle, check.Data!.Value.GetProperty("session").GetProperty("handle").GetString());
+        Assert.False(gateway.IsHumanOperating("tab"));
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Fact]
+    public async Task SuspendAndResumeOnlyReportActualStateChanges()
+    {
+        var gateway = new AgentGateway();
+        Assert.False(gateway.SuspendForHuman("missing"));
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession(), null);
+        Assert.True(gateway.SuspendForHuman("tab"));
+        Assert.False(gateway.SuspendForHuman("tab"));
+        Assert.True(gateway.IsHumanOperating("tab"));
+        Assert.True(gateway.ResumeFromHuman("tab"));
+        Assert.False(gateway.ResumeFromHuman("tab"));
+        Assert.False(gateway.IsHumanOperating("tab"));
+        Assert.True((await gateway.ExecuteAsync(new("sessions.info", handle), default)).Success);
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Fact]
+    public async Task HumanPauseWhileOperationIsQueuedRejectsQueuedWorkBeforeIo()
+    {
+        var monitor = new BlockingMonitor();
+        var files = new CountingFiles();
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files, Monitor = monitor }, null);
+        var running = gateway.ExecuteAsync(new("monitor.snapshot", handle), default);
+        await monitor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var queued = gateway.ExecuteAsync(new("files.read", handle, "/config"), default);
+        Assert.True(gateway.SuspendForHuman("tab"));
+        monitor.Finish.SetResult(new SystemSnapshot());
+
+        Assert.True((await running.WaitAsync(TimeSpan.FromSeconds(5))).Success);
+        Assert.Equal("user_operating", (await queued.WaitAsync(TimeSpan.FromSeconds(5))).ErrorCode);
+        Assert.Equal(0, files.ReadCount);
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Theory]
     [InlineData("files.list")]
     [InlineData("files.read")]
     public async Task DenialPerformsNoFileIo(string method)
@@ -309,6 +415,18 @@ public sealed class AgentGatewayTests
         public Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task SetPermissionsAsync(string path, int mode, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class CountingTerminal : ITerminalAutomation
+    {
+        public int Calls { get; private set; }
+        public TerminalScreenSnapshot Screen { get; } = new("", 120, 32, 0, 0, true, false, false, false, 0, 0, false, false);
+        public TerminalScreenSnapshot ReadScreen() { Calls++; return Screen; }
+        public TerminalOutputPage ReadOutput(long? cursor) { Calls++; return new("", 0, 0, 0, false, false); }
+        public Task<TerminalInputReceipt> SendTextAsync(string text, bool submit, long expectedRevision, CancellationToken ct)
+        { Calls++; return Task.FromResult(new TerminalInputReceipt(expectedRevision + 1, 0, 1, submit)); }
+        public Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct)
+        { Calls++; return Task.FromResult(new TerminalInputReceipt(expectedRevision + 1, 0, 1, true)); }
     }
 
     private sealed class BlockingMonitor : IRemoteSystemMonitor

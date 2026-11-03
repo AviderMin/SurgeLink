@@ -22,9 +22,11 @@ public sealed partial class TerminalBridge
             var text = Emulator.GetVisibleText();
             var cursor = Emulator.Cursor;
             var modes = Emulator.Modes;
-            return new(text[..Math.Min(text.Length, 32768)], Emulator.Columns, Emulator.Rows,
+            var count = Math.Min(text.Length, 32768);
+            if (count > 0 && char.IsHighSurrogate(text[count - 1])) count--;
+            return new(text[..count], Emulator.Columns, Emulator.Rows,
                 cursor.Row, cursor.Column, cursor.Visible, modes.AlternateScreen, modes.BracketedPaste,
-                modes.MouseTracking, Interlocked.Read(ref _inputRevision), _output.Cursor, IsClosed, text.Length > 32768, Emulator.ViewportOffset);
+                modes.MouseTracking, Interlocked.Read(ref _inputRevision), _output.Cursor, IsClosed, count < text.Length, Emulator.ViewportOffset);
         }
     }
 

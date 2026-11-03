@@ -233,9 +233,14 @@ internal sealed class DialogHost : Component
         PendingInteraction pending,
         InteractionService interaction)
     {
+        Element message = TextBlock(request.Message).Private(request.Message).TextWrapping(TextWrapping.Wrap);
+        if (request.WebUri is { } uri)
+            message = VStack(AppTheme.SpacingM, message,
+                new HyperlinkButtonElement(Str.T("shell.auth.openBrowser", "Open authentication page"), uri, null),
+                TextBlock(uri.AbsoluteUri).Private(uri.AbsoluteUri).TextWrapping(TextWrapping.Wrap).IsTextSelectionEnabled(true));
         var dialog = ContentDialog(
                 PrivacyDisplay.Mask(request.Title),
-                TextBlock(request.Message).Private(request.Message).TextWrapping(TextWrapping.Wrap),
+                message,
                 primaryButtonText: request.PrimaryText) with
         {
             IsOpen = true,

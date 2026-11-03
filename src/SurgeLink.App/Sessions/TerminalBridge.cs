@@ -56,7 +56,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     /// <summary>Raised on the UI thread when the remote shell exits.</summary>
     public event EventHandler? Closed;
 
-    /// <summary>Raised before a human input is queued, so external control can be revoked immediately.</summary>
+    /// <summary>Raised before a human input is queued, so external control can be paused immediately.</summary>
     public event EventHandler? UserInput;
 
     /// <summary>True once the remote side closed the channel.</summary>
