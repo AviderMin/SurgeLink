@@ -4,6 +4,7 @@ using Xunit.Abstractions;
 
 namespace SurgeLink.Terminal.Tests;
 
+[Collection(TerminalPerformanceGroup.Name)]
 public sealed class PerformanceTests
 {
     private readonly ITestOutputHelper _output;
