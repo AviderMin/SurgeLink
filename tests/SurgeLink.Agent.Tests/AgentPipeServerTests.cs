@@ -59,7 +59,14 @@ public sealed class AgentPipeServerTests
                 held.Add(pipe);
             }
 
-            var whileHeld = await new AgentClient(name).SendAsync(new("sessions.list"), timeout.Token);
+            // At full saturation, wait for an idle server instance to expire.
+            // This tests eventual listener recovery, not AgentClient's 3-second
+            // discovery deadline, which can race timer scheduling on a busy runner.
+            await using var probe = new System.IO.Pipes.NamedPipeClientStream(".", name,
+                System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+            await probe.ConnectAsync(timeout.Token);
+            await AgentWire.WriteAsync(probe, new AgentRequest("sessions.list"), timeout.Token);
+            var whileHeld = await AgentWire.ReadAsync<AgentResponse>(probe, timeout.Token);
             Assert.True(whileHeld.Success);
 
             foreach (var pipe in held) { await pipe.DisposeAsync(); }
