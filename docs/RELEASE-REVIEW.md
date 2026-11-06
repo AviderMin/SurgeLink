@@ -1,6 +1,6 @@
 # 开源及 Microsoft Store 发布审查
 
-本文为 2026-10-22 的历史审查记录，包含当时的系统要求、测试数和待办；当前要求及发布流程以 README.md、VERIFICATION.md 和 packaging/README.md 为准。
+本文为 2026-10-22 的历史审查记录，包含当时的系统要求、测试数和待办；当前要求及发布流程以 README-FULL.md、VERIFICATION.md 和 packaging/README.md 为准。
 
 许可证更新：2026-10-23 项目已改用 MIT License，详见根目录 LICENSE；下文 GPL 相关内容仅记录审查当时的情况。
 
