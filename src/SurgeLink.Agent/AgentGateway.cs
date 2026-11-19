@@ -307,7 +307,7 @@ public sealed partial class AgentGateway
                 cursor = page.Cursor;
                 hasMore = page.HasMore;
                 sinceOutput.Restart();
-                if (expectText is not null && text.ToString().Contains(expectText, StringComparison.Ordinal)) break;
+                if (expectText is not null && ContainsMarkerValue(text.ToString(), expectText)) break;
                 if (text.Length > 512 * 1024) { capped = true; break; }
                 if (page.HasMore) continue;
             }
@@ -319,6 +319,8 @@ public sealed partial class AgentGateway
         var timedOut = total.ElapsedMilliseconds >= timeoutMilliseconds
             && (text.Length == 0 || sinceOutput.ElapsedMilliseconds < idleMilliseconds);
         var rawText = text.ToString();
+        // Echo removal needs plain text: PTY mode switches often precede the echo.
+        if (request.StripAnsi) rawText = AgentText.StripAnsi(rawText);
         if (grant.LastInputText is { } echoText) rawText = AgentText.StripLeadingEcho(rawText, echoText);
         var trimmed = AgentText.Trim(rawText, request.StripAnsi, request.MaxBytes ?? 65536, request.MaxLines);
         var screen = grant.Terminal.ReadScreen();
@@ -342,6 +344,21 @@ public sealed partial class AgentGateway
                 Truncated = screen.Truncated || screenTail.DroppedCharacters > 0,
             },
         });
+    }
+
+    private static bool ContainsMarkerValue(string text, string marker)
+    {
+        var index = 0;
+        while ((index = text.IndexOf(marker, index, StringComparison.Ordinal)) >= 0)
+        {
+            var valueStart = index + marker.Length;
+            if (valueStart < text.Length
+                && (char.IsDigit(text[valueStart])
+                    || text[valueStart] == '-' && valueStart + 1 < text.Length && char.IsDigit(text[valueStart + 1])))
+                return true;
+            index = valueStart;
+        }
+        return false;
     }
 
     private async Task<AgentResponse> ExecuteFileAsync(Grant grant, AgentRequest request, CancellationToken ct)

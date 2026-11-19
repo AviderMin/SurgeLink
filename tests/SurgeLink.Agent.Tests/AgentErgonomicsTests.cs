@@ -152,7 +152,7 @@ public sealed class AgentErgonomicsTests
         var checkData = check.Data!.Value;
 
         var response = await gateway.ExecuteAsync(new("terminal.exec", handle,
-            Text: "echo hi", OperationId: "exec-1",
+            Text: "echo hi", OperationId: "exec-1", StripAnsi: true,
             ExpectedInputRevision: checkData.GetProperty("screen").GetProperty("inputRevision").GetInt64(),
             CheckToken: checkData.GetProperty("checkToken").GetString()), default);
 
@@ -160,7 +160,9 @@ public sealed class AgentErgonomicsTests
         var data = response.Data!.Value;
         Assert.True(data.GetProperty("commandCompletionKnown").GetBoolean());
         Assert.Equal(0, data.GetProperty("exitCode").GetInt32());
-        Assert.DoesNotContain("__SURGELINK_EXIT_", data.GetProperty("output").GetProperty("text").GetString());
+        var outputText = data.GetProperty("output").GetProperty("text").GetString()!;
+        Assert.DoesNotContain("__SURGELINK_EXIT_", outputText);
+        Assert.DoesNotContain("echo hi", outputText);
         Assert.Equal(1, terminal.Writes);
     }
 
@@ -217,7 +219,7 @@ public sealed class AgentErgonomicsTests
             Writes++;
             _revision++;
             _screen = "hi\n";
-            _output = "echo hi\r\nhi\r\n__SURGELINK_EXIT_exec-1__:0\r\n";
+            _output = "\u001b[?2004l\recho hi\r\n__surge_status=$?; printf '\n__SURGELINK_EXIT_exec-1__:%d\n' \"$__surge_status\"\r\nhi\r\n__SURGELINK_EXIT_exec-1__:0\r\n";
             return Task.FromResult(new TerminalInputReceipt(_revision, 0, text.Length, submit));
         }
         public Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct) =>

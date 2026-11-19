@@ -55,8 +55,8 @@ public sealed partial class AgentGateway
             {
                 grant.LastInputText = request.Text;
                 var marker = ExecMarker(operationId);
-                var wait = await WaitOutputAsync(grant, request with { Cursor = receipt.OutputCursor }, ct, marker).ConfigureAwait(false);
-                response = BuildExecResponse(operationId, receipt, wait, marker);
+                var wait = await WaitOutputAsync(grant, request with { Cursor = receipt.OutputCursor }, ct, marker + ":").ConfigureAwait(false);
+                response = BuildExecResponse(operationId, receipt, wait, marker, request.Text);
             }
             else
             {
@@ -83,7 +83,18 @@ public sealed partial class AgentGateway
     private static string BuildExecText(string command, string operationId) =>
         command + "\n__surge_status=$?; printf '\\n" + ExecMarker(operationId) + ":%d\\n' \"$__surge_status\"";
 
-    private static AgentResponse BuildExecResponse(string operationId, TerminalInputReceipt receipt, AgentResponse wait, string marker)
+    private static string CleanExecOutput(string text, string marker, string? echoText)
+    {
+        var command = echoText?.Trim();
+        return string.Join('\n', text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n')
+                .Where(line => !line.Contains("__surge_status=$?; printf", StringComparison.Ordinal)
+                               && !line.Contains(marker, StringComparison.Ordinal)
+                               && (string.IsNullOrEmpty(command)
+                                   || !string.Equals(line.Trim(), command, StringComparison.Ordinal))))
+            .Trim();
+    }
+
+    private static AgentResponse BuildExecResponse(string operationId, TerminalInputReceipt receipt, AgentResponse wait, string marker, string? echoText)
     {
         if (!wait.Success)
         {
@@ -99,7 +110,9 @@ public sealed partial class AgentGateway
         var text = data.GetProperty("text").GetString() ?? string.Empty;
         var prefix = marker + ":";
         int? exitCode = null;
-        var index = text.IndexOf(prefix, StringComparison.Ordinal);
+        // The shell echoes the sentinel command itself, including the "%d"
+        // placeholder. The real completion marker is the last one.
+        var index = text.LastIndexOf(prefix, StringComparison.Ordinal);
         if (index >= 0)
         {
             var end = text.IndexOf('\n', index);
@@ -110,6 +123,7 @@ public sealed partial class AgentGateway
                 exitCode = parsed;
             text = text.Remove(index, end - index).TrimEnd();
         }
+        text = CleanExecOutput(text, marker, echoText);
 
         return AgentResponse.Ok(new
         {

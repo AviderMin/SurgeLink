@@ -28,7 +28,7 @@ internal static partial class AgentText
         for (var repeat = 0; repeat < 3; repeat++)
         {
             var index = result.IndexOf(echoText, StringComparison.Ordinal);
-            if (index < 0 || index > 4) break;
+            if (index < 0 || index > 64) break;
             result = result.Remove(index, echoText.Length);
             removed = true;
         }
@@ -38,6 +38,10 @@ internal static partial class AgentText
     public static TrimmedText Trim(string text, bool stripAnsi, int? maxBytes, int? maxLines)
     {
         var originalChars = text.Length;
+        // Screens and PTY pages often end with padding newlines. Counting those
+        // as lines would drop the actual prompt from a compact tail.
+        var withoutTrailingNewlines = text.TrimEnd('\n');
+        if (withoutTrailingNewlines.Length > 0) text = withoutTrailingNewlines;
         var start = 0;
 
         if (maxLines is int lineLimit && lineLimit > 0)

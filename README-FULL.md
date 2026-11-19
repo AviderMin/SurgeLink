@@ -8,13 +8,28 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.3**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.6**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.6** 清理 `terminal exec` 的首行命令回显：
+
+- 回显过滤现在按命令文本移除首行，不再依赖回显出现的精确字符位置；兼容 ANSI/模式切换前缀。
+- `terminal exec` 输出只保留实际命令结果和 screen tail。
+
+**1.0.3.5** 修正 `terminal exec` 回显清理：
+
+- `--strip-ansi` 在移除命令回显前先剥离终端模式切换转义，避免 ANSI 前缀导致首行回显残留。
+- `terminal exec` 的输出现在应只保留实际命令结果、screen tail 和退出码。
+
+**1.0.3.4** 修复 `terminal exec` 哨兵解析与紧凑检查尾部空行：
+
+- `terminal exec` 现在忽略命令回显中的 `%d` 占位符，取最后一个真实退出码标记，并清理哨兵命令行；`exitCode` 能正确返回。
+- `--minimal` / `--brief` 和 `--tail-rows` 会先去掉屏幕尾部空行再取尾部，避免只返回空行而看不到提示符。
 
 **1.0.3.3** 修复 Agent 接入细节：
 
