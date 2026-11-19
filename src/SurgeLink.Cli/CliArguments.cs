@@ -18,6 +18,7 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
             ("terminal", "output") => "terminal.output",
             ("terminal", "wait") => "terminal.wait",
             ("terminal", "send") => "terminal.text",
+            ("terminal", "exec") => "terminal.exec",
             ("terminal", "key") => "terminal.key",
             ("monitor", "snapshot") => "monitor.snapshot",
             ("files", "list") => "files.list",
@@ -34,22 +35,23 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
         var allowed = new HashSet<string>(StringComparer.Ordinal) { "--instance" };
         if (method != "sessions.list") allowed.Add("--session");
         if (method.StartsWith("files.", StringComparison.Ordinal)) allowed.Add("--path");
-        if (method == "sessions.check") allowed.Add("--brief");
+        if (method == "sessions.check") allowed.UnionWith(["--brief", "--minimal"]);
         if (method == "sessions.activate") allowed.Add("--view");
         if (method == "terminal.screen") allowed.UnionWith(["--strip-ansi", "--tail-rows"]);
         if (method == "terminal.output") allowed.UnionWith(["--cursor", "--strip-ansi", "--max-bytes", "--max-lines"]);
         if (method == "terminal.wait") allowed.UnionWith(["--cursor", "--idle-ms", "--timeout-ms", "--strip-ansi", "--max-bytes", "--max-lines"]);
-        if (method == "terminal.text") allowed.UnionWith(["--text-file", "--text-stdin"]);
+        if (method is "terminal.text" or "terminal.exec") allowed.UnionWith(["--text-file", "--text-stdin"]);
+        if (method == "terminal.exec") allowed.UnionWith(["--idle-ms", "--timeout-ms", "--max-bytes", "--max-lines"]);
         if (method is "files.list") allowed.UnionWith(["--offset", "--limit"]);
         if (method is "files.read") allowed.UnionWith(["--offset", "--max-bytes"]);
         if (method is "files.write") allowed.UnionWith(["--text-file", "--text-stdin", "--overwrite"]);
         if (method is "files.delete") allowed.Add("--recursive");
         if (method is "files.rename") allowed.Add("--destination");
         if (method is "files.upload" or "files.download") allowed.Add("--local-path");
-        if (method is "terminal.text" or "terminal.key")
+        if (method is "terminal.text" or "terminal.exec" or "terminal.key")
         {
             allowed.UnionWith(["--revision", "--operation-id", "--check-token"]);
-            allowed.Add(method == "terminal.text" ? "--text" : "--key");
+            allowed.Add(method == "terminal.key" ? "--key" : "--text");
         }
         if (method is "files.write") allowed.Add("--text");
         var options = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -57,14 +59,14 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
         for (var i = 2; i < args.Length; i++)
         {
             var key = args[i];
-            if (key is "--json" or "--submit" or "--brief" or "--strip-ansi" or "--overwrite" or "--recursive" or "--text-stdin")
+            if (key is "--json" or "--submit" or "--brief" or "--minimal" or "--strip-ansi" or "--overwrite" or "--recursive" or "--text-stdin")
             {
                 if (key == "--submit" && method != "terminal.text") throw new ArgumentException("Invalid option: --submit");
-                if (key == "--brief" && method != "sessions.check") throw new ArgumentException("Invalid option: --brief");
-                if (key == "--strip-ansi" && method is not ("terminal.screen" or "terminal.output" or "terminal.wait")) throw new ArgumentException("Invalid option: --strip-ansi");
+                if ((key is "--brief" or "--minimal") && method != "sessions.check") throw new ArgumentException($"Invalid option: {key}");
+                if (key == "--strip-ansi" && method is not ("terminal.screen" or "terminal.output" or "terminal.wait" or "terminal.exec")) throw new ArgumentException("Invalid option: --strip-ansi");
                 if (key == "--overwrite" && method is not ("files.write" or "files.upload" or "files.download")) throw new ArgumentException("Invalid option: --overwrite");
                 if (key == "--recursive" && method != "files.delete") throw new ArgumentException("Invalid option: --recursive");
-                if (key == "--text-stdin" && method is not ("terminal.text" or "files.write")) throw new ArgumentException("Invalid option: --text-stdin");
+                if (key == "--text-stdin" && method is not ("terminal.text" or "terminal.exec" or "files.write")) throw new ArgumentException("Invalid option: --text-stdin");
                 if (!flags.Add(key)) throw new ArgumentException($"Duplicate option: {key}");
                 continue;
             }
@@ -102,12 +104,12 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
         var textFile = Get("--text-file");
         var textFromStdin = flags.Contains("--text-stdin");
         if (textFile is not null && options.ContainsKey("--text")) throw new ArgumentException("--text and --text-file cannot be used together.");
-        if (method is "terminal.text" or "terminal.key")
+        if (method is "terminal.text" or "terminal.exec" or "terminal.key")
         {
             if (revision is null) throw new ArgumentException("--revision from terminal screen is required.");
             operationId = Require("--operation-id");
             Require("--check-token");
-            if (method == "terminal.text" && !options.ContainsKey("--text") && textFile is null && !textFromStdin)
+            if ((method is "terminal.text" or "terminal.exec") && !options.ContainsKey("--text") && textFile is null && !textFromStdin)
                 throw new ArgumentException("--text, --text-file or --text-stdin is required.");
             if (method == "terminal.key") Require("--key");
         }
@@ -115,13 +117,14 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
             throw new ArgumentException("--text, --text-file or --text-stdin is required.");
         if (method == "files.rename") Require("--destination");
         if (method is "files.upload" or "files.download") Require("--local-path");
-        return new(new AgentRequest(method, session, path, Text: Get("--text"), Submit: flags.Contains("--submit"),
+        return new(new AgentRequest(method, session, path, Text: Get("--text"), Submit: flags.Contains("--submit") || method == "terminal.exec",
             Key: Get("--key"), Cursor: Number("--cursor"), ExpectedInputRevision: revision, OperationId: operationId,
             View: Get("--view"), CheckToken: Get("--check-token"), Brief: flags.Contains("--brief"),
             StripAnsi: flags.Contains("--strip-ansi"), MaxBytes: Int("--max-bytes"), MaxLines: Int("--max-lines"),
             TailRows: Int("--tail-rows"), Offset: Number("--offset"), Limit: Int("--limit"),
             Destination: Get("--destination"), Recursive: flags.Contains("--recursive"),
             Overwrite: flags.Contains("--overwrite"), IdleMilliseconds: Int("--idle-ms"),
-            TimeoutMilliseconds: Int("--timeout-ms"), LocalPath: Get("--local-path")), instance, textFile, textFromStdin);
+            TimeoutMilliseconds: Int("--timeout-ms"), LocalPath: Get("--local-path"),
+            Minimal: flags.Contains("--minimal")), instance, textFile, textFromStdin);
     }
 }

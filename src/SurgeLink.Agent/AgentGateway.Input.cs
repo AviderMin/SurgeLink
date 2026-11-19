@@ -17,8 +17,8 @@ public sealed partial class AgentGateway
         var fingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {
             request.Method, request.ExpectedInputRevision, request.CheckToken,
-            text = request.Method == "terminal.text" ? request.Text : null,
-            submit = request.Method == "terminal.text" && request.Submit,
+            text = request.Method is "terminal.text" or "terminal.exec" ? request.Text : null,
+            submit = request.Method == "terminal.exec" || request.Method == "terminal.text" && request.Submit,
             key = request.Method == "terminal.key" ? request.Key : null,
         }, AgentJson.Options)));
         if (grant.Inputs.TryGetValue(operationId, out var prior))
@@ -28,10 +28,12 @@ public sealed partial class AgentGateway
             return AgentResponse.Error("input_outcome_unknown", "A previous PTY write may be partial. Inspect the terminal and renew terminal control in the desktop before sending more input.");
         if (request.ExpectedInputRevision is not >= 0)
             return AgentResponse.Error("invalid_arguments", "expectedInputRevision from read_terminal is required.");
-        if (request.Method == "terminal.text" && (request.Text is null || request.Text.Length > 16384 || request.Text.Length == 0 && !request.Submit))
+        if ((request.Method is "terminal.text" or "terminal.exec") && (request.Text is null || request.Text.Length > 16384 || request.Text.Length == 0 && !request.Submit))
             return AgentResponse.Error("invalid_arguments", "Supply text up to 16384 characters, or submit an empty line explicitly.");
         if (request.Method == "terminal.key" && (string.IsNullOrWhiteSpace(request.Key) || request.Key.Length > 64))
             return AgentResponse.Error("invalid_arguments", "Supply a terminal key such as Enter, Tab, Ctrl+C or Up.");
+        var isText = request.Method is "terminal.text" or "terminal.exec";
+        var sendText = isText ? request.Method == "terminal.exec" ? BuildExecText(request.Text!, operationId) : request.Text : null;
 
         if (ValidateCheck(grant, request) is { } checkFailure) return checkFailure;
         var check = grant.Check!;
@@ -46,11 +48,21 @@ public sealed partial class AgentGateway
             if (_timeProvider.GetUtcNow() >= check.ExpiresUtc || grant.Terminal.ReadScreen() != check.Screen
                 || grant.Activate is not null && grant.IsActive is not null && !grant.IsActive())
                 return AgentResponse.Error("session_check_required", "The target changed or the check expired while selecting the terminal. Run Check Sessions again.");
-            var receipt = request.Method == "terminal.text"
-                ? await grant.Terminal.SendCheckedTextAsync(request.Text!, request.Submit, check.Screen, ct).ConfigureAwait(false)
+            var receipt = isText
+                ? await grant.Terminal.SendCheckedTextAsync(sendText!, request.Method == "terminal.exec" || request.Submit, check.Screen, ct).ConfigureAwait(false)
                 : await grant.Terminal.SendCheckedKeyAsync(request.Key!, check.Screen, ct).ConfigureAwait(false);
-            response = AgentResponse.Ok(new { operationId, receipt.InputRevision, receipt.OutputCursor, receipt.AcceptedBytes,
-                receipt.Submitted, status = "input_sent", commandCompletionKnown = false });
+            if (request.Method == "terminal.exec")
+            {
+                grant.LastInputText = request.Text;
+                var marker = ExecMarker(operationId);
+                var wait = await WaitOutputAsync(grant, request with { Cursor = receipt.OutputCursor }, ct, marker).ConfigureAwait(false);
+                response = BuildExecResponse(operationId, receipt, wait, marker);
+            }
+            else
+            {
+                response = AgentResponse.Ok(new { operationId, receipt.InputRevision, receipt.OutputCursor, receipt.AcceptedBytes,
+                    receipt.Submitted, status = "input_sent", commandCompletionKnown = false });
+            }
         }
         catch (AgentOperationPausedException) { response = HumanOperatingError(); }
         catch (TerminalInputConflictException) { response = AgentResponse.Error("input_conflict", "Input changed. Read the terminal again before a new operation."); }
@@ -60,9 +72,60 @@ public sealed partial class AgentGateway
         catch (InvalidOperationException) { response = AgentResponse.Error("terminal_unavailable", "The terminal is closed or unavailable."); }
         catch (Exception) { response = AgentResponse.Error("input_outcome_unknown", "The input outcome is uncertain. Observe the terminal before continuing."); }
         if (response.ErrorCode == "input_outcome_unknown") grant.InputOutcomeUnknown = true;
+        if (response.Success) grant.LastInputText = request.Method is "terminal.text" or "terminal.exec" ? request.Text : null;
         RememberInput(grant, operationId, fingerprint, response);
         // Do not replace a successful acknowledgement with cancellation after bytes were accepted.
         return response;
+    }
+
+    private static string ExecMarker(string operationId) => "__SURGELINK_EXIT_" + operationId + "__";
+
+    private static string BuildExecText(string command, string operationId) =>
+        command + "\n__surge_status=$?; printf '\\n" + ExecMarker(operationId) + ":%d\\n' \"$__surge_status\"";
+
+    private static AgentResponse BuildExecResponse(string operationId, TerminalInputReceipt receipt, AgentResponse wait, string marker)
+    {
+        if (!wait.Success)
+        {
+            return AgentResponse.Ok(new
+            {
+                operationId, receipt.InputRevision, receipt.OutputCursor, receipt.AcceptedBytes, receipt.Submitted,
+                status = "executed", commandCompletionKnown = false, exitCode = (int?)null,
+                waitError = wait.ErrorCode, output = wait.Data,
+            });
+        }
+
+        var data = wait.Data!.Value;
+        var text = data.GetProperty("text").GetString() ?? string.Empty;
+        var prefix = marker + ":";
+        int? exitCode = null;
+        var index = text.IndexOf(prefix, StringComparison.Ordinal);
+        if (index >= 0)
+        {
+            var end = text.IndexOf('\n', index);
+            if (end < 0) end = text.Length;
+            var value = text[(index + prefix.Length)..end].Trim();
+            if (int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+                exitCode = parsed;
+            text = text.Remove(index, end - index).TrimEnd();
+        }
+
+        return AgentResponse.Ok(new
+        {
+            operationId, receipt.InputRevision, receipt.OutputCursor, receipt.AcceptedBytes, receipt.Submitted,
+            status = "executed", commandCompletionKnown = exitCode is not null, exitCode,
+            output = new
+            {
+                text,
+                cursor = data.GetProperty("cursor").GetInt64(),
+                oldestCursor = data.GetProperty("oldestCursor").GetInt64(),
+                latestCursor = data.GetProperty("latestCursor").GetInt64(),
+                gap = data.GetProperty("gap").GetBoolean(),
+                hasMore = data.GetProperty("hasMore").GetBoolean(),
+                truncated = data.GetProperty("truncated").GetBoolean(),
+            },
+        });
     }
 
     /// <summary>

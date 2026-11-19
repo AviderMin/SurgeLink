@@ -123,6 +123,48 @@ public sealed class AgentErgonomicsTests
     }
 
     [Fact]
+    public async Task MinimalCheckOmitsHostMetadata()
+    {
+        var gateway = new AgentGateway();
+        var terminal = new RichTerminal("line", 0);
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+
+        var response = await gateway.ExecuteAsync(new("sessions.check", handle, Minimal: true), default);
+
+        Assert.True(response.Success);
+        var sessionData = response.Data!.Value.GetProperty("session");
+        Assert.False(sessionData.TryGetProperty("host", out _));
+        Assert.Equal("host.test", sessionData.GetProperty("target").GetProperty("server").GetString());
+        Assert.True(response.Data.Value.GetProperty("minimal").GetBoolean());
+    }
+
+    [Fact]
+    public async Task TerminalExecReturnsTheShellExitCode()
+    {
+        var terminal = new ExecTerminal();
+        var gateway = new AgentGateway();
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+        var check = await gateway.ExecuteAsync(new("sessions.check", handle), default);
+        var checkData = check.Data!.Value;
+
+        var response = await gateway.ExecuteAsync(new("terminal.exec", handle,
+            Text: "echo hi", OperationId: "exec-1",
+            ExpectedInputRevision: checkData.GetProperty("screen").GetProperty("inputRevision").GetInt64(),
+            CheckToken: checkData.GetProperty("checkToken").GetString()), default);
+
+        Assert.True(response.Success);
+        var data = response.Data!.Value;
+        Assert.True(data.GetProperty("commandCompletionKnown").GetBoolean());
+        Assert.Equal(0, data.GetProperty("exitCode").GetInt32());
+        Assert.DoesNotContain("__SURGELINK_EXIT_", data.GetProperty("output").GetProperty("text").GetString());
+        Assert.Equal(1, terminal.Writes);
+    }
+
+    [Fact]
     public async Task BriefCheckReturnsOnlyTheScreenTail()
     {
         var terminal = new RichTerminal(string.Join('\n', Enumerable.Range(1, 20).Select(i => $"line-{i}")), 0);
@@ -154,6 +196,32 @@ public sealed class AgentErgonomicsTests
             Task.FromResult(new TerminalInputReceipt(expectedRevision + 1, cursor, value.Length, submit));
         public Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct) =>
             Task.FromResult(new TerminalInputReceipt(expectedRevision + 1, cursor, 1, true));
+    }
+
+    private sealed class ExecTerminal : ITerminalAutomation
+    {
+        private string _screen = "test";
+        private string _output = string.Empty;
+        private long _revision;
+        public int Writes { get; private set; }
+        public TerminalScreenSnapshot ReadScreen() => new(_screen, 80, 24, 0, 0, true, false, false, false, _revision, _output.Length, false, false);
+        public TerminalOutputPage ReadOutput(long? cursor)
+        {
+            var start = cursor ?? 0;
+            var text = start < _output.Length ? _output[(int)start..] : string.Empty;
+            return new(text, _output.Length, 0, _output.Length, false, false);
+        }
+        public Task<TerminalInputReceipt> SendTextAsync(string text, bool submit, long expectedRevision, CancellationToken ct)
+        {
+            if (_revision != expectedRevision) throw new TerminalInputConflictException();
+            Writes++;
+            _revision++;
+            _screen = "hi\n";
+            _output = "echo hi\r\nhi\r\n__SURGELINK_EXIT_exec-1__:0\r\n";
+            return Task.FromResult(new TerminalInputReceipt(_revision, 0, text.Length, submit));
+        }
+        public Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct) =>
+            SendTextAsync(key, false, expectedRevision, ct);
     }
 
     private sealed class MemoryFiles : IRemoteFileSystem

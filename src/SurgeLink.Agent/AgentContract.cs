@@ -11,7 +11,8 @@ public sealed record AgentRequest(string Method, string? Session = null, string?
     string? ClientId = null, string? ClientName = null, int? DesktopProcessId = null,
     bool Brief = false, bool StripAnsi = false, int? MaxBytes = null, int? MaxLines = null, int? TailRows = null,
     long? Offset = null, int? Limit = null, string? Destination = null, bool Recursive = false, bool Overwrite = false,
-    int? IdleMilliseconds = null, int? TimeoutMilliseconds = null, string? LocalPath = null);
+    int? IdleMilliseconds = null, int? TimeoutMilliseconds = null, string? LocalPath = null,
+    bool Minimal = false);
 
 public sealed record AgentResponse(bool Success, JsonElement? Data = null, string? ErrorCode = null, string? Message = null)
 {

@@ -178,12 +178,12 @@ public sealed partial class AgentGateway
             ThrowIfCancelled(grant, ct);
             if (grant.Session.State != ConnectionState.Connected)
                 return AgentResponse.Error("session_unavailable", "The session is disconnected.");
-            if (request.Method is "terminal.text" or "terminal.key")
+            if (request.Method is "terminal.text" or "terminal.key" or "terminal.exec")
                 return await ExecuteInputAsync(grant, request, ct).ConfigureAwait(false);
             AgentResponse result;
             switch (request.Method)
             {
-                case "sessions.check": result = CheckSession(grant, request.Brief); break;
+                case "sessions.check": result = CheckSession(grant, request.Brief, request.Minimal); break;
                 case "sessions.info": result = AgentResponse.Ok(grant.Info with { IsActive = grant.IsActive?.Invoke() ?? false }); break;
                 case "sessions.activate":
                     if (!grant.Info.TerminalControl) return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel first.");
@@ -275,7 +275,7 @@ public sealed partial class AgentGateway
         }
     }
 
-    private async Task<AgentResponse> WaitOutputAsync(Grant grant, AgentRequest request, CancellationToken ct)
+    private async Task<AgentResponse> WaitOutputAsync(Grant grant, AgentRequest request, CancellationToken ct, string? expectText = null)
     {
         if (grant.Terminal is null) throw new NotSupportedException();
         if (request.Cursor is < 0) return AgentResponse.Error("invalid_cursor", "The output cursor must be non-negative.");
@@ -307,6 +307,7 @@ public sealed partial class AgentGateway
                 cursor = page.Cursor;
                 hasMore = page.HasMore;
                 sinceOutput.Restart();
+                if (expectText is not null && text.ToString().Contains(expectText, StringComparison.Ordinal)) break;
                 if (text.Length > 512 * 1024) { capped = true; break; }
                 if (page.HasMore) continue;
             }
@@ -317,7 +318,9 @@ public sealed partial class AgentGateway
 
         var timedOut = total.ElapsedMilliseconds >= timeoutMilliseconds
             && (text.Length == 0 || sinceOutput.ElapsedMilliseconds < idleMilliseconds);
-        var trimmed = AgentText.Trim(text.ToString(), request.StripAnsi, request.MaxBytes ?? 65536, request.MaxLines);
+        var rawText = text.ToString();
+        if (grant.LastInputText is { } echoText) rawText = AgentText.StripLeadingEcho(rawText, echoText);
+        var trimmed = AgentText.Trim(rawText, request.StripAnsi, request.MaxBytes ?? 65536, request.MaxLines);
         var screen = grant.Terminal.ReadScreen();
         var screenTail = AgentText.Trim(screen.Text, request.StripAnsi, 4096, 4);
         return AgentResponse.Ok(new
@@ -518,7 +521,7 @@ public sealed partial class AgentGateway
         "User is operating this terminal. Stop all current operations and wait for the user to return control; do not retry or re-acquire the session.");
 
     private static bool IsKnownMethod(string method) => method is "sessions.list" or "sessions.info" or "sessions.activate" or "sessions.check"
-        or "terminal.screen" or "terminal.output" or "terminal.wait" or "terminal.text" or "terminal.key"
+        or "terminal.screen" or "terminal.output" or "terminal.wait" or "terminal.text" or "terminal.exec" or "terminal.key"
         or "monitor.snapshot" or "files.list" or "files.read" or "files.stat" or "files.write"
         or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download";
 
@@ -533,6 +536,7 @@ public sealed partial class AgentGateway
         public Func<string, CancellationToken, Task>? Activate { get; } = activate;
         public Func<bool>? IsActive { get; } = isActive;
         public bool HumanOperating { get; set; }
+        public string? LastInputText { get; set; }
         public Dictionary<string, (string Fingerprint, AgentResponse Response)> Inputs { get; } = new(StringComparer.Ordinal);
         public Queue<string> InputOrder { get; } = new();
         public SessionCheck? Check { get; set; }
@@ -543,7 +547,7 @@ public sealed partial class AgentGateway
 
     private sealed record SessionCheck(string Token, DateTimeOffset ExpiresUtc, TerminalScreenSnapshot Screen, bool IsActive);
 
-    private AgentResponse CheckSession(Grant grant, bool brief)
+    private AgentResponse CheckSession(Grant grant, bool brief, bool minimal)
     {
         if (grant.Info.Target is null) return AgentResponse.Error("session_context_unavailable", "The host must supply the connection target before terminal control.");
         if (grant.Terminal is null) throw new NotSupportedException();
@@ -553,10 +557,20 @@ public sealed partial class AgentGateway
         var expires = _timeProvider.GetUtcNow().AddMinutes(2);
         var check = new SessionCheck(Convert.ToHexString(RandomNumberGenerator.GetBytes(24)), expires, screen, active);
         grant.Check = check;
+        var compact = brief || minimal;
+        object sessionResult = minimal
+            ? new
+            {
+                handle = grant.Info.Handle, label = grant.Info.Label, target = grant.Info.Target,
+                terminalControl = grant.Info.TerminalControl, isActive = active,
+                userOperating = IsHumanOperating(grant),
+            }
+            : grant.Info with { IsActive = active };
         object screenResult = screen;
-        if (brief)
+        if (compact)
         {
-            var tail = AgentText.Trim(screen.Text, stripAnsi: false, maxBytes: 4096, maxLines: 8);
+            var tail = AgentText.Trim(screen.Text, stripAnsi: false,
+                maxBytes: minimal ? 2048 : 4096, maxLines: minimal ? 3 : 8);
             screenResult = new
             {
                 text = tail.Text,
@@ -568,10 +582,10 @@ public sealed partial class AgentGateway
         }
         return AgentResponse.Ok(new
         {
-            session = grant.Info with { IsActive = active }, connectionState = grant.Session.State,
+            session = sessionResult, connectionState = grant.Session.State,
             usernameSource = "configured_login", effectiveShellUser = (string?)null,
             screen = screenResult, checkToken = check.Token, expiresUtc = expires,
-            brief,
+            brief = compact, minimal,
             instruction = "Verify server, port, session ID, configured login and current screen against your intended target. Effective user after su, nested SSH or containers is unknown. Use this checkToken and screen.inputRevision for one new terminal input; repeat Check Sessions before each new operation.",
         });
     }

@@ -274,6 +274,7 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
     private static string OperationLabel(string operation) => operation switch
     {
         "terminal.text" => Str.T("shell.agent.action.text", "Send terminal text"),
+        "terminal.exec" => Str.T("shell.agent.action.exec", "Execute terminal command"),
         "terminal.key" => Str.T("shell.agent.action.key", "Send terminal key"),
         "terminal.screen" or "terminal.output" or "terminal.wait" => Str.T("shell.agent.action.read", "Read terminal"),
         "sessions.activate" => Str.T("shell.agent.action.select", "Select session"),

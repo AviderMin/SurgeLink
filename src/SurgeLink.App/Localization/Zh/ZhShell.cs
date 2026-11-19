@@ -72,6 +72,7 @@ public static class ZhShell
         ["shell.agent.noActivity"] = "Agent 的操作会显示在这里。",
         ["shell.agent.activityLine"] = "{0} · {1}",
         ["shell.agent.action.text"] = "输入终端文本",
+        ["shell.agent.action.exec"] = "执行终端命令",
         ["shell.agent.action.key"] = "发送终端按键",
         ["shell.agent.action.read"] = "读取终端",
         ["shell.agent.action.select"] = "选择会话",

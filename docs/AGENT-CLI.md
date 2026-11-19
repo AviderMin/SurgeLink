@@ -194,12 +194,13 @@ Other commands:
 ```text
 surgelink-cli sessions list [--instance PID] [--json]
 surgelink-cli sessions info --session HANDLE
-surgelink-cli sessions check --session HANDLE [--brief]
+surgelink-cli sessions check --session HANDLE [--brief|--minimal]
 surgelink-cli sessions activate --session HANDLE [--view terminal|files|monitor]
 surgelink-cli terminal screen --session HANDLE [--tail-rows N] [--strip-ansi]
 surgelink-cli terminal output --session HANDLE [--cursor N] [--max-bytes N] [--max-lines N] [--strip-ansi]
 surgelink-cli terminal wait --session HANDLE [--cursor N] [--idle-ms 500] [--timeout-ms 30000] [--strip-ansi]
 surgelink-cli terminal send --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) [--submit] --revision N --operation-id ID --check-token TOKEN
+surgelink-cli terminal exec --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) --revision N --operation-id ID --check-token TOKEN [--idle-ms 500] [--timeout-ms 30000] [--strip-ansi]
 surgelink-cli terminal key --session HANDLE --key Ctrl+C --revision N --operation-id ID --check-token TOKEN
 surgelink-cli monitor snapshot --session HANDLE
 surgelink-cli files list --session HANDLE --path REMOTE_PATH [--offset N] [--limit N]
@@ -302,7 +303,7 @@ pairing or a guarantee that the external Agent will choose to call a tool.
 
 The tools are list_desktops, select_desktop, list_sessions, get_session_info,
 check_sessions, read_terminal, read_terminal_output, wait_terminal_output,
-send_terminal_text, send_terminal_key, select_session, get_system_snapshot,
+run_terminal_command, send_terminal_text, send_terminal_key, select_session, get_system_snapshot,
 list_directory, read_text_file, stat_path, write_text_file, delete_path,
 rename_path, create_directory, upload_file and download_file. The write tools
 and select_session require a control grant. Read-only tool annotations are hints;
@@ -355,7 +356,17 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   expires. It returns text, cursor, timing, `idle`, `timedOut`, a short screen
   tail and `commandCompletionKnown=false`. Quiet output is an observation, not a
   shell prompt detector or an exit code; inspect the returned screen/prompt and
-  verify the actual result before reporting completion.
+  verify the actual result before reporting completion. Leading PTY echo of the
+  just-sent command is removed from the returned text.
+- terminal.exec sends one command with a POSIX-shell sentinel appended and waits
+  for that sentinel. It returns `status=executed`, `exitCode`,
+  `commandCompletionKnown=true` when the sentinel is observed, and `output`.
+  This is best-effort for POSIX bash/sh; non-POSIX shells may time out without an
+  exit code, in which case `commandCompletionKnown=false`.
+- sessions.check supports `brief=true` (compact screen) and `minimal=true`
+  (compact screen plus only handle, label, target and control state instead of
+  the full host/session metadata). Both are opt-in; the full check remains the
+  default.
 - terminal.screen supports `tailRows` and `stripAnsi` for a compact view. These
   options change only the returned text; the full snapshot is still used for the
   check token and input revision.

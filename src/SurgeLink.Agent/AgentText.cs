@@ -15,6 +15,26 @@ internal static partial class AgentText
 
     public static string StripAnsi(string text) => AnsiSequence().Replace(text, string.Empty);
 
+    /// <summary>
+    /// Removes the leading PTY echo of a just-sent command. Some terminals echo the
+    /// paste once locally and once from the remote line discipline, so allow a
+    /// small number of adjacent repeats while never touching later output.
+    /// </summary>
+    public static string StripLeadingEcho(string text, string? echoText)
+    {
+        if (string.IsNullOrEmpty(echoText) || text.Length == 0) return text;
+        var result = text;
+        var removed = false;
+        for (var repeat = 0; repeat < 3; repeat++)
+        {
+            var index = result.IndexOf(echoText, StringComparison.Ordinal);
+            if (index < 0 || index > 4) break;
+            result = result.Remove(index, echoText.Length);
+            removed = true;
+        }
+        return removed ? result.TrimStart('\r', '\n') : result;
+    }
+
     public static TrimmedText Trim(string text, bool stripAnsi, int? maxBytes, int? maxLines)
     {
         var originalChars = text.Length;

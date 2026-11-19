@@ -8,13 +8,19 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.2**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.3**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.3** 修复 Agent 接入细节：
+
+- `terminal exec` 使用 POSIX shell 哨兵返回 `exitCode` 和 `commandCompletionKnown`；`terminal wait` 自动过滤刚发送命令的 PTY 回显。
+- `sessions check --minimal` 在 `--brief` 基础上省略完整 host/session 元数据，只保留句柄、标签、目标和授权状态。
+- MCP 新增 `run_terminal_command`，并与 CLI 共用同一套执行与退出码解析逻辑。
 
 **1.0.3.2** 继续完善终端检索、连接体验与 Agent 接入：
 
@@ -24,7 +30,7 @@ SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github
 - 修复终端宽字符删除边界问题（删除跨宽字符时不再留下孤立右半格）；缩窄窗口不会永久丢弃历史文本，恢复宽度后可重新显示；缩窄后编辑活动行会先清理跨越可见边界的宽字符和隐藏列，不会在放大后复现旧文本或孤立半格。
 - 关闭标签时会取消阻塞中的终端写入并共享关闭任务，避免远端写入卡住导致关闭一直等待。
 - 批量远程复制改用单路径存在性检查并缓存目标父目录信息，避免每复制一个文件都重新读取目录；最终提交仍保留禁止覆盖保护。
-- Agent CLI 新增 `terminal wait`、`sessions check --brief`，终端读取支持 `--strip-ansi`、`--max-bytes`、`--max-lines`、`--tail-rows`；文件工具支持分页读写以及 `stat`、`write`、`delete`、`rename`、`mkdir`、`upload`、`download`，写操作要求控制授权。
+- Agent CLI 新增 `terminal wait`、`terminal exec`、`sessions check --brief/--minimal`，终端读取支持 `--strip-ansi`、`--max-bytes`、`--max-lines`、`--tail-rows`；文件工具支持分页读写以及 `stat`、`write`、`delete`、`rename`、`mkdir`、`upload`、`download`，写操作要求控制授权。
 - CLI 新增 `--text-file`／`--text-stdin`、`SURGELINK_INSTANCE`、`desktops list` 和 `doctor`；MCP 工具面与 Agent 面板诊断同步增强，Agent 指令默认自动发现桌面实例。
 
 **1.0.3.1** 将 Agent 接入与终端、文件管理改进合入主线：

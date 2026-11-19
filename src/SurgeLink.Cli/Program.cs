@@ -11,11 +11,12 @@ if (args is ["--help"] or ["-h"] or [])
 
         surgelink-cli sessions list [--instance PID] [--json]
         surgelink-cli sessions info --session HANDLE [--instance PID] [--json]
-        surgelink-cli sessions check --session HANDLE [--brief] [--instance PID] [--json]
+        surgelink-cli sessions check --session HANDLE [--brief|--minimal] [--instance PID] [--json]
         surgelink-cli terminal screen --session HANDLE [--tail-rows N] [--strip-ansi] [--instance PID] [--json]
         surgelink-cli terminal output --session HANDLE [--cursor N] [--max-bytes N] [--max-lines N] [--strip-ansi] [--instance PID] [--json]
         surgelink-cli terminal wait --session HANDLE [--cursor N] [--idle-ms 500] [--timeout-ms 30000] [--strip-ansi] [--instance PID] [--json]
         surgelink-cli terminal send --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) [--submit] --revision N --operation-id ID --check-token TOKEN [--instance PID] [--json]
+        surgelink-cli terminal exec --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) --revision N --operation-id ID --check-token TOKEN [--idle-ms 500] [--timeout-ms 30000] [--strip-ansi] [--instance PID] [--json]
         surgelink-cli terminal key --session HANDLE --key Ctrl+C --revision N --operation-id ID --check-token TOKEN [--instance PID] [--json]
         surgelink-cli sessions activate --session HANDLE [--view terminal|files|monitor] [--instance PID] [--json]
         surgelink-cli monitor snapshot --session HANDLE [--instance PID] [--json]
@@ -40,6 +41,7 @@ if (args is ["--help"] or ["-h"] or [])
         The login user does not prove the effective shell user after su/nested SSH. Reuse exact arguments for retries.
         input_sent acknowledges input only; it does not report command completion or an exit code.
         terminal wait returns when output has been quiet for --idle-ms, which is an observation, not a command boundary.
+        terminal exec appends a POSIX shell sentinel and returns exitCode when the remote shell supports it.
         SURGELINK_INSTANCE can supply the desktop PID when --instance is omitted.
         Results are always JSON. Exit codes: 0 success, 2 usage, 3 unavailable,
         4 operation declined/failed, 130 cancelled. Execution policy is managed by your Agent application.
