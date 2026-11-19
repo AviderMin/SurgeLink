@@ -34,6 +34,7 @@ internal sealed partial class TerminalSurface
             var brush = _resolver.Brush(_resolver.DefaultBackground);
             Background = brush;
             _root.Background = brush;
+            StyleSearchBar();
             // Terminal colours can differ from the shell theme. Keep the native
             // thumb legible on the terminal background in either colour scheme.
             var rgb = _resolver.DefaultBackground;

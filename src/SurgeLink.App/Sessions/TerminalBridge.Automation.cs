@@ -62,10 +62,12 @@ public sealed partial class TerminalBridge
     private async Task<TerminalInputReceipt> WriteAgentAsync(Func<byte[]> encode, bool submitted, long expectedRevision, CancellationToken ct,
         TerminalScreenSnapshot? expected = null)
     {
-        await _inputGate.WaitAsync(ct).ConfigureAwait(false);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
+        var token = linked.Token;
+        await _inputGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            ct.ThrowIfCancellationRequested();
+            token.ThrowIfCancellationRequested();
             if (IsClosed) throw new InvalidOperationException("The terminal is closed.");
             if (Interlocked.Read(ref _inputRevision) != expectedRevision) throw new TerminalInputConflictException();
             byte[] bytes;
@@ -74,7 +76,7 @@ public sealed partial class TerminalBridge
                 if (expected is not null && ReadScreen() != expected) throw new TerminalInputConflictException();
                 bytes = encode();
                 if (bytes.Length == 0) throw new ArgumentException("Terminal input is empty.");
-                ct.ThrowIfCancellationRequested();
+                token.ThrowIfCancellationRequested();
                 // Reserve while holding the screen lock so output cannot invalidate
                 // the checked view between comparison, encoding and reservation.
                 if (Interlocked.CompareExchange(ref _inputRevision, expectedRevision + 1, expectedRevision) != expectedRevision)
@@ -84,7 +86,7 @@ public sealed partial class TerminalBridge
             RaiseInvalidated();
             var revision = expectedRevision + 1;
             var outputCursor = _output.Cursor;
-            try { await _remote.WriteAsync(bytes, ct).ConfigureAwait(false); }
+            try { await _remote.WriteAsync(bytes, token).ConfigureAwait(false); }
             catch (Exception ex) { throw new TerminalInputUnknownException(ex); }
             return new(revision, outputCursor, bytes.Length, submitted);
         }

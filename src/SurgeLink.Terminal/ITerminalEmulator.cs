@@ -56,6 +56,18 @@ public interface ITerminalEmulator
     /// <summary>Extracts the text currently covered by a selection.</summary>
     string GetSelectionText(TerminalSelection selection);
 
+    /// <summary>
+    /// Finds literal text across the retained scrollback and the current viewport.
+    /// Matching is ordinal (optionally case-insensitive) and does not treat ANSI
+    /// styling as content. The alternate screen is searched without the scrollback
+    /// hidden behind it. Results are ordered by line and column and stop at
+    /// <paramref name="maxMatches"/>.
+    /// </summary>
+    /// <param name="query">Literal text to find; an empty value returns no matches.</param>
+    /// <param name="matchCase">True for a case-sensitive search.</param>
+    /// <param name="maxMatches">Upper bound on returned matches; must be positive.</param>
+    IReadOnlyList<TerminalSearchMatch> FindText(string query, bool matchCase = false, int maxMatches = 1000);
+
     /// <summary>Visible text with trailing blanks trimmed; used by accessibility and tests.</summary>
     string GetVisibleText();
 }

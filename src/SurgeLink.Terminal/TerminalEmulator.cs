@@ -122,8 +122,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
 
         if (index < _scrollback.Count)
         {
-            CellLine line = _scrollback[index];
-            return (uint)column < (uint)line.Cells.Length ? line.Cells[column] : TerminalCell.Blank;
+            return _scrollback[index].GetCell(column);
         }
 
         return _screen.GetCell(index - _scrollback.Count, column);
@@ -337,6 +336,140 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
 
         return builder.ToString();
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<TerminalSearchMatch> FindText(string query, bool matchCase = false, int maxMatches = 1000)
+    {
+        if (string.IsNullOrEmpty(query) || maxMatches <= 0)
+        {
+            return Array.Empty<TerminalSearchMatch>();
+        }
+
+        lock (_sync)
+        {
+            var matches = new List<TerminalSearchMatch>();
+            StringComparison comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+            int scrollbackCount = _scrollback.Count;
+            // Reused across lines so a full scrollback scan does not allocate two
+            // collections per line on the UI thread.
+            var textBuffer = new StringBuilder(256);
+            var owningCellBuffer = new List<int>(256);
+
+            // The alternate screen hides the primary scrollback; searching lines the
+            // user cannot see would offer matches that scrolling can never reveal.
+            if (!_screen.IsAlternate)
+            {
+                for (int index = 0; index < scrollbackCount && matches.Count < maxMatches; index++)
+                {
+                    SearchLine(_scrollback[index], index, query, comparison, maxMatches, matches, textBuffer, owningCellBuffer);
+                }
+            }
+
+            for (int row = 0; row < Rows && matches.Count < maxMatches; row++)
+            {
+                SearchLine(_screen.GetLine(row), scrollbackCount + row, query, comparison, maxMatches, matches,
+                    textBuffer, owningCellBuffer);
+            }
+
+            return matches;
+        }
+    }
+
+    private static void SearchLine(
+        CellLine line,
+        int absoluteLine,
+        string query,
+        StringComparison comparison,
+        int maxMatches,
+        List<TerminalSearchMatch> matches,
+        StringBuilder text,
+        List<int> owningCell)
+    {
+        int length = line.Length;
+        if (length == 0)
+        {
+            return;
+        }
+
+        // Most lines do not contain even the first character of the query. A
+        // cheap cell scan avoids building the full text and column map for them,
+        // which dominates a no-match search across a large scrollback.
+        char firstCharacter = query[0];
+        bool matchCase = comparison == StringComparison.Ordinal;
+        bool mayContain = false;
+        for (int column = 0; column < length && !mayContain; column++)
+        {
+            TerminalCell cell = line.GetCell(column);
+            if (cell.Width == CellWidth.Continuation)
+            {
+                continue;
+            }
+
+            string value = (cell.Attributes & CellAttributes.Hidden) != 0 ? " " : cell.Text ?? " ";
+            for (int index = 0; index < value.Length; index++)
+            {
+                if (matchCase
+                    ? value[index] == firstCharacter
+                    : char.ToUpperInvariant(value[index]) == char.ToUpperInvariant(firstCharacter))
+                {
+                    mayContain = true;
+                    break;
+                }
+            }
+        }
+
+        if (!mayContain)
+        {
+            return;
+        }
+
+        text.Clear();
+        owningCell.Clear();
+        for (int column = 0; column < length; column++)
+        {
+            TerminalCell cell = line.GetCell(column);
+            if (cell.Width == CellWidth.Continuation)
+            {
+                continue;
+            }
+
+            string value = (cell.Attributes & CellAttributes.Hidden) != 0 ? " " : cell.Text ?? " ";
+            if (value.Length == 0)
+            {
+                value = " ";
+            }
+
+            text.Append(value);
+            for (int i = 0; i < value.Length; i++)
+            {
+                owningCell.Add(column);
+            }
+        }
+
+        string haystack = text.ToString();
+        int searchFrom = 0;
+        while (searchFrom <= haystack.Length - query.Length && matches.Count < maxMatches)
+        {
+            int offset = haystack.AsSpan(searchFrom).IndexOf(query.AsSpan(), comparison);
+            if (offset < 0)
+            {
+                return;
+            }
+
+            int characterIndex = searchFrom + offset;
+            int firstCell = owningCell[characterIndex];
+            int lastCell = owningCell[characterIndex + query.Length - 1];
+            int endColumn = lastCell;
+            if (line.GetCell(lastCell).Width == CellWidth.Wide && endColumn + 1 < length)
+            {
+                // A wide glyph claims its continuation column; highlight both halves.
+                endColumn++;
+            }
+
+            matches.Add(new TerminalSearchMatch(absoluteLine, firstCell, endColumn - firstCell + 1));
+            searchFrom = characterIndex + 1;
+        }
     }
 
     /// <summary>Prints one printable ASCII code point (fast path).</summary>

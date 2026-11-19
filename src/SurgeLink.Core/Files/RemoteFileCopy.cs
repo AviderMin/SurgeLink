@@ -29,11 +29,8 @@ public static class RemoteFileCopy
             {
                 throw new IOException("Copying symbolic links or special files is not supported.");
             }
-            var separator = to.LastIndexOf('/');
-            var parent = separator == 0 ? "/" : to[..separator];
-            var name = to[(separator + 1)..];
-            var siblings = await fileSystem.ListAsync(parent, cancellationToken).ConfigureAwait(false);
-            if (siblings.Any(item => string.Equals(item.Name, name, StringComparison.Ordinal)))
+            var existing = await fileSystem.TryStatAsync(to, cancellationToken).ConfigureAwait(false);
+            if (existing is not null)
             {
                 throw new IOException($"Destination already exists: {to}");
             }

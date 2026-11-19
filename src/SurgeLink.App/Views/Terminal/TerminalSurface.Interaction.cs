@@ -45,7 +45,7 @@ internal sealed partial class TerminalSurface
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (IsScrollBarEvent(e)) { return; }
+        if (IsScrollBarEvent(e) || IsSearchBarEvent(e.OriginalSource)) { return; }
         Focus(FocusState.Pointer);
         var point = e.GetCurrentPoint(this);
 
@@ -92,7 +92,7 @@ internal sealed partial class TerminalSurface
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
     {
-        if (IsScrollBarEvent(e)) { return; }
+        if (IsScrollBarEvent(e) || IsSearchBarEvent(e.OriginalSource)) { return; }
         if (!_selecting)
         {
             var point = e.GetCurrentPoint(this);
@@ -125,6 +125,7 @@ internal sealed partial class TerminalSurface
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        if (_remoteMouseButton == TerminalMouseButton.None && IsSearchBarEvent(e.OriginalSource)) { return; }
         if (_remoteMouseButton != TerminalMouseButton.None)
         {
             ReportMouse(e.GetCurrentPoint(this).Position, _remoteMouseButton, TerminalMouseAction.Release, completePress: true);
@@ -155,6 +156,7 @@ internal sealed partial class TerminalSurface
 
     private void OnDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
+        if (IsSearchBarEvent(e.OriginalSource)) { return; }
         lock (_bridge.Emulator.SyncRoot)
         {
             if (_bridge.Emulator.Modes.MouseTracking && !IsKeyDown(VirtualKey.Shift)) { e.Handled = true; return; }
@@ -165,7 +167,7 @@ internal sealed partial class TerminalSurface
 
     private void OnPointerWheelChanged(object sender, PointerRoutedEventArgs e)
     {
-        if (IsScrollBarEvent(e)) { return; }
+        if (IsScrollBarEvent(e) || IsSearchBarEvent(e.OriginalSource)) { return; }
         var point = e.GetCurrentPoint(this);
         int delta = point.Properties.MouseWheelDelta;
         if (delta == 0)
@@ -378,6 +380,7 @@ internal sealed partial class TerminalSurface
     private void ShowContextMenu(Point position)
     {
         var flyout = new MenuFlyout();
+        flyout.Items.Add(CreateMenuItem(Str.T("terminal.find", "Find…"), "\uE721", () => OpenSearch(), true));
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.copy", "Copy"), "\uE8C8", () => CopySelection(), HasSelection));
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.paste", "Paste"), "\uE77F", PasteFromClipboard, true));
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.selectAll", "Select all"), "\uE8B3", SelectAll, true));

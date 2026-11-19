@@ -46,6 +46,49 @@ public sealed class DiskStatsParserTests
     }
 
     [Fact]
+    public void SumWholeDeviceSectorsSkipsStackedLogicalDevices()
+    {
+        const string text = """
+               8       0 sda 100 0 1000 0 200 0 2000 0 0 0 0
+               8       1 sda1 90 0 900 0 180 0 1800 0 0 0 0
+             253       0 dm-0 100 0 1000 0 200 0 2000 0 0 0 0
+               9       0 md0 100 0 1000 0 200 0 2000 0 0 0 0
+            """;
+
+        var stats = DiskStatsParser.Parse(text);
+        var (read, write) = DiskStatsParser.SumWholeDeviceSectors(stats);
+
+        Assert.Equal(1000, read);
+        Assert.Equal(2000, write);
+    }
+
+    [Theory]
+    [InlineData("sda", true)]
+    [InlineData("sdb", true)]
+    [InlineData("sdm", true)]
+    [InlineData("hda", true)]
+    [InlineData("vda", true)]
+    [InlineData("xvda", true)]
+    [InlineData("nvme0n1", true)]
+    [InlineData("mmcblk0", true)]
+    [InlineData("sda1", false)]
+    [InlineData("nvme0n1p1", false)]
+    [InlineData("mmcblk0p1", false)]
+    [InlineData("dm-0", false)]
+    [InlineData("md0", false)]
+    [InlineData("md127", false)]
+    [InlineData("md_d0", false)]
+    [InlineData("loop0", false)]
+    [InlineData("ram0", false)]
+    [InlineData("zram0", false)]
+    [InlineData("sr0", false)]
+    [InlineData("", false)]
+    public void IsWholeDeviceClassifiesKernelDeviceNames(string name, bool expected)
+    {
+        Assert.Equal(expected, DiskStatsParser.IsWholeDevice(name));
+    }
+
+    [Fact]
     public void ParseSkipsShortAndMalformedLines()
     {
         const string text = """

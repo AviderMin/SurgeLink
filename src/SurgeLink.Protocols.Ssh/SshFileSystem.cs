@@ -55,6 +55,13 @@ internal sealed class SshFileSystem : IRemoteFileSystem, IAsyncDisposable
         ExecuteAsync((fileSystem, token) => fileSystem.StatAsync(path, token), cancellationToken);
 
     /// <inheritdoc />
+    public Task<RemoteFileEntry?> TryStatAsync(string path, CancellationToken cancellationToken) =>
+        // Forward the optional probe to the selected transport. ScpFileSystem
+        // overrides TryStatAsync to turn a failed remote stat into "not found";
+        // the interface default alone would let its ServerRejected escape.
+        ExecuteAsync((fileSystem, token) => fileSystem.TryStatAsync(path, token), cancellationToken);
+
+    /// <inheritdoc />
     public Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken) =>
         ExecuteAsync((fileSystem, token) => fileSystem.OpenReadAsync(path, token), cancellationToken);
 

@@ -140,6 +140,61 @@ overrides. Repeat with light and dark terminal palettes; the scrollbar theme fol
 the terminal background independently of the shell theme. Also check the OS's
 "Always show scrollbars" setting and high contrast on a suitable test machine.
 
+## Terminal search
+
+Search is exercised through the normal UI Automation smoke test once the demo session is open:
+
+1. Focus the terminal and press **Ctrl+Shift+F** (or use the context-menu **Find…** entry).
+2. The find bar appears inside the terminal; type `SurgeLink` and check that the banner match is
+   highlighted and the counter reads a concrete `1 of 1` position.
+3. Press **Enter** repeatedly to wrap through matches; **Shift+Enter** goes backwards, **F3** and
+   **Shift+F3** work while the terminal has focus. The view scrolls to an off-screen match.
+4. Toggle **Aa** and confirm the match set changes for case-sensitive queries.
+5. Press **Esc**; the find bar closes, highlights disappear, and terminal input resumes without
+   sending the keystrokes to the shell.
+
+Also check a long scrollback: run a command that produces many lines, search for an old line,
+and confirm the viewport scrolls back to it while new output continues to arrive.
+
+## Terminal resize and wide-character editing
+
+- Type a long line, narrow the window and widen it again: the original tail is restored rather
+  than permanently truncated. Repeat with scrollback lines visible above the viewport.
+- Print `A中B`, return to the first column and send **CSI 2 P** (Delete characters). Every wide
+  glyph must keep both halves together; the same invariant applies after CSI @, CSI X and CSI P
+  on lines containing Chinese, Japanese or emoji characters.
+- Narrow the window until a wide glyph is cut at the right edge, then widen it back: no orphan
+  continuation cell may appear. Partially widening to a width where the next wide glyph would
+  need a hidden continuation must render a blank at that edge, not a lone Wide cell.
+- Narrow a line, erase to the end of the line, then widen it back: the erased text must not
+  reappear from hidden columns. Repeat after printing, inserting or deleting characters on the
+  active row; a partially visible wide glyph must be cleaned before the edit shifts cells.
+
+## Tab activity and SSH advanced settings
+
+- Open the demo twice, type a command in one tab, switch to the other: the background tab shows
+  the activity dot; activating it clears the dot. Resizing the window or changing terminal
+  settings must not show the dot.
+- Open the session editor for SSH: the **Connection settings** section shows output encoding,
+  terminal type, legacy algorithms, preferred key exchange and command timeout. Defaults must
+  remain valid; an out-of-range timeout is rejected inline.
+
+## Closing with blocked input
+
+- With a slow or blocked terminal write, close the tab and confirm it completes without waiting for
+  the remote transport to independently release the write. The transport's dispose path must run,
+  and repeated close requests must share one completion rather than disposing it twice.
+- Repeat while an Agent terminal operation is queued or in flight; cancellation must not leave a
+  stuck close operation behind.
+
+## Large directory copy
+
+- Copy a flat directory containing at least 100 small files into a new destination. The destination
+  parent should be listed once for the batch, not once per file; a single-path existence/stat check
+  is the expected per-file probe. Existing destinations must still fail before commit.
+- Repeat with nested and empty directories and verify permissions, bytes and empty directories are
+  preserved.
+
 ## Verifying real SSH
 
 Offline tests do not establish real SSH transport compatibility. Verify with:
@@ -150,6 +205,12 @@ Offline tests do not establish real SSH transport compatibility. Verify with:
 
 When testing host key handling, switch the server's key and confirm the app shows the
 "host key changed" warning instead of connecting silently.
+
+A repeatable real-SSH matrix should cover: password/key/keyboard-interactive login, host-key
+change and rejection, terminal resize and TERM propagation, SFTP listing and upload/download,
+SCP fallback when no SFTP subsystem is available, transfer cancellation, overwrite conflicts,
+and reconnect after a dropped connection. Record the server implementation/version, network
+latency and exact result; offline tests cannot prove these transport paths.
 
 ## Logs and on-disk state
 

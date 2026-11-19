@@ -7,7 +7,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $root "src\SurgeLink.App\bin\x64\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe"
+$exeCandidates = @(
+  (Join-Path $root "src\SurgeLink.App\bin\x64\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe"),
+  (Join-Path $root "src\SurgeLink.App\bin\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe")
+)
+$exe = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 function Stop-OwnInstances($exePath) {
   Get-Process SurgeLink -ErrorAction SilentlyContinue | ForEach-Object {

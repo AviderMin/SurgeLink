@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Collections.Concurrent;
 using System.Text;
 using SurgeLink.Core.Files;
+using SurgeLink.Core.Protocols;
 
 namespace SurgeLink.Core.Tests;
 
@@ -602,6 +603,16 @@ public sealed class FileTransferQueueTests
                 Kind = Directories.ContainsKey(path) || Listings.ContainsKey(path) ? RemoteEntryKind.Directory : RemoteEntryKind.File,
                 Size = Files.TryGetValue(path, out var bytes) ? bytes.Length : 0,
             });
+        }
+
+        public Task<RemoteFileEntry?> TryStatAsync(string path, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (StatOverride?.Invoke(path) is { } overridden) { return Task.FromResult<RemoteFileEntry?>(overridden); }
+            var entry = Listings.Values.SelectMany(entries => entries).FirstOrDefault(item => item.FullPath == path);
+            if (entry is not null) { return Task.FromResult<RemoteFileEntry?>(entry); }
+            if (Directories.ContainsKey(path) || Files.ContainsKey(path)) { return Task.FromResult<RemoteFileEntry?>(null); }
+            return Task.FromResult<RemoteFileEntry?>(null);
         }
 
         public async Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken)

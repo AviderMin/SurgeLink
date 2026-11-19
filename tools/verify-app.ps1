@@ -62,6 +62,10 @@ function Invoke-Action($name, $type, [switch]$Select) {
   $out = & (Join-Path $PSScriptRoot "uia-action.ps1") @args 2>&1 | Out-String
   Write-Output ("        " + $out.Trim())
 }
+function Send-Keys($keys) {
+  $out = & (Join-Path $PSScriptRoot "uia-action.ps1") -Keys $keys -ProcessId $script:appPid 2>&1 | Out-String
+  Write-Output ("        " + $out.Trim())
+}
 function Get-Control($name, $type, $root = $null) {
   Add-Type -AssemblyName UIAutomationClient
   Add-Type -AssemblyName UIAutomationTypes
@@ -88,8 +92,12 @@ function AssertEnabled($name, [bool]$expected, $label) {
   if ($control.Current.IsEnabled -eq $expected) { Pass $label } else { Fail $label ("enabled=" + $control.Current.IsEnabled) }
 }
 function Start-App {
-  $exe = Join-Path $root "src\SurgeLink.App\bin\x64\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe"
-  if (-not (Test-Path $exe)) { throw "missing exe: $exe" }
+  $candidates = @(
+    (Join-Path $root "src\SurgeLink.App\bin\x64\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe"),
+    (Join-Path $root "src\SurgeLink.App\bin\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe")
+  )
+  $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if (-not $exe) { throw ("missing exe: " + ($candidates -join " or ")) }
   $p = Start-Process -FilePath $exe -PassThru
   $script:appPid = $p.Id
   Start-Sleep -Seconds $WaitSeconds
@@ -164,6 +172,24 @@ AssertContains $demo "RAM usage" "compact monitor shows RAM gauge"
 AssertContains $demo "Disk" "compact monitor shows disk throughput"
 AssertMissing $demo "Render error" "no render errors after connect"
 
+Step "Terminal search"
+& (Join-Path $PSScriptRoot "uia-action.ps1") -AutomationId "TerminalSurface" -Click -ProcessId $script:appPid | Out-Null
+Start-Sleep -Milliseconds 300
+Send-Keys "^+f"
+Start-Sleep -Seconds 1
+$searchOpen = Dump "02c-search"
+AssertContains $searchOpen "TerminalSearchBox" "Ctrl+Shift+F opens the find bar"
+AssertContains $searchOpen "TerminalSearchStatus" "find bar exposes a match counter"
+& (Join-Path $PSScriptRoot "uia-action.ps1") -AutomationId "TerminalSearchBox" -SetValue -Value "SurgeLink" -ProcessId $script:appPid | Out-Null
+Start-Sleep -Seconds 1
+$searchResult = Dump "02d-search-result"
+AssertContains $searchResult "1 of 1" "find bar reports the banner match"
+AssertMissing $searchResult "Render error" "no render error while searching"
+& (Join-Path $PSScriptRoot "uia-action.ps1") -AutomationId "TerminalSearchClose" -Type Button -ProcessId $script:appPid | Out-Null
+Start-Sleep -Milliseconds 700
+$searchClosed = Dump "02e-search-closed"
+AssertMissing $searchClosed "TerminalSearchBox" "Esc closes the find bar"
+
 Step "Clear session filter"
 & (Join-Path $PSScriptRoot "uia-action.ps1") -AutomationId "SessionFilter" -SetValue -Value "__surge_no_match__" -ProcessId $script:appPid
 Start-Sleep -Milliseconds 700
@@ -235,10 +261,11 @@ if ($null -ne $editorWindow) {
     Start-Sleep -Milliseconds 700
     $actualText = $editorText.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(-1)
     $normalizedText = $actualText.Replace("`r`n", "`n").Replace("`r", "`n")
-    $gutter = $editorWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+    $gutterLabels = @($editorWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants,
       [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
-        $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Pane -and $_.Current.Name.Replace(" ", "") -eq ("1" + [char]10 + "2" + [char]10 + "3")
-      } | Select-Object -First 1
+        $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Text -and $_.Current.Name -in @("1", "2", "3")
+      })
+    $gutter = if ($gutterLabels.Count -ge 3) { $gutterLabels[0] } else { $null }
     if ($normalizedText -eq "first`n`ntarget" -and $null -ne $gutter) {
       Pass "CRLF editing preserves empty lines, line numbers and content after find"
     } else { Fail "CRLF editing preserves empty lines, line numbers and content after find" }
@@ -307,6 +334,10 @@ Start-Sleep -Seconds 2
 $dialog = Dump "06-new-session"
 AssertContains $dialog "Session name" "session editor opened"
 AssertContains $dialog "Host" "session editor has host field"
+AssertContains $dialog "ProtocolOption-encoding" "SSH advanced settings: output encoding"
+AssertContains $dialog "ProtocolOption-terminalType" "SSH advanced settings: terminal type"
+AssertContains $dialog "ProtocolOption-useLegacyAlgorithms" "SSH advanced settings: legacy algorithms"
+AssertContains $dialog "ProtocolOption-commandTimeoutSeconds" "SSH advanced settings: command timeout"
 AssertMissing $dialog "Render error" "no render errors in dialog"
 
 Step "Session editor validation and event lifetime"

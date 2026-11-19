@@ -125,6 +125,87 @@ public sealed class SshProtocolOptionsTests
         Assert.Throws<ArgumentNullException>(() => new SshProtocolOptions(null!));
     }
 
+    [Fact]
+    public void DescriptorExposesTheAdvancedOptionsInOrder()
+    {
+        var fields = SshProtocolPlugin.DefaultDescriptor.ConnectionOptions;
+
+        Assert.Same(SshProtocolPlugin.AdvancedOptions, fields);
+        Assert.Equal(
+            new[]
+            {
+                SshProtocolOptions.EncodingKey,
+                SshProtocolOptions.TerminalTypeKey,
+                SshProtocolOptions.UseLegacyAlgorithmsKey,
+                SshProtocolOptions.PreferredKeyExchangeKey,
+                SshProtocolOptions.CommandTimeoutSecondsKey,
+            },
+            fields.Select(field => field.Key));
+    }
+
+    [Fact]
+    public void DescriptorDefaultsAreValid()
+    {
+        var fields = SshProtocolPlugin.DefaultDescriptor.ConnectionOptions.ToDictionary(field => field.Key, StringComparer.Ordinal);
+
+        Assert.Equal(5, fields.Count);
+        Assert.Equal("utf-8", fields[SshProtocolOptions.EncodingKey].DefaultValue);
+        Assert.Equal(SshProtocolOptions.DefaultTerminalType, fields[SshProtocolOptions.TerminalTypeKey].DefaultValue);
+        Assert.Equal("false", fields[SshProtocolOptions.UseLegacyAlgorithmsKey].DefaultValue);
+        Assert.Equal(string.Empty, fields[SshProtocolOptions.PreferredKeyExchangeKey].DefaultValue);
+        Assert.Equal("20", fields[SshProtocolOptions.CommandTimeoutSecondsKey].DefaultValue);
+        Assert.All(fields.Values, field => Assert.True(field.IsValid(field.DefaultValue), $"Default value of {field.Key} must be valid."));
+    }
+
+    [Fact]
+    public void DescriptorValidationRejectsUnknownChoicesAndOutOfRangeValues()
+    {
+        var fields = SshProtocolPlugin.DefaultDescriptor.ConnectionOptions.ToDictionary(field => field.Key, StringComparer.Ordinal);
+
+        var encoding = fields[SshProtocolOptions.EncodingKey];
+        Assert.Equal(new[] { "utf-8", "latin1", "ascii" }, encoding.Choices);
+        Assert.True(encoding.IsValid("latin1"));
+        Assert.True(encoding.IsValid("UTF-8"));
+        Assert.False(encoding.IsValid("utf-16"));
+
+        Assert.True(fields[SshProtocolOptions.TerminalTypeKey].IsValid("screen"));
+        Assert.True(fields[SshProtocolOptions.TerminalTypeKey].IsValid(string.Empty));
+
+        var legacy = fields[SshProtocolOptions.UseLegacyAlgorithmsKey];
+        Assert.True(legacy.IsBoolean);
+        Assert.True(legacy.IsValid("true"));
+        Assert.False(legacy.IsValid("maybe"));
+
+        var timeout = fields[SshProtocolOptions.CommandTimeoutSecondsKey];
+        Assert.Equal(1, timeout.Minimum);
+        Assert.Equal(300, timeout.Maximum);
+        Assert.True(timeout.IsValid("1"));
+        Assert.True(timeout.IsValid("300"));
+        Assert.False(timeout.IsValid("0"));
+        Assert.False(timeout.IsValid("301"));
+        Assert.False(timeout.IsValid("20.5"));
+    }
+
+    [Fact]
+    public void NonDefaultOptionsAreReadFromTheRequest()
+    {
+        var options = new SshProtocolOptions(CreateRequest(new Dictionary<string, string>
+        {
+            [SshProtocolOptions.EncodingKey] = "latin1",
+            [SshProtocolOptions.TerminalTypeKey] = "screen",
+            [SshProtocolOptions.UseLegacyAlgorithmsKey] = "true",
+            [SshProtocolOptions.PreferredKeyExchangeKey] = "curve25519-sha256",
+            [SshProtocolOptions.CommandTimeoutSecondsKey] = "60",
+        }));
+
+        Assert.Equal("latin1", options.EncodingName);
+        Assert.Equal(Encoding.Latin1, options.Encoding);
+        Assert.Equal("screen", options.TerminalType);
+        Assert.True(options.UseLegacyAlgorithms);
+        Assert.Equal("curve25519-sha256", options.PreferredKeyExchange);
+        Assert.Equal(TimeSpan.FromSeconds(60), options.CommandTimeout);
+    }
+
     private static ConnectionRequest CreateRequest(IReadOnlyDictionary<string, string>? options = null) => new()
     {
         Host = "example.com",

@@ -18,20 +18,26 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger _logger;
     private readonly IAppSettingsStore? _settings;
+    private readonly string _terminalType;
     private readonly SemaphoreSlim _resizeGate = new(1, 1);
+    private readonly CancellationTokenSource _lifetime = new();
+    private readonly object _disposeGate = new();
+    private Task? _disposeTask;
     private long _resizeRequest;
     private (int Columns, int Rows) _remoteSize;
     private int _repaintScheduled;
+    private int _activityScheduled;
     private int _closed;
 
     /// <summary>Wraps a remote terminal; call <see cref="StartAsync"/> to open the shell channel.</summary>
     public TerminalBridge(IRemoteTerminal remote, IUiDispatcher dispatcher, ILogger logger, int columns = 120, int rows = 32,
-        IAppSettingsStore? settings = null)
+        IAppSettingsStore? settings = null, string? terminalType = null)
     {
         _remote = remote;
         _dispatcher = dispatcher;
         _logger = logger;
         _settings = settings;
+        _terminalType = string.IsNullOrWhiteSpace(terminalType) ? "xterm-256color" : terminalType.Trim();
         Emulator = new TerminalEmulator(columns, rows, settings?.Current.TerminalScrollbackLines ?? 10000);
         _remoteSize = (columns, rows);
         if (settings is not null) settings.Changed += OnSettingsChanged;
@@ -52,6 +58,12 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
 
     /// <summary>Raised on the UI thread after new output was parsed; coalesced per frame.</summary>
     public event EventHandler? Invalidated;
+
+    /// <summary>
+    /// Raised on the UI thread when remote terminal output arrives. Coalesced per
+    /// dispatcher turn so a fast stream does not queue one notification per chunk.
+    /// </summary>
+    public event EventHandler? Activity;
 
     /// <summary>Raised on the UI thread when the remote shell exits.</summary>
     public event EventHandler? Closed;
@@ -74,7 +86,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         }
 
         return _remote.StartAsync(
-            new TerminalStartOptions { Columns = columns, Rows = rows, TerminalType = "xterm-256color" },
+            new TerminalStartOptions { Columns = columns, Rows = rows, TerminalType = _terminalType },
             cancellationToken);
     }
 
@@ -152,7 +164,9 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
             }
         }
 
-        await _resizeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        var token = linked.Token;
+        await _resizeGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
             // A later request superseded this one while it waited; that request
@@ -166,7 +180,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
             // remote resize. Local dimensions alone do not confirm delivery.
             if (_remoteSize != (columns, rows))
             {
-                await _remote.ResizeAsync(columns, rows, cancellationToken).ConfigureAwait(false);
+                await _remote.ResizeAsync(columns, rows, token).ConfigureAwait(false);
                 _remoteSize = (columns, rows);
             }
         }
@@ -184,15 +198,26 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     {
         try
         {
-            await _inputGate.WaitAsync().ConfigureAwait(false);
-            try { if (!IsClosed) await _remote.WriteAsync(bytes).ConfigureAwait(false); }
+            // The lifetime token lets DisposeAsync cancel a blocked write without
+            // waiting for the remote transport to release it first.
+            await _inputGate.WaitAsync(_lifetime.Token).ConfigureAwait(false);
+            try { if (!IsClosed) await _remote.WriteAsync(bytes, _lifetime.Token).ConfigureAwait(false); }
             finally { _inputGate.Release(); }
         }
         catch (Exception ex)
         {
             // The write path wraps protocol failures in ProtocolException; an
             // async void handler must never let any of them escape unobserved.
-            _logger.LogDebug(ex, "Terminal write failed; the channel is probably closed.");
+            // A failure while the channel still claims to be open is actionable
+            // diagnostics and must reach the normal Information-level log file.
+            if (IsClosed)
+            {
+                _logger.LogDebug(ex, "Terminal write failed after the channel closed.");
+            }
+            else
+            {
+                _logger.LogWarning(ex, "Terminal write failed while the session is open.");
+            }
         }
     }
 
@@ -205,6 +230,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         }
 
         ScheduleRepaint();
+        ScheduleActivity();
     }
 
     private void OnRemoteClosed(object? sender, EventArgs e)
@@ -229,6 +255,20 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         });
     }
 
+    private void ScheduleActivity()
+    {
+        if (Interlocked.Exchange(ref _activityScheduled, 1) != 0)
+        {
+            return;
+        }
+
+        _dispatcher.Post(() =>
+        {
+            Interlocked.Exchange(ref _activityScheduled, 0);
+            Activity?.Invoke(this, EventArgs.Empty);
+        });
+    }
+
     private void RaiseInvalidated()
     {
         if (_dispatcher.IsOnUiThread)
@@ -242,15 +282,27 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     }
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+    {
+        // Share one completion among every close caller. Do not wait for
+        // _inputGate here: a write may be blocked inside the transport and only
+        // complete after DisposeAsync releases that transport.
+        lock (_disposeGate)
+        {
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+        }
+    }
+
+    private async Task DisposeCoreAsync()
     {
         Interlocked.Exchange(ref _closed, 1);
+        try { _lifetime.Cancel(); }
+        catch (ObjectDisposedException) { /* already disposed by an earlier caller */ }
+
         if (_settings is not null) _settings.Changed -= OnSettingsChanged;
         Emulator.ResponseRequested -= OnResponseRequested;
         _remote.OutputReceived -= OnOutputReceived;
         _remote.Closed -= OnRemoteClosed;
-        await _inputGate.WaitAsync().ConfigureAwait(false);
-        try { await _remote.DisposeAsync().ConfigureAwait(false); }
-        finally { _inputGate.Release(); }
+        await _remote.DisposeAsync().ConfigureAwait(false);
     }
 }

@@ -38,8 +38,10 @@ public static class RemoteFileWrite
         try
         {
             if (validateDestination is not null) await validateDestination(cancellationToken).ConfigureAwait(false);
-            var siblings = await fileSystem.ListAsync(directory, cancellationToken).ConfigureAwait(false);
-            var existing = siblings.FirstOrDefault(entry => entry.Name == destination[(separator + 1)..]);
+            // A single path stat avoids downloading a directory listing for every
+            // file. CommitWriteAsync still re-checks and never overwrites when
+            // overwrite is false, so this lookup is only a fast, friendly precheck.
+            var existing = await fileSystem.TryStatAsync(destination, cancellationToken).ConfigureAwait(false);
             if (existing is not null && (!overwrite || existing.Kind != RemoteEntryKind.File))
             {
                 throw new IOException($"Destination already exists or is not a regular file: {destination}");

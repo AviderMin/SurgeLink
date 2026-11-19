@@ -99,7 +99,14 @@ resize  ──> TerminalSurface measured cols/rows ──> TerminalBridge.Resize
 
 The emulator owns the scrollback; `GetCell(row, column)` reads the *viewport* so the renderer
 never has to know about history. `Version` and the coalesced `Invalidated` event keep repaints
-proportional to output, not to keystrokes.
+proportional to output, not to keystrokes. `FindText` searches the retained scrollback and the
+current viewport under the same lock and returns absolute line/column spans; the surface paints
+them as search bands without rebuilding terminal text or allocating per-cell elements.
+Narrowing the window keeps hidden cells behind a shorter logical row, so widening restores the
+original text; none of the resize paths attempt logical-line reflow. Before an active-screen
+edit moves cells, a wide glyph cut by the current right edge is removed together with its hidden
+continuation, and the remaining hidden cells are cleared, so widening cannot resurrect erased
+text or leave an orphan half.
 
 ## Remote monitoring
 

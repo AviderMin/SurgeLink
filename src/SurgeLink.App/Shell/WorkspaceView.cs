@@ -76,7 +76,8 @@ internal static class WorkspaceView
                     item.VerticalContentAlignment = VerticalAlignment.Stretch;
                     SessionTabHeader.Apply(item, tab.Title,
                         tab.Session.HostInfo?.OperatingSystem ?? tab.Profile.DetectedOperatingSystem,
-                        props.AgentControlledTabs.Contains(tab.Id));
+                        props.AgentControlledTabs.Contains(tab.Id),
+                        tab.HasActivity);
                 }
             })
             .IsAddTabButtonVisible(true)

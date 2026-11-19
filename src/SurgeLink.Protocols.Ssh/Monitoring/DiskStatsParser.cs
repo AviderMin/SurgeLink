@@ -55,7 +55,10 @@ public static class DiskStatsParser
         return (read, write);
     }
 
-    /// <summary>True for a whole block device, false for its partition or a pseudo device.</summary>
+    /// <summary>
+    /// True for a whole physical block device, false for a partition, a pseudo
+    /// device, or a stacked logical device whose I/O is also counted at a lower layer.
+    /// </summary>
     public static bool IsWholeDevice(string deviceName)
     {
         if (string.IsNullOrWhiteSpace(deviceName))
@@ -67,7 +70,12 @@ public static class DiskStatsParser
         if (name.StartsWith("loop", StringComparison.OrdinalIgnoreCase)
             || name.StartsWith("ram", StringComparison.OrdinalIgnoreCase)
             || name.StartsWith("zram", StringComparison.OrdinalIgnoreCase)
-            || name.StartsWith("sr", StringComparison.OrdinalIgnoreCase))
+            || name.StartsWith("sr", StringComparison.OrdinalIgnoreCase)
+            // /proc/diskstats reports both a device-mapper volume (dm-*) or a
+            // software RAID array (md*) and the physical disks below it. Summing
+            // both layers counts the same I/O twice; use the physical layer.
+            || name.StartsWith("dm-", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("md", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }

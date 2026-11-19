@@ -7,7 +7,10 @@ param(
   [string]$Value = "",
   [int]$TimeoutSeconds = 10,
   [int]$Index = 0,
-  [int]$ProcessId = 0
+  [int]$ProcessId = 0,
+  [string]$Keys = "",
+  [switch]$Focus,
+  [switch]$Click
 )
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -19,6 +22,24 @@ if ($ProcessId -gt 0) {
   if (-not $procs) { Write-Output "NO RUNNING INSTANCE"; exit 2 }
   $proc = $procs | Select-Object -First 1
 }
+if ($Keys) {
+  Add-Type -AssemblyName System.Windows.Forms
+  $keySig = @'
+using System;
+using System.Runtime.InteropServices;
+public class SurgeLinkKeyInput {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+}
+'@
+  Add-Type -TypeDefinition $keySig
+  [SurgeLinkKeyInput]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
+  Start-Sleep -Milliseconds 400
+  [System.Windows.Forms.SendKeys]::SendWait($Keys)
+  Write-Output ("SENTKEYS '" + $Keys + "' foreground=" + [SurgeLinkKeyInput]::GetForegroundWindow())
+  exit 0
+}
+
 $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
 $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $proc.Id)
 $win = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $cond) | Where-Object { $_.Current.Name -eq "SurgeLink" } | Select-Object -First 1
@@ -52,7 +73,35 @@ while ($script:matches.Count -le $Index -and (Get-Date) -lt $deadline) {
 }
 if ($script:matches.Count -le $Index) { Write-Output "NOT FOUND name='$Name' id='$AutomationId' type='$Type'"; exit 3 }
 $target = $script:matches[$Index]
-if ($SetValue) {
+if ($Focus) {
+  try {
+    $target.SetFocus()
+    Write-Output "FOCUSED name='$($target.Current.Name)' id='$($target.Current.AutomationId)'"
+  } catch {
+    Write-Output ("FOCUS FAILED: " + $_.Exception.Message)
+  }
+} elseif ($Click) {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class SurgeLinkMouse {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  public static void Click(int x, int y) {
+    SetCursorPos(x, y);
+    mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+    mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+  }
+}
+'@
+  $rect = $target.Current.BoundingRectangle
+  if ($rect.Width -le 0 -or $rect.Height -le 0) { Write-Output "CLICK FAILED: empty bounds"; exit 4 }
+  $x = [int]($rect.X + ($rect.Width / 2))
+  $y = [int]($rect.Y + ($rect.Height / 2))
+  [SurgeLinkMouse]::Click($x, $y)
+  Write-Output ("CLICKED name='" + $target.Current.Name + "' at " + $x + "," + $y)
+} elseif ($SetValue) {
   $pattern = $target.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
   $pattern.SetValue($Value)
   Write-Output "SETVALUE name='$($target.Current.Name)' value='$Value'"

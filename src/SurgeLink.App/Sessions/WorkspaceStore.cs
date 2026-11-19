@@ -54,6 +54,9 @@ public sealed class WorkspaceTab
 
     public string? Message { get; internal set; }
 
+    /// <summary>True when output arrived while this tab was not active; cleared when it becomes active.</summary>
+    public bool HasActivity { get; internal set; }
+
     public SessionViewKind View { get; internal set; } = SessionViewKind.Terminal;
 
     /// <summary>Last directory browsed in the Files view; retained across view switches.</summary>
@@ -189,7 +192,8 @@ public sealed class WorkspaceStore
             cancellationToken.ThrowIfCancellationRequested();
             if (session.Terminal is { } remoteTerminal)
             {
-                terminal = new TerminalBridge(remoteTerminal, _dispatcher, _logger, settings: _settings);
+                terminal = new TerminalBridge(remoteTerminal, _dispatcher, _logger, settings: _settings,
+                    terminalType: TerminalTypeFor(profile));
                 await terminal.StartAsync(cancellationToken);
             }
 
@@ -206,6 +210,7 @@ public sealed class WorkspaceStore
             if (terminal is not null)
             {
                 terminal.Closed += (_, _) => OnTerminalClosed(tab, terminal);
+                terminal.Activity += (_, _) => OnTerminalActivity(tab, terminal);
             }
 
             // Merge only connection metadata into a still-existing, matching profile.
@@ -302,7 +307,16 @@ public sealed class WorkspaceStore
             {
                 var remaining = s.Tabs.Where(t => t.Id != tab.Id).ToList();
                 _closing.Remove(tab.Id);
-                return s with { Tabs = remaining, ActiveTabId = s.ActiveTabId == tab.Id ? remaining.LastOrDefault()?.Id : s.ActiveTabId };
+                var activeTabId = s.ActiveTabId == tab.Id ? remaining.LastOrDefault()?.Id : s.ActiveTabId;
+                // Closing the active tab activates another one implicitly; it must
+                // not keep an indicator that only applies to background tabs.
+                if (activeTabId is Guid nextActiveId)
+                {
+                    var nextActive = remaining.FirstOrDefault(t => t.Id == nextActiveId);
+                    if (nextActive is not null) { nextActive.HasActivity = false; }
+                }
+
+                return s with { Tabs = remaining, ActiveTabId = activeTabId };
             });
             completion.TrySetResult();
         }
@@ -361,7 +375,8 @@ public sealed class WorkspaceStore
                 foreach (Func<WorkspaceTab, Task> handler in replacing.GetInvocationList()) { await handler(tab); }
             cancellationToken.ThrowIfCancellationRequested();
             var remote = await tab.Session.ReopenTerminalAsync(cancellationToken);
-            replacement = new TerminalBridge(remote, _dispatcher, _logger, settings: _settings);
+            replacement = new TerminalBridge(remote, _dispatcher, _logger, settings: _settings,
+                terminalType: TerminalTypeFor(tab.Profile));
             await replacement.StartAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             var previous = tab.Terminal;
@@ -373,6 +388,7 @@ public sealed class WorkspaceStore
                 tab.Terminal = opened;
                 tab.Message = opened.IsClosed ? "Remote shell exited." : null;
                 opened.Closed += (_, _) => OnTerminalClosed(tab, opened);
+                opened.Activity += (_, _) => OnTerminalActivity(tab, opened);
                 replacement = null;
             }
             if (opened.IsClosed) { OnTerminalClosed(tab, opened); }
@@ -399,15 +415,31 @@ public sealed class WorkspaceStore
         }
     }
 
+    /// <summary>Reads the generic TERM option a profile carries for its protocol.</summary>
+    private static string? TerminalTypeFor(SessionProfile profile) =>
+        profile.Options.TryGetValue("terminalType", out string? value) && !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
+
     private static bool SameConnection(SessionProfile left, SessionProfile right) =>
         left.ProtocolId == right.ProtocolId && left.Host == right.Host && left.Port == right.Port
         && left.Username == right.Username && left.Authentication == right.Authentication
         && left.PrivateKeyPath == right.PrivateKeyPath && left.Options.Count == right.Options.Count
         && left.Options.All(pair => right.Options.TryGetValue(pair.Key, out var value) && value == pair.Value);
 
-    /// <summary>Makes a tab active.</summary>
-    public void Activate(Guid tabId) =>
-        Update(s => s.Tabs.Any(t => t.Id == tabId) ? s with { ActiveTabId = tabId } : s);
+    /// <summary>Makes a tab active and clears its new-output indicator.</summary>
+    public void Activate(Guid tabId)
+    {
+        var tab = Snapshot.Tabs.FirstOrDefault(t => t.Id == tabId);
+        if (tab is null)
+        {
+            return;
+        }
+
+        var clearedActivity = tab.HasActivity;
+        tab.HasActivity = false;
+        Update(s => s.Tabs.Any(t => t.Id == tabId) ? s with { ActiveTabId = tabId } : s, force: clearedActivity);
+    }
 
     /// <summary>Remembers the last directory browsed by the Files view for one tab.</summary>
     public void SetFileBrowserPath(Guid tabId, string path)
@@ -519,6 +551,21 @@ public sealed class WorkspaceStore
 
             if (Snapshot.Tabs.Contains(tab)) { Update(s => s, force: true); }
         });
+    }
+
+    private void OnTerminalActivity(WorkspaceTab tab, TerminalBridge terminal)
+    {
+        // TerminalBridge raises Activity on the UI thread after coalescing output chunks.
+        // A final output notification may already be queued when the remote shell
+        // raises Closed; keep it as long as this is still the tab's terminal.
+        if (tab.IsClosing || tab.State != ConnectionState.Connected
+            || !ReferenceEquals(tab.Terminal, terminal)) { return; }
+
+        var snapshot = Snapshot;
+        if (tab.HasActivity || snapshot.ActiveTabId == tab.Id || !snapshot.Tabs.Contains(tab)) { return; }
+
+        tab.HasActivity = true;
+        Update(s => s, force: true);
     }
 
     private void OnTerminalClosed(WorkspaceTab tab, TerminalBridge terminal)

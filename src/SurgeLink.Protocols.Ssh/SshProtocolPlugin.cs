@@ -15,6 +15,32 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
     /// <summary>Default TCP port for SSH.</summary>
     public const int DefaultPort = 22;
 
+    /// <summary>Protocol settings exposed by the session editor for SSH profiles.</summary>
+    public static readonly IReadOnlyList<ProtocolOptionDescriptor> AdvancedOptions =
+    [
+        new(SshProtocolOptions.EncodingKey, "Command output encoding", "utf-8")
+        {
+            Choices = ["utf-8", "latin1", "ascii"],
+            ChoiceLabels = new Dictionary<string, string>
+            {
+                ["utf-8"] = "UTF-8",
+                ["latin1"] = "Latin-1 (ISO-8859-1)",
+                ["ascii"] = "ASCII",
+            },
+        },
+        new(SshProtocolOptions.TerminalTypeKey, "Terminal type", SshProtocolOptions.DefaultTerminalType),
+        new(SshProtocolOptions.UseLegacyAlgorithmsKey, "Use legacy algorithms (weakens security)", "false")
+        {
+            IsBoolean = true,
+        },
+        new(SshProtocolOptions.PreferredKeyExchangeKey, "Preferred key exchange", string.Empty),
+        new(SshProtocolOptions.CommandTimeoutSecondsKey, "Command timeout (seconds)", "20")
+        {
+            Minimum = 1,
+            Maximum = 300,
+        },
+    ];
+
     /// <summary>Metadata used by the session picker and the composition root.</summary>
     public static ProtocolDescriptor DefaultDescriptor { get; } = new(
         "ssh",
@@ -24,6 +50,7 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
     {
         Glyph = "\uE8CE",
         Description = "Secure Shell, SFTP/SCP and remote monitor",
+        ConnectionOptions = AdvancedOptions,
     };
 
     /// <inheritdoc />

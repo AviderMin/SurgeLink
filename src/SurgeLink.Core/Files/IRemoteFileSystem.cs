@@ -1,3 +1,5 @@
+using SurgeLink.Core.Protocols;
+
 namespace SurgeLink.Core.Files;
 
 /// <summary>Progress of a single file transfer.</summary>
@@ -28,6 +30,24 @@ public interface IRemoteFileSystem
 
     /// <summary>Resolves a single entry, following no symlinks.</summary>
     Task<RemoteFileEntry> StatAsync(string path, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves a single entry, returning <c>null</c> when the server reports that
+    /// the path does not exist. Protocols that use one stat call per path can
+    /// override this; the default intentionally maps only "configuration/not
+    /// found" failures to <c>null</c> and lets transport failures propagate.
+    /// </summary>
+    async Task<RemoteFileEntry?> TryStatAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await StatAsync(path, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ProtocolException exception) when (exception.Kind == ProtocolFailureKind.Configuration)
+        {
+            return null;
+        }
+    }
 
     /// <summary>Opens a readable stream; the caller disposes it.</summary>
     Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken);

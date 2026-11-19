@@ -47,6 +47,59 @@ public sealed class ResizeTests
     }
 
     [Fact]
+    public void HeightOnlyResizeKeepsPendingWrap()
+    {
+        var terminal = new TestTerminal(10, 3);
+        terminal.Feed("abcdefghij");
+
+        terminal.Emulator.Resize(10, 4);
+        terminal.Feed("K");
+
+        Assert.Equal("abcdefghij", terminal.Line(0));
+        Assert.Equal("K", terminal.Line(1));
+    }
+
+    [Fact]
+    public void HeightOnlyShrinkKeepsPendingWrap()
+    {
+        var terminal = new TestTerminal(10, 5);
+        terminal.Feed("abcdefghij");
+
+        terminal.Emulator.Resize(10, 3);
+        terminal.Feed("K");
+
+        Assert.Equal("abcdefghij", terminal.Line(0));
+        Assert.Equal("K", terminal.Line(1));
+    }
+
+    [Fact]
+    public void WidthGrowthClearsPendingWrap()
+    {
+        var terminal = new TestTerminal(10, 3);
+        terminal.Feed("abcdefghij");
+
+        terminal.Emulator.Resize(20, 3);
+        terminal.Feed("K");
+
+        // The cursor stays at the old right edge, so the glyph replaces the
+        // cell instead of wrapping to a new row.
+        Assert.Equal("abcdefghiK", terminal.Line(0));
+        Assert.Equal(string.Empty, terminal.Line(1));
+    }
+
+    [Fact]
+    public void WidthShrinkClearsPendingWrap()
+    {
+        var terminal = new TestTerminal(10, 3);
+        terminal.Feed("abcdefghij");
+
+        terminal.Emulator.Resize(5, 3);
+        terminal.Feed("K");
+
+        Assert.Equal("abcdK", terminal.Line(0));
+    }
+
+    [Fact]
     public void CursorIsClampedOnResize()
     {
         var terminal = new TestTerminal(10, 5);

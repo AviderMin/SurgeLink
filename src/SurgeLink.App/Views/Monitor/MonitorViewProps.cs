@@ -36,14 +36,15 @@ internal sealed class MonitorHistory
     private readonly List<double> _received = new(Capacity);
     private readonly List<double> _sent = new(Capacity);
     private DateTimeOffset? _lastTimestamp;
-    private long _lastReceived;
-    private long _lastSent;
+    private readonly Dictionary<string, (long Received, long Sent)> _lastNetworks = new(StringComparer.Ordinal);
+    private double _receiveRate;
+    private double _sendRate;
 
     /// <summary>Latest download rate in bytes per second.</summary>
-    public double ReceiveRate { get; private set; }
+    public double ReceiveRate { get { lock (_gate) return _receiveRate; } }
 
     /// <summary>Latest upload rate in bytes per second.</summary>
-    public double SendRate { get; private set; }
+    public double SendRate { get { lock (_gate) return _sendRate; } }
 
     /// <summary>CPU percentage history, oldest first.</summary>
     public IReadOnlyList<double> CpuHistory => Snapshot(_cpu);
@@ -60,39 +61,59 @@ internal sealed class MonitorHistory
     /// <summary>Appends a sample and derives the throughput rates.</summary>
     public void Add(SystemSnapshot snapshot)
     {
-        var received = 0L;
-        var sent = 0L;
-        foreach (var network in snapshot.Networks)
-        {
-            received += network.BytesReceived;
-            sent += network.BytesSent;
-        }
-
         lock (_gate)
         {
             var seconds = _lastTimestamp is { } previous
                 ? (snapshot.TimestampUtc - previous).TotalSeconds
                 : 0d;
 
+            // Keep one baseline per interface. Summing all counters first loses
+            // information when one adapter resets while another keeps moving,
+            // and treats interfaces that appear or disappear as traffic spikes.
+            var receivedDelta = 0L;
+            var sentDelta = 0L;
+            var current = new Dictionary<string, (long Received, long Sent)>(
+                snapshot.Networks.Count,
+                StringComparer.Ordinal);
+            foreach (var network in snapshot.Networks)
+            {
+                current[network.InterfaceName] = (network.BytesReceived, network.BytesSent);
+                if (_lastNetworks.TryGetValue(network.InterfaceName, out var last))
+                {
+                    if (network.BytesReceived >= last.Received)
+                    {
+                        receivedDelta += network.BytesReceived - last.Received;
+                    }
+
+                    if (network.BytesSent >= last.Sent)
+                    {
+                        sentDelta += network.BytesSent - last.Sent;
+                    }
+                }
+            }
+
             if (_lastTimestamp is not null && seconds > 0.05)
             {
-                ReceiveRate = received >= _lastReceived ? (received - _lastReceived) / seconds : 0d;
-                SendRate = sent >= _lastSent ? (sent - _lastSent) / seconds : 0d;
+                _receiveRate = receivedDelta / seconds;
+                _sendRate = sentDelta / seconds;
             }
             else
             {
-                ReceiveRate = 0d;
-                SendRate = 0d;
+                _receiveRate = 0d;
+                _sendRate = 0d;
             }
 
             _lastTimestamp = snapshot.TimestampUtc;
-            _lastReceived = received;
-            _lastSent = sent;
+            _lastNetworks.Clear();
+            foreach (var pair in current)
+            {
+                _lastNetworks[pair.Key] = pair.Value;
+            }
 
             Append(_cpu, snapshot.Cpu.TotalPercent);
             Append(_memory, snapshot.Memory.UsedFraction * 100);
-            Append(_received, ReceiveRate);
-            Append(_sent, SendRate);
+            Append(_received, _receiveRate);
+            Append(_sent, _sendRate);
         }
     }
 

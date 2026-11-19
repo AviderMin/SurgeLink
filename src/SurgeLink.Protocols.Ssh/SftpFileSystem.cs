@@ -197,7 +197,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
     {
         var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var fullPath = ResolvePath(client, path);
-        if (fullPath == "/")
+        if (IsRootPath(fullPath))
         {
             throw new ProtocolException("Refusing to delete the remote root directory.", ProtocolFailureKind.Configuration);
         }
@@ -211,14 +211,10 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
             }
 
             var entry = await GetEntryNoFollowAsync(client, fullPath, cancellationToken).ConfigureAwait(false);
-            if (entry.IsDirectory && !entry.IsSymbolicLink)
-            {
-                await client.DeleteDirectoryAsync(fullPath, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                await client.DeleteFileAsync(fullPath, cancellationToken).ConfigureAwait(false);
-            }
+            // Delete the entry object obtained from the parent directory listing.
+            // SftpClient.DeleteFileAsync canonicalizes the full path first, which
+            // would remove the link target instead of the link itself.
+            await entry.DeleteAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -263,7 +259,12 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
         try
         {
-            await client.RenameFileAsync(sourceFullPath, destinationFullPath, cancellationToken).ConfigureAwait(false);
+            // Resolve the source through its parent listing so a final symlink is
+            // renamed rather than its target. RenameFileAsync would canonicalize both
+            // paths first. MoveTo sends the raw FullName with SSH_FXP_RENAME and then
+            // issues a post-rename REALPATH of the destination only to refresh its name.
+            var entry = await GetEntryNoFollowAsync(client, sourceFullPath, cancellationToken).ConfigureAwait(false);
+            await Task.Run(() => entry.MoveTo(destinationFullPath), cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -428,46 +429,113 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
     private async Task DeleteTreeAsync(SftpClient client, string path, int depth, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (depth > MaximumDeleteDepth)
-        {
-            throw new ProtocolException(
-                $"Refusing to delete '{path}': the directory tree is deeper than {MaximumDeleteDepth} levels.",
-                ProtocolFailureKind.Configuration);
-        }
 
         ISftpFile entry;
         try
         {
-            entry = await client.GetAsync(path, cancellationToken).ConfigureAwait(false);
+            entry = await GetEntryNoFollowAsync(client, path, cancellationToken).ConfigureAwait(false);
         }
         catch (SftpPathNotFoundException)
         {
             return;
         }
 
+        await DeleteTreeEntryAsync(client, entry, depth, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Reuses the ISftpFile instances returned by the parent's READDIR instead of
+    // re-listing each parent for every child. Each entry keeps the link's own
+    // FullName/attributes, so DeleteAsync sends REMOVE/RMDIR without REALPATH and
+    // only genuine directories are enumerated.
+    private async Task DeleteTreeEntryAsync(
+        SftpClient client,
+        ISftpFile entry,
+        int depth,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (depth > MaximumDeleteDepth)
+        {
+            throw new ProtocolException(
+                $"Refusing to delete '{entry.FullName}': the directory tree is deeper than {MaximumDeleteDepth} levels.",
+                ProtocolFailureKind.Configuration);
+        }
+
         if (!entry.IsDirectory || entry.IsSymbolicLink)
         {
-            await client.DeleteFileAsync(path, cancellationToken).ConfigureAwait(false);
+            await DeleteEntryIgnoringMissingAsync(entry, cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        var children = new List<string>();
-        await foreach (var child in client.ListDirectoryAsync(path, cancellationToken).ConfigureAwait(false))
+        var children = new List<ISftpFile>();
+        var entryFullName = entry.FullName;
+        if (entryFullName.EndsWith("/.", StringComparison.Ordinal)
+            || entryFullName.EndsWith("/..", StringComparison.Ordinal))
         {
-            if (child.Name is "." or "..")
-            {
-                continue;
-            }
+            // READDIR/REALPATH report the resolved directory without the final
+            // dot segment; compare children against that resolved spelling.
+            entryFullName = PosixPath.Normalize(entryFullName);
+        }
 
-            children.Add(child.FullName);
+        var expectedPrefix = entryFullName.EndsWith('/') ? entryFullName : entryFullName + "/";
+        try
+        {
+            await foreach (var child in client.ListDirectoryAsync(entry.FullName, cancellationToken).ConfigureAwait(false))
+            {
+                if (child.Name is "." or "..")
+                {
+                    continue;
+                }
+
+                // SFTP names are single path components. Reject malformed server
+                // replies instead of letting an embedded separator escape the
+                // directory prefix checked below.
+                if (child.Name.Contains('/') || child.Name.Contains('\0'))
+                {
+                    throw new ProtocolException(
+                        $"Refusing to delete '{entry.FullName}': the server returned an invalid child name.",
+                        ProtocolFailureKind.Configuration);
+                }
+
+                // ListDirectoryAsync canonicalizes the directory path. If the
+                // entry was swapped for a link after the parent READDIR, the
+                // children will be reported under the link target instead.
+                if (!child.FullName.StartsWith(expectedPrefix, StringComparison.Ordinal))
+                {
+                    throw new ProtocolException(
+                        $"Refusing to delete '{entry.FullName}': the directory was replaced while being enumerated.",
+                        ProtocolFailureKind.Configuration);
+                }
+
+                children.Add(child);
+            }
+        }
+        catch (SftpPathNotFoundException)
+        {
+            // The directory disappeared after the parent READDIR; it is already deleted.
+            return;
         }
 
         foreach (var child in children)
         {
-            await DeleteTreeAsync(client, child, depth + 1, cancellationToken).ConfigureAwait(false);
+            await DeleteTreeEntryAsync(client, child, depth + 1, cancellationToken).ConfigureAwait(false);
         }
 
-        await client.DeleteDirectoryAsync(path, cancellationToken).ConfigureAwait(false);
+        // RequestRmDir on the directory's own FullName; DeleteDirectoryAsync would REALPATH first.
+        // A concurrent delete between READDIR and RMDIR is also success for this tree delete.
+        await DeleteEntryIgnoringMissingAsync(entry, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task DeleteEntryIgnoringMissingAsync(ISftpFile entry, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await entry.DeleteAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (SftpPathNotFoundException)
+        {
+            // The entry was removed concurrently after the parent listed it.
+        }
     }
 
     private string ResolvePath(SftpClient client, string? path)
@@ -494,15 +562,58 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
     // final symbolic link before LSTAT. READDIR of the parent preserves its type.
     private static async Task<ISftpFile> GetEntryNoFollowAsync(SftpClient client, string path, CancellationToken cancellationToken)
     {
-        if (path == "/") { return await client.GetAsync(path, cancellationToken).ConfigureAwait(false); }
-        var separator = path.LastIndexOf('/');
-        var parent = separator == 0 ? "/" : path[..separator];
-        var name = path[(separator + 1)..];
-        await foreach (var entry in client.ListDirectoryAsync(parent, cancellationToken).ConfigureAwait(false))
+        // Resolve a trailing separator away without normalising dot segments:
+        // those must still be interpreted by the server, including through links.
+        var entryPath = path.Length > 1 ? path.TrimEnd('/') : path;
+        if (entryPath.Length == 0) { entryPath = "/"; }
+        if (entryPath == "/") { return await client.GetAsync(entryPath, cancellationToken).ConfigureAwait(false); }
+        var separator = entryPath.LastIndexOf('/');
+        var parent = separator == 0 ? "/" : entryPath[..separator];
+        var name = entryPath[(separator + 1)..];
+
+        // A final "." or ".." cannot be matched to a READDIR name. Let the
+        // server resolve its normal path semantics; a lexical rewrite would be
+        // wrong when an earlier component is a symbolic link.
+        if (name is "." or "..")
         {
-            if (string.Equals(entry.Name, name, StringComparison.Ordinal)) { return entry; }
+            var resolved = await client.GetAsync(path, cancellationToken).ConfigureAwait(false);
+            if (IsRootPath(resolved.FullName))
+            {
+                throw new ProtocolException(
+                    $"Refusing to inspect '{path}': it resolves to the remote root directory.",
+                    ProtocolFailureKind.Configuration);
+            }
+
+            return resolved;
         }
-        throw new SftpPathNotFoundException("Remote path not found: " + path);
+
+        try
+        {
+            await foreach (var entry in client.ListDirectoryAsync(parent, cancellationToken).ConfigureAwait(false))
+            {
+                if (string.Equals(entry.Name, name, StringComparison.Ordinal)) { return entry; }
+            }
+        }
+        catch (SftpPermissionDeniedException)
+        {
+            // A parent may grant wx (search/write) without r (list). A known
+            // non-link path can still be inspected through REALPATH + LSTAT;
+            // reject the fallback when REALPATH proves the requested path is a
+            // link or resolves somewhere else, because deleting/renaming it
+            // through the canonical target would be unsafe.
+            var resolved = await client.GetAsync(path, cancellationToken).ConfigureAwait(false);
+            var expected = PosixPath.Normalize(path);
+            if (!string.Equals(resolved.FullName.TrimEnd('/'), expected.TrimEnd('/'), StringComparison.Ordinal))
+            {
+                throw new ProtocolException(
+                    $"Cannot safely inspect '{path}': its parent is not readable and the path resolves elsewhere.",
+                    ProtocolFailureKind.Configuration);
+            }
+
+            return resolved;
+        }
+
+        throw new SftpPathNotFoundException("Remote path not found: " + entryPath);
     }
 
     private static RemoteFileEntry MapEntry(ISftpFile file)
@@ -547,6 +658,9 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         if (attributes.IsStickyBitSet) mode |= 0x200;
         return mode;
     }
+
+    /// <summary>True for paths that lexically resolve to the root; used before any recursive delete.</summary>
+    internal static bool IsRootPath(string path) => PosixPath.Normalize(path) == "/";
 
     // SSH.NET accepts octal *digits* (700), whereas our contract carries the
     // permission bit mask (0x1C0 / decimal 448).

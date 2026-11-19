@@ -7,6 +7,9 @@ namespace SurgeLink.App.Views.Terminal;
 /// <summary>Colours of one cell after palette resolution: what the renderer actually draws.</summary>
 internal readonly record struct TerminalCellStyle(uint Foreground, uint Background, CellAttributes Attributes);
 
+/// <summary>One highlighted search range on a viewport row.</summary>
+internal readonly record struct TerminalSearchSpan(int StartColumn, int EndColumn, bool Current);
+
 /// <summary>Viewport cell range covered by the current selection.</summary>
 internal readonly record struct TerminalSelectionRange(TerminalPosition First, TerminalPosition Last, bool HasSelection)
 {
@@ -72,7 +75,8 @@ internal sealed class TerminalRowSnapshot
         int row,
         int columns,
         TerminalStyleResolver resolver,
-        TerminalSelectionRange selection)
+        TerminalSelectionRange selection,
+        IReadOnlyList<TerminalSearchSpan>? search = null)
     {
         EnsureCapacity(columns);
         for (int column = 0; column < columns; column++)
@@ -83,11 +87,35 @@ internal sealed class TerminalRowSnapshot
             {
                 style = style with { Background = resolver.SelectionBackground };
             }
+            else if (search is { Count: > 0 } && TryFindSearchSpan(search, column, out bool current))
+            {
+                style = style with { Background = current ? resolver.SearchCurrentBackground : resolver.SearchBackground };
+            }
 
             Text[column] = (cell.Attributes & CellAttributes.Hidden) != 0 ? " " : cell.Text ?? " ";
             Style[column] = style;
             Width[column] = cell.Width;
         }
+    }
+
+    private static bool TryFindSearchSpan(IReadOnlyList<TerminalSearchSpan> spans, int column, out bool current)
+    {
+        var found = false;
+        for (int i = 0; i < spans.Count; i++)
+        {
+            TerminalSearchSpan span = spans[i];
+            if (column < span.StartColumn || column > span.EndColumn) { continue; }
+            if (span.Current)
+            {
+                current = true;
+                return true;
+            }
+
+            found = true;
+        }
+
+        current = false;
+        return found;
     }
 
     /// <summary>True when both snapshots would paint the same cells.</summary>

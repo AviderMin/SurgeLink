@@ -31,12 +31,14 @@ internal sealed partial class TerminalSurface
         long version;
         bool repaintAll = _allRowsDirty;
         var selection = TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret);
+        Dictionary<int, List<TerminalSearchSpan>>? searchRows = null;
 
         lock (emulator.SyncRoot)
         {
             visibleColumns = Math.Max(1, Math.Min(emulator.Columns, _requestedColumns > 0 ? _requestedColumns : emulator.Columns));
             visibleRows = Math.Min(emulator.Rows, _scratchRows.Length);
             version = emulator.Version;
+            searchRows = BuildSearchHighlights(emulator, visibleRows);
             _updatingScrollBar = true;
             try
             {
@@ -55,7 +57,13 @@ internal sealed partial class TerminalSurface
 
             for (int row = 0; row < visibleRows; row++)
             {
-                _scratchRows[row].Capture(emulator, row, visibleColumns, resolver, selection);
+                IReadOnlyList<TerminalSearchSpan>? spans = null;
+                if (searchRows is not null && searchRows.TryGetValue(row, out List<TerminalSearchSpan>? rowSpans))
+                {
+                    spans = rowSpans;
+                }
+
+                _scratchRows[row].Capture(emulator, row, visibleColumns, resolver, selection, spans);
             }
         }
 

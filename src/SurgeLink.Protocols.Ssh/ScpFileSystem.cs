@@ -100,6 +100,22 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     }
 
     /// <inheritdoc />
+    public async Task<RemoteFileEntry?> TryStatAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await StatAsync(path, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ProtocolException exception) when (exception.Kind == ProtocolFailureKind.ServerRejected
+            && exception.Message.Contains("read file status", StringComparison.Ordinal))
+        {
+            // The SCP fallback uses a command to probe metadata; a missing path is
+            // reported as a failed command rather than a typed not-found result.
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
     public Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);

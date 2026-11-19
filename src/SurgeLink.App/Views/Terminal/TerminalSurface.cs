@@ -155,6 +155,7 @@ internal sealed partial class TerminalSurface : ContentControl
         _root.Children.Add(_backgroundLayer);
         _root.Children.Add(_textLayer);
         _root.Children.Add(_cursorLayer);
+        InitializeSearch();
         Content = _root;
 
         ApplySettings(settings.Current, initial: true);
@@ -177,6 +178,7 @@ internal sealed partial class TerminalSurface : ContentControl
     internal void Refresh()
     {
         ApplySettings(_settings.Current, initial: false);
+        ApplySearchLocalization();
         InvalidatePaint(force: true);
     }
 
@@ -250,10 +252,25 @@ internal sealed partial class TerminalSurface : ContentControl
         _paintQueued = false;
         _bridge.Invalidated -= OnBridgeInvalidated;
         _settings.Changed -= OnSettingsChanged;
+        _searchRefreshTimer?.Stop();
         StopBlink();
     }
 
-    private void OnBridgeInvalidated(object? sender, EventArgs e) => InvalidatePaint(force: false);
+    private void OnBridgeInvalidated(object? sender, EventArgs e)
+    {
+        if (IsSearchVisible && !string.IsNullOrEmpty(_searchQuery))
+        {
+            // Output can evict scrollback lines and shift every match index. Refresh
+            // on a throttled cadence: do not restart the timer on every chunk, or a
+            // stream that never goes quiet would leave stale absolute line numbers.
+            if (_searchRefreshTimer is { IsRunning: false } timer)
+            {
+                timer.Start();
+            }
+        }
+
+        InvalidatePaint(force: false);
+    }
 
     private void OnSettingsChanged(object? sender, EventArgs e) => ApplySettings(_settings.Current, initial: false);
 

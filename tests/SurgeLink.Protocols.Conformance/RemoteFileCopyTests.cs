@@ -75,6 +75,24 @@ public sealed class RemoteFileCopyTests
     }
 
     [Fact]
+    public async Task CopyingManyFilesDoesNotRelistTheDestinationDirectoryPerFile()
+    {
+        var inner = new DemoFileSystem();
+        await inner.CreateDirectoryAsync("/home/demo/bulk", CancellationToken.None);
+        for (int index = 0; index < 100; index++)
+        {
+            await using var output = await inner.OpenWriteAsync($"/home/demo/bulk/file{index}.txt", 1, null, CancellationToken.None);
+            await output.WriteAsync(new byte[] { 42 });
+        }
+
+        var counting = new CountingFileSystem(inner);
+        await RemoteFileCopy.CopyAsync(counting, "/home/demo/bulk", "/home/demo/bulk-copy", CancellationToken.None);
+
+        Assert.Equal(1, counting.ListCalls);
+        Assert.Equal(100, counting.ListedEntries);
+    }
+
+    [Fact]
     public async Task CancellationDoesNotCreateDestination()
     {
         var fs = new DemoFileSystem();
@@ -83,5 +101,31 @@ public sealed class RemoteFileCopyTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RemoteFileCopy.CopyAsync(fs,
             "/home/demo/demo.txt", "/home/demo/cancelled.txt", cancellation.Token));
         Assert.DoesNotContain(await fs.ListAsync("/home/demo", CancellationToken.None), entry => entry.Name == "cancelled.txt");
+    }
+
+    private sealed class CountingFileSystem(IRemoteFileSystem inner) : IRemoteFileSystem
+    {
+        public int ListCalls { get; private set; }
+        public int ListedEntries { get; private set; }
+        public bool SupportsPermissions => inner.SupportsPermissions;
+        public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => inner.GetHomeDirectoryAsync(ct);
+        public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => inner.GetCurrentDirectoryAsync(ct);
+        public async Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken ct)
+        {
+            ListCalls++;
+            IReadOnlyList<RemoteFileEntry> entries = await inner.ListAsync(path, ct);
+            ListedEntries += entries.Count;
+            return entries;
+        }
+        public Task<RemoteFileEntry> StatAsync(string path, CancellationToken ct) => inner.StatAsync(path, ct);
+        public Task<Stream> OpenReadAsync(string path, CancellationToken ct) => inner.OpenReadAsync(path, ct);
+        public Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct) =>
+            inner.OpenWriteAsync(path, size, progress, ct);
+        public Task CreateDirectoryAsync(string path, CancellationToken ct) => inner.CreateDirectoryAsync(path, ct);
+        public Task DeleteAsync(string path, bool recursive, CancellationToken ct) => inner.DeleteAsync(path, recursive, ct);
+        public Task RenameAsync(string source, string destination, CancellationToken ct) => inner.RenameAsync(source, destination, ct);
+        public Task CommitWriteAsync(string temporary, string destination, bool overwrite, CancellationToken ct) =>
+            inner.CommitWriteAsync(temporary, destination, overwrite, ct);
+        public Task SetPermissionsAsync(string path, int mode, CancellationToken ct) => inner.SetPermissionsAsync(path, mode, ct);
     }
 }

@@ -1,3 +1,5 @@
+using System.Reflection;
+using SurgeLink.Core.Files;
 using SurgeLink.Core.Protocols;
 using Renci.SshNet.Common;
 using SurgeLink.Protocols.Ssh;
@@ -7,6 +9,42 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 
 public sealed class SshFileSystemTests
 {
+    [Theory]
+    [InlineData("/")]
+    [InlineData("//")]
+    [InlineData("///")]
+    [InlineData("/.")]
+    [InlineData("/..")]
+    [InlineData("/dir/..")]
+    public void RootPathProtectionCoversRepeatedAndDotSegments(string path)
+    {
+        Assert.True(SftpFileSystem.IsRootPath(path));
+    }
+
+    [Theory]
+    [InlineData("/dir")]
+    [InlineData("/dir/")]
+    [InlineData("/dir//child")]
+    [InlineData("/dir/../child")]
+    public void RootPathProtectionDoesNotRejectNormalPaths(string path)
+    {
+        Assert.False(SftpFileSystem.IsRootPath(path));
+    }
+
+    [Fact]
+    public void ForwardsTryStatToTheSelectedTransport()
+    {
+        var method = typeof(SshFileSystem).GetMethod(
+            nameof(IRemoteFileSystem.TryStatAsync),
+            BindingFlags.Public | BindingFlags.Instance,
+            binder: null,
+            types: [typeof(string), typeof(CancellationToken)],
+            modifiers: null);
+
+        Assert.NotNull(method);
+        Assert.Equal(typeof(SshFileSystem), method!.DeclaringType);
+    }
+
     [Fact]
     public void DetectsSftpSubsystemFailure()
     {

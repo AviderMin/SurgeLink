@@ -70,6 +70,9 @@ internal sealed class ScreenBuffer
     /// <summary>Last row of the scrolling region, zero based and inclusive.</summary>
     public int ScrollBottom => _scrollBottom;
 
+    /// <summary>Returns one row for read-only inspection; the caller must not retain it.</summary>
+    internal CellLine GetLine(int row) => _lines[row];
+
     /// <summary>Reads a cell; out of range coordinates return <see cref="TerminalCell.Blank"/>.</summary>
     public TerminalCell GetCell(int row, int column)
     {
@@ -78,7 +81,7 @@ internal sealed class ScreenBuffer
             return TerminalCell.Blank;
         }
 
-        return _lines[row].Cells[column];
+        return _lines[row].GetCell(column);
     }
 
     /// <summary>Moves the cursor inside the screen, cancelling a pending wrap.</summary>
@@ -328,7 +331,9 @@ internal sealed class ScreenBuffer
             }
             else
             {
-                TerminalCell[] lastCells = _lines[_cursorRow].Cells;
+                CellLine lastLine = _lines[_cursorRow];
+                lastLine.PrepareForEdit();
+                TerminalCell[] lastCells = lastLine.Cells;
                 ClearWidePair(lastCells, _columns - 1);
                 lastCells[_columns - 1] = EraseCell;
                 _pendingWrap = true;
@@ -337,12 +342,14 @@ internal sealed class ScreenBuffer
             }
         }
 
+        CellLine line = _lines[_cursorRow];
+        line.PrepareForEdit();
         if (insertMode)
         {
             InsertCellsInternal(_cursorRow, _cursorColumn, width);
         }
 
-        TerminalCell[] cells = _lines[_cursorRow].Cells;
+        TerminalCell[] cells = line.Cells;
         ClearWidePair(cells, _cursorColumn);
         if (width == 2)
         {
@@ -389,6 +396,7 @@ internal sealed class ScreenBuffer
             column--;
         }
 
+        _lines[_cursorRow].PrepareForEdit();
         TerminalCell[] cells = _lines[_cursorRow].Cells;
         if (cells[column].Width == CellWidth.Continuation && column > 0)
         {
@@ -405,6 +413,7 @@ internal sealed class ScreenBuffer
     /// <summary>Erase in display: 0 to end, 1 to start, 2/3 whole screen.</summary>
     public void EraseInDisplay(int mode)
     {
+        _lines[_cursorRow].PrepareForEdit();
         switch (mode)
         {
             case 1:
@@ -439,6 +448,7 @@ internal sealed class ScreenBuffer
     /// <summary>Erase in line: 0 to end, 1 to start, 2 whole line.</summary>
     public void EraseInLine(int mode)
     {
+        _lines[_cursorRow].PrepareForEdit();
         switch (mode)
         {
             case 1:
@@ -459,6 +469,7 @@ internal sealed class ScreenBuffer
     public void EraseCharacters(int count)
     {
         count = Math.Max(1, count);
+        _lines[_cursorRow].PrepareForEdit();
         ClearCells(_cursorRow, _cursorColumn, _cursorColumn + count);
         _host.OnScreenChanged();
     }
@@ -467,6 +478,7 @@ internal sealed class ScreenBuffer
     public void InsertCharacters(int count)
     {
         count = Math.Max(1, count);
+        _lines[_cursorRow].PrepareForEdit();
         InsertCellsInternal(_cursorRow, _cursorColumn, Math.Min(count, _columns));
         _host.OnScreenChanged();
     }
@@ -475,10 +487,29 @@ internal sealed class ScreenBuffer
     public void DeleteCharacters(int count)
     {
         count = Math.Max(1, count);
+        _lines[_cursorRow].PrepareForEdit();
         TerminalCell[] cells = _lines[_cursorRow].Cells;
         int column = _cursorColumn;
-        ClearWidePair(cells, column);
         int shift = Math.Min(count, _columns - column);
+
+        // If the deletion ends between the two halves of a wide glyph, blank the
+        // whole glyph before shifting. Otherwise its continuation would be copied
+        // to the left edge without its leading cell, producing an orphan half.
+        int boundary = column + shift;
+        if (boundary < _columns && cells[boundary].Width == CellWidth.Continuation)
+        {
+            cells[boundary] = EraseCell;
+            if (boundary > 0)
+            {
+                cells[boundary - 1] = EraseCell;
+            }
+
+            // The wide glyph occupies two cells, but DCH counts deletion
+            // positions, not glyphs. The following text still shifts by the
+            // requested count; blanking both halves must not add a column.
+        }
+
+        ClearWidePair(cells, column);
         Array.Copy(cells, column + shift, cells, column, _columns - column - shift);
         for (int i = _columns - shift; i < _columns; i++)
         {
@@ -498,6 +529,7 @@ internal sealed class ScreenBuffer
         }
 
         count = Math.Clamp(count, 1, _scrollBottom - _cursorRow + 1);
+        PrepareRegionForEdit();
         for (int i = 0; i < count; i++)
         {
             CellLine bottom = _lines[_scrollBottom];
@@ -518,6 +550,7 @@ internal sealed class ScreenBuffer
         }
 
         count = Math.Clamp(count, 1, _scrollBottom - _cursorRow + 1);
+        PrepareRegionForEdit();
         for (int i = 0; i < count; i++)
         {
             CellLine top = _lines[_cursorRow];
@@ -532,6 +565,7 @@ internal sealed class ScreenBuffer
     /// <summary>Scrolls the scrolling region up by <paramref name="count"/> lines.</summary>
     public void ScrollUpRegion(int count)
     {
+        PrepareRegionForEdit();
         ScrollUpInternal(Math.Max(1, count));
         _host.OnScreenChanged();
     }
@@ -539,8 +573,17 @@ internal sealed class ScreenBuffer
     /// <summary>Scrolls the scrolling region down by <paramref name="count"/> lines.</summary>
     public void ScrollDownRegion(int count)
     {
+        PrepareRegionForEdit();
         ScrollDownInternal(Math.Max(1, count));
         _host.OnScreenChanged();
+    }
+
+    private void PrepareRegionForEdit()
+    {
+        for (int row = _scrollTop; row <= _scrollBottom; row++)
+        {
+            _lines[row].PrepareForEdit();
+        }
     }
 
     /// <summary>Sets the scrolling region. Invalid regions are ignored.</summary>
@@ -590,7 +633,7 @@ internal sealed class ScreenBuffer
         var cell = new TerminalCell(text, TerminalColor.Default, TerminalColor.Default, CellAttributes.None, CellWidth.Narrow);
         for (int row = 0; row < _rows; row++)
         {
-            Array.Fill(_lines[row].Cells, cell);
+            _lines[row].Clear(cell);
         }
 
         _cursorRow = 0;
@@ -609,6 +652,9 @@ internal sealed class ScreenBuffer
             return;
         }
 
+        // A height-only resize must not cancel a wrap that is still pending at
+        // the right edge; the next glyph still belongs on a new row.
+        var widthChanged = columns != _columns;
         var lines = new CellLine[rows];
         int keep = Math.Min(rows, _rows);
         for (int i = 0; i < keep; i++)
@@ -629,7 +675,10 @@ internal sealed class ScreenBuffer
         _tabStops = CreateTabStops(columns);
         _cursorRow = Math.Min(_cursorRow, _rows - 1);
         _cursorColumn = Math.Min(_cursorColumn, _columns - 1);
-        _pendingWrap = false;
+        if (widthChanged)
+        {
+            _pendingWrap = false;
+        }
         _scrollTop = 0;
         _scrollBottom = _rows - 1;
         _host.OnScreenChanged();
@@ -740,7 +789,7 @@ internal sealed class ScreenBuffer
             return;
         }
 
-        Array.Fill(_lines[row].Cells, EraseCell);
+        _lines[row].Clear(EraseCell);
     }
 
     private void ClearCells(int row, int from, int toExclusive)

@@ -20,11 +20,35 @@ internal sealed partial class TerminalSurface
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
         _suppressCharacterInput = false;
+        if (IsSearchBarEvent(e.OriginalSource)) { return; }
 
         bool control = IsKeyDown(VirtualKey.Control);
         bool shift = IsKeyDown(VirtualKey.Shift);
         bool alt = IsKeyDown(VirtualKey.Menu);
         int key = (int)e.Key;
+
+        // Ctrl+Shift+F matches Windows Terminal and leaves plain Ctrl+F (0x06) and
+        // F3 available to readline, less and other full-screen programs.
+        if (control && shift && !alt && key == (int)VirtualKey.F)
+        {
+            OpenSearch();
+            e.Handled = true;
+            return;
+        }
+
+        if (!control && !alt && e.Key == VirtualKey.F3 && IsSearchVisible)
+        {
+            NavigateSearch(shift ? -1 : 1);
+            e.Handled = true;
+            return;
+        }
+
+        if (!control && !alt && e.Key == VirtualKey.Escape && IsSearchVisible)
+        {
+            CloseSearch();
+            e.Handled = true;
+            return;
+        }
 
         // AltGr is reported as Ctrl+Right Alt on Windows. Let the keyboard layout
         // produce its character instead of encoding it as a terminal shortcut.
@@ -167,6 +191,7 @@ internal sealed partial class TerminalSurface
     {
         char character = e.Character;
         e.Handled = true;
+        if (IsSearchBarEvent(e.OriginalSource)) { return; }
 
         if (_suppressCharacterInput)
         {

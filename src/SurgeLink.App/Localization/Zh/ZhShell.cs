@@ -16,6 +16,8 @@ public static class ZhShell
         ["shell.error.closeFailed"] = "无法关闭会话",
         ["shell.agent.tabControlled"] = "Agent 已接管此会话",
         ["shell.agent.tabAccessible"] = "{0}，Agent 已接管",
+        ["shell.tab.newOutput"] = "新输出",
+        ["shell.tab.accessible"] = "{0}，{1}",
         ["shell.agent.close"] = "关闭 Agent 面板",
         ["shell.agent.description"] = "通过 MCP 一次接入，即可在任意工作区使用 SurgeLink 工具。在下方授权 Agent 需要的会话。",
         ["shell.agent.scope"] = "访问范围为当前 Windows 用户下的本机程序。在受控终端中手动输入会暂停 Agent 操作；使用“停止”撤销访问。",
