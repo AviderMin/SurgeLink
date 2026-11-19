@@ -13,7 +13,8 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     private readonly WorkspaceStore _workspace;
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger _logger;
-    // The desktop's Allow reading/Control grant includes file reads. Per-operation
+    // Allow reading includes read-only file access; mutating file operations are
+    // additionally gated by the gateway on the control grant. Per-operation
     // execution policy belongs to the external Agent app; no extra desktop prompt.
     private readonly AgentGateway _gateway = new((_, _) => Task.FromResult(true));
     private readonly object _gate = new();

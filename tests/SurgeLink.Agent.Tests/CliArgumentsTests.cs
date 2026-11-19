@@ -48,6 +48,35 @@ public sealed class CliArgumentsTests
         Assert.Equal("/tmp/a b;$(touch pwned)", parsed.Request.Path);
     }
 
+    [Fact]
+    public void WaitAndFileOptionsParseWithoutChangingExistingCommands()
+    {
+        var wait = CliArguments.Parse(["terminal", "wait", "--session", "h", "--cursor", "12", "--idle-ms", "250",
+            "--timeout-ms", "5000", "--strip-ansi", "--max-lines", "30"]);
+        Assert.Equal("terminal.wait", wait.Request.Method);
+        Assert.Equal(12L, wait.Request.Cursor);
+        Assert.Equal(250, wait.Request.IdleMilliseconds);
+        Assert.Equal(5000, wait.Request.TimeoutMilliseconds);
+        Assert.True(wait.Request.StripAnsi);
+        Assert.Equal(30, wait.Request.MaxLines);
+
+        var write = CliArguments.Parse(["files", "write", "--session", "h", "--path", "/tmp/a", "--text-file", "C:\\tmp\\a.txt", "--overwrite"]);
+        Assert.Equal("files.write", write.Request.Method);
+        Assert.Equal("C:\\tmp\\a.txt", write.TextFile);
+        Assert.True(write.Request.Overwrite);
+
+        var read = CliArguments.Parse(["files", "read", "--session", "h", "--path", "/tmp/a", "--offset", "10", "--max-bytes", "2048"]);
+        Assert.Equal(10L, read.Request.Offset);
+        Assert.Equal(2048, read.Request.MaxBytes);
+
+        var check = CliArguments.Parse(["sessions", "check", "--session", "h", "--brief"]);
+        Assert.True(check.Request.Brief);
+
+        var upload = CliArguments.Parse(["files", "upload", "--session", "h", "--path", "/tmp/a", "--local-path", "C:\\tmp\\a.txt"]);
+        Assert.Equal("files.upload", upload.Request.Method);
+        Assert.Equal("C:\\tmp\\a.txt", upload.Request.LocalPath);
+    }
+
     [Theory]
     [InlineData("terminal screen")]
     [InlineData("sessions list --instance 0")]
@@ -57,7 +86,7 @@ public sealed class CliArgumentsTests
     [InlineData("sessions list --json --json")]
     [InlineData("sessions list --unknown")]
     [InlineData("files read --session handle")]
-    [InlineData("files delete --session handle --path /tmp")]
+    [InlineData("files chmod --session handle --path /tmp")]
     public void InvalidArgumentsAreRejected(string arguments) =>
         Assert.Throws<ArgumentException>(() => CliArguments.Parse(arguments.Split(' ')));
 }

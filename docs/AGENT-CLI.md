@@ -26,10 +26,11 @@ controlled terminal pauses the Agent but keeps the indicator.
 
 Reading exposes host facts, the visible screen, retained incremental terminal
 output, metrics, directory listings and text files. Control additionally exposes
-PTY text/key input and selecting that tab's terminal/files/monitor view. Agent
-input selects the target terminal and returns its viewport to the live position,
-so commands and output appear in the same terminal the user sees. No second SSH
-shell, saved credentials or background exec channel is created.
+PTY text/key input, selecting that tab's terminal/files/monitor view, and
+mutating file operations (write, delete, rename, mkdir). Agent input selects the
+target terminal and returns its viewport to the live position, so commands and
+output appear in the same terminal the user sees. No second SSH shell, saved
+credentials or background exec channel is created.
 
 Execution policy belongs to the external Agent application. After desktop access
 is enabled, SurgeLink does not classify commands or prompt for individual commands
@@ -86,7 +87,10 @@ Pass that token as `checkToken` / `--check-token` and the revision with the inpu
 A token expires after two minutes and is consumed by one new input. A newer check
 replaces the older check for that handle. Revocation/reconnection, an input revision
 change, a screen/output/mode change, or a change in the target's active state makes the old check unusable.
-The gateway rejects missing/stale checks with `session_check_required` before writing.
+The gateway rejects missing/stale checks with `session_check_required` before writing;
+the message distinguishes an expired token, an input revision change, a screen
+change and an active-state change. `brief=true` / `--brief` keeps the target and
+token but returns only the last few screen lines instead of the full viewport.
 Exact retries of an already recorded operation retain the original token/arguments
 and return the stored acknowledgement, even after its token expires.
 
@@ -110,15 +114,18 @@ dotnet build SurgeLink.slnx -c Debug -p:Platform=x64
 ```
 
 The panel's **Copy Agent instructions** action copies a localized, ready-to-paste
-workflow with an absolute CLI path and explicit desktop PID in every example.
-It tells the Agent to execute `--help` and `sessions list` first, select and check
-the intended session, send input with the required token/revision/operation ID,
-and inspect output before reporting completion. Commands use local Windows
-PowerShell and work from any workspace on the same computer and Windows account;
-neither changing directory nor adding the CLI to PATH is necessary. The Agent
-must have a local command execution tool with access to the executable. This text
-guides the external Agent; it cannot force that application to invoke tools.
-Copy fresh instructions after restarting SurgeLink because the PID changes.
+workflow with an absolute CLI path. It tells the Agent to execute `--help` and
+`sessions list` first, select and check the intended session, send input with the
+required token/revision/operation ID, and inspect output before reporting
+completion. By default the CLI auto-discovers the only running desktop; if
+several instances are running, `surgelink-cli desktops list` reports their PIDs
+and the instructions explain how to pass `--instance PID`. Commands use local
+Windows PowerShell and work from any workspace on the same computer and Windows
+account; neither changing directory nor adding the CLI to PATH is necessary.
+The Agent must have a local command execution tool with access to the executable.
+This text guides the external Agent; it cannot force that application to invoke
+tools. Copy fresh instructions after restarting SurgeLink if an explicit
+`--instance` binding was used; automatic discovery survives a restart.
 
 CLI calls return output and exit; external Agents should capture stdout/stderr
 and the exit code without opening an interactive terminal window. Direct Windows
@@ -187,15 +194,25 @@ Other commands:
 ```text
 surgelink-cli sessions list [--instance PID] [--json]
 surgelink-cli sessions info --session HANDLE
-surgelink-cli sessions check --session HANDLE
+surgelink-cli sessions check --session HANDLE [--brief]
 surgelink-cli sessions activate --session HANDLE [--view terminal|files|monitor]
-surgelink-cli terminal screen --session HANDLE
-surgelink-cli terminal output --session HANDLE [--cursor N]
-surgelink-cli terminal send --session HANDLE --text TEXT [--submit] --revision N --operation-id ID --check-token TOKEN
+surgelink-cli terminal screen --session HANDLE [--tail-rows N] [--strip-ansi]
+surgelink-cli terminal output --session HANDLE [--cursor N] [--max-bytes N] [--max-lines N] [--strip-ansi]
+surgelink-cli terminal wait --session HANDLE [--cursor N] [--idle-ms 500] [--timeout-ms 30000] [--strip-ansi]
+surgelink-cli terminal send --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) [--submit] --revision N --operation-id ID --check-token TOKEN
 surgelink-cli terminal key --session HANDLE --key Ctrl+C --revision N --operation-id ID --check-token TOKEN
 surgelink-cli monitor snapshot --session HANDLE
-surgelink-cli files list --session HANDLE --path REMOTE_PATH
-surgelink-cli files read --session HANDLE --path REMOTE_PATH
+surgelink-cli files list --session HANDLE --path REMOTE_PATH [--offset N] [--limit N]
+surgelink-cli files read --session HANDLE --path REMOTE_PATH [--offset N] [--max-bytes N]
+surgelink-cli files stat --session HANDLE --path REMOTE_PATH
+surgelink-cli files write --session HANDLE --path REMOTE_PATH (--text TEXT | --text-file FILE | --text-stdin) [--overwrite]
+surgelink-cli files delete --session HANDLE --path REMOTE_PATH [--recursive]
+surgelink-cli files rename --session HANDLE --path REMOTE_PATH --destination NEW_PATH
+surgelink-cli files mkdir --session HANDLE --path REMOTE_PATH
+surgelink-cli files upload --session HANDLE --path REMOTE_PATH --local-path LOCAL_FILE [--overwrite]
+surgelink-cli files download --session HANDLE --path REMOTE_PATH --local-path LOCAL_FILE [--overwrite]
+surgelink-cli desktops list [--json]
+surgelink-cli doctor [--json]
 ```
 
 Every command accepts --instance PID and --json. Without --instance exactly one
@@ -284,11 +301,12 @@ access. This is an advisory connection indicator, not per-client authentication,
 pairing or a guarantee that the external Agent will choose to call a tool.
 
 The tools are list_desktops, select_desktop, list_sessions, get_session_info,
-check_sessions, read_terminal, read_terminal_output, send_terminal_text,
-send_terminal_key, select_session, get_system_snapshot, list_directory and
-read_text_file. The write tools and select_session require a
-control grant. Read-only tool annotations are hints; gateway enforcement decides
-which capabilities the shared handle permits.
+check_sessions, read_terminal, read_terminal_output, wait_terminal_output,
+send_terminal_text, send_terminal_key, select_session, get_system_snapshot,
+list_directory, read_text_file, stat_path, write_text_file, delete_path,
+rename_path, create_directory, upload_file and download_file. The write tools
+and select_session require a control grant. Read-only tool annotations are hints;
+gateway enforcement decides which capabilities the shared handle permits.
 
 Example send_terminal_text arguments:
 
@@ -328,6 +346,19 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   commands. Output retains ANSI escapes, decodes UTF-8 across incoming chunks,
   retains at most 131,072 units and pages at most 16,384 units without splitting
   surrogate pairs. A history gap is explicit; future/negative cursors fail.
+  `maxBytes` and `maxLines` bound the returned page; when a page is trimmed from
+  the start, `cursor` points at the end of the returned text so the next call can
+  continue without losing output. `stripAnsi` removes escape sequences for easier
+  reading.
+- terminal.wait polls incremental output from the supplied cursor and returns
+  when output has been quiet for `idleMilliseconds` or `timeoutMilliseconds`
+  expires. It returns text, cursor, timing, `idle`, `timedOut`, a short screen
+  tail and `commandCompletionKnown=false`. Quiet output is an observation, not a
+  shell prompt detector or an exit code; inspect the returned screen/prompt and
+  verify the actual result before reporting completion.
+- terminal.screen supports `tailRows` and `stripAnsi` for a compact view. These
+  options change only the returned text; the full snapshot is still used for the
+  check token and input revision.
 - terminal.text and terminal.key require a control grant, expectedInputRevision
   from sessions.check, its single-use checkToken and operationId. Text is capped at
   16,384 units; submit defaults to false.
@@ -353,14 +384,23 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   Input also selects its target terminal automatically. Real terminal dimensions
   are managed by the visible UI, rather than an independent Agent resize.
 - Files accept strict Unicode text up to 128 KiB of actual bytes. Directory results
-  contain at most 500 entries and truncated; existing protocols still collect the
-  full listing before this result bound. Paths and symlinks use server semantics,
-  without a separate path sandbox.
+  contain at most 500 entries per page; `offset`/`limit` page through the listing.
+  `files.read` also accepts `offset` and `maxBytes` (up to 512 KiB) to read a
+  bounded page of a larger file. Paths and symlinks use server semantics, without
+  a separate path sandbox.
+- `files.stat` returns metadata without reading content. `files.write` stages
+  complete UTF-8 text and commits atomically where the protocol supports it;
+  existing files are protected unless `overwrite` is true. `files.delete`,
+  `files.rename`, `files.mkdir`, `files.upload` and `files.download` are also
+  available. Local upload/download paths refer to the Windows machine running
+  SurgeLink. Mutating file operations require terminal-control access; read-only
+  sharing cannot write or delete.
 
 Error codes additionally include user_operating, session_check_required, session_context_unavailable,
 control_required, invalid_arguments, input_conflict,
-operation_conflict, operation_limit, input_outcome_unknown, terminal_unavailable and
-invalid_cursor, desktop_not_running, desktop_ambiguous, desktop_ipc_unavailable,
+operation_conflict, operation_limit, input_outcome_unknown, terminal_unavailable,
+invalid_cursor, write_failed, local_file_not_found, local_file_exists,
+desktop_not_running, desktop_ambiguous, desktop_ipc_unavailable,
 desktop_ipc_timeout and desktop_instance_expired, alongside existing session_unavailable, unsupported, cancelled,
 read_failed, version_mismatch, unknown_method, output_limit and operation_failed.
 

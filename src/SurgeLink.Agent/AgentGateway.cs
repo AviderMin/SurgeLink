@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Text;
 using SurgeLink.Core.Files;
 using SurgeLink.Core.Sessions;
 using SurgeLink.Core.Terminal;
@@ -181,7 +183,7 @@ public sealed partial class AgentGateway
             AgentResponse result;
             switch (request.Method)
             {
-                case "sessions.check": result = CheckSession(grant); break;
+                case "sessions.check": result = CheckSession(grant, request.Brief); break;
                 case "sessions.info": result = AgentResponse.Ok(grant.Info with { IsActive = grant.IsActive?.Invoke() ?? false }); break;
                 case "sessions.activate":
                     if (!grant.Info.TerminalControl) return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel first.");
@@ -191,26 +193,18 @@ public sealed partial class AgentGateway
                     await grant.Activate(view, ct).ConfigureAwait(false);
                     result = AgentResponse.Ok(new { activated = true, view });
                     break;
-                case "terminal.screen":
-                    if (grant.Terminal is not null) { result = AgentResponse.Ok(grant.Terminal.ReadScreen()); break; }
-                    if (grant.ReadScreen is null) throw new NotSupportedException();
-                    var screen = grant.ReadScreen();
-                    var count = Math.Min(screen.Length, 32768);
-                    if (count > 0 && char.IsHighSurrogate(screen[count - 1])) count--;
-                    result = AgentResponse.Ok(new { source = "screen", text = screen[..count], truncated = count < screen.Length });
-                    break;
-                case "terminal.output":
-                    if (grant.Terminal is null) throw new NotSupportedException();
-                    if (request.Cursor is < 0) return AgentResponse.Error("invalid_cursor", "The output cursor must be non-negative.");
-                    try { result = AgentResponse.Ok(grant.Terminal.ReadOutput(request.Cursor)); }
-                    catch (ArgumentOutOfRangeException) { return AgentResponse.Error("invalid_cursor", "The cursor is ahead of this terminal's output."); }
-                    break;
+                case "terminal.screen": result = ReadScreenResponse(grant, request); break;
+                case "terminal.output": result = ReadOutputResponse(grant, request); break;
+                case "terminal.wait": result = await WaitOutputAsync(grant, request, ct).ConfigureAwait(false); break;
                 case "monitor.snapshot":
                     result = AgentResponse.Ok(await (grant.Session.Monitor ?? throw new NotSupportedException()).SampleAsync(ct).ConfigureAwait(false));
                     break;
                 default:
                     if (string.IsNullOrWhiteSpace(request.Path) || request.Path.Length > 4096 || request.Path.Any(char.IsControl))
                         return AgentResponse.Error("invalid_path", "Supply a remote path without control characters (maximum 4096 characters).");
+                    if (request.Method == "files.rename"
+                        && (string.IsNullOrWhiteSpace(request.Destination) || request.Destination.Length > 4096 || request.Destination.Any(char.IsControl)))
+                        return AgentResponse.Error("invalid_path", "Supply a destination path without control characters (maximum 4096 characters).");
                     // Evaluate the host policy for every exact path and operation. The desktop
                     // explicitly allows reads within a shared connection; this is not a path sandbox
                     // or a per-read prompt. Symlinks may resolve outside a lexical root.
@@ -218,24 +212,293 @@ public sealed partial class AgentGateway
                     ThrowIfCancelled(grant, ct);
                     if (!approved)
                         return AgentResponse.Error("denied", "File access was declined by the host policy.");
-                    var files = grant.Session.FileSystem ?? throw new NotSupportedException();
-                    if (request.Method == "files.list")
-                    {
-                        var entries = await files.ListAsync(request.Path, ct).ConfigureAwait(false);
-                        result = AgentResponse.Ok(new { entries = entries.Take(500).ToArray(), truncated = entries.Count > 500 });
-                    }
-                    else
-                    {
-                        await using var stream = await files.OpenReadAsync(request.Path, ct).ConfigureAwait(false);
-                        var text = await BoundedTextFile.ReadAsync(stream, 128 * 1024, ct).ConfigureAwait(false);
-                        result = AgentResponse.Ok(new { path = request.Path, text });
-                    }
+                    result = await ExecuteFileAsync(grant, request, ct).ConfigureAwait(false);
                     break;
             }
             ThrowIfCancelled(grant, ct);
             return result;
         }
         finally { grant.Serial.Release(); }
+    }
+
+    private static AgentResponse ReadScreenResponse(Grant grant, AgentRequest request)
+    {
+        var lineLimit = request.TailRows ?? request.MaxLines;
+        if (grant.Terminal is not null)
+        {
+            var screen = grant.Terminal.ReadScreen();
+            var trimmed = AgentText.Trim(screen.Text, request.StripAnsi, request.MaxBytes, lineLimit);
+            return AgentResponse.Ok(screen with
+            {
+                Text = trimmed.Text,
+                Truncated = screen.Truncated || trimmed.DroppedCharacters > 0,
+            });
+        }
+        if (grant.ReadScreen is null) throw new NotSupportedException();
+        var raw = grant.ReadScreen();
+        var count = Math.Min(raw.Length, 32768);
+        if (count > 0 && char.IsHighSurrogate(raw[count - 1])) count--;
+        var visible = AgentText.Trim(raw[..count], request.StripAnsi, request.MaxBytes, lineLimit);
+        return AgentResponse.Ok(new
+        {
+            source = "screen", text = visible.Text,
+            truncated = count < raw.Length || visible.DroppedCharacters > 0,
+            originalCharacters = raw.Length,
+        });
+    }
+
+    private static AgentResponse ReadOutputResponse(Grant grant, AgentRequest request)
+    {
+        if (grant.Terminal is null) throw new NotSupportedException();
+        if (request.Cursor is < 0) return AgentResponse.Error("invalid_cursor", "The output cursor must be non-negative.");
+        try
+        {
+            var page = grant.Terminal.ReadOutput(request.Cursor);
+            var trimmed = AgentText.Trim(page.Text, request.StripAnsi, request.MaxBytes, request.MaxLines);
+            return AgentResponse.Ok(new
+            {
+                text = trimmed.Text,
+                // A partially returned page must not advance the client past unseen text.
+                cursor = page.Cursor - trimmed.DroppedCharacters,
+                oldestCursor = page.OldestCursor,
+                latestCursor = page.LatestCursor,
+                gap = page.Gap,
+                hasMore = page.HasMore || trimmed.DroppedCharacters > 0,
+                truncated = trimmed.DroppedCharacters > 0,
+                originalCharacters = page.Text.Length,
+                returnedCharacters = trimmed.Text.Length,
+            });
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return AgentResponse.Error("invalid_cursor", "The cursor is ahead of this terminal's output.");
+        }
+    }
+
+    private async Task<AgentResponse> WaitOutputAsync(Grant grant, AgentRequest request, CancellationToken ct)
+    {
+        if (grant.Terminal is null) throw new NotSupportedException();
+        if (request.Cursor is < 0) return AgentResponse.Error("invalid_cursor", "The output cursor must be non-negative.");
+        var idleMilliseconds = Math.Clamp(request.IdleMilliseconds ?? 500, 50, 5000);
+        var timeoutMilliseconds = Math.Clamp(request.TimeoutMilliseconds ?? 30000, 100, 55000);
+        var cursor = request.Cursor ?? grant.Terminal.ReadScreen().OutputCursor;
+        var text = new StringBuilder();
+        long oldestCursor = cursor;
+        long latestCursor = cursor;
+        var gap = false;
+        var hasMore = false;
+        var capped = false;
+        var total = Stopwatch.StartNew();
+        var sinceOutput = Stopwatch.StartNew();
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (IsHumanOperating(grant)) return HumanOperatingError();
+            TerminalOutputPage page;
+            try { page = grant.Terminal.ReadOutput(cursor); }
+            catch (ArgumentOutOfRangeException) { return AgentResponse.Error("invalid_cursor", "The cursor is ahead of this terminal's output."); }
+            oldestCursor = page.OldestCursor;
+            latestCursor = page.LatestCursor;
+            gap |= page.Gap;
+            if (page.Text.Length > 0)
+            {
+                text.Append(page.Text);
+                cursor = page.Cursor;
+                hasMore = page.HasMore;
+                sinceOutput.Restart();
+                if (text.Length > 512 * 1024) { capped = true; break; }
+                if (page.HasMore) continue;
+            }
+            if (text.Length > 0 && sinceOutput.ElapsedMilliseconds >= idleMilliseconds) break;
+            if (total.ElapsedMilliseconds >= timeoutMilliseconds) break;
+            await Task.Delay(100, ct).ConfigureAwait(false);
+        }
+
+        var timedOut = total.ElapsedMilliseconds >= timeoutMilliseconds
+            && (text.Length == 0 || sinceOutput.ElapsedMilliseconds < idleMilliseconds);
+        var trimmed = AgentText.Trim(text.ToString(), request.StripAnsi, request.MaxBytes ?? 65536, request.MaxLines);
+        var screen = grant.Terminal.ReadScreen();
+        var screenTail = AgentText.Trim(screen.Text, request.StripAnsi, 4096, 4);
+        return AgentResponse.Ok(new
+        {
+            text = trimmed.Text,
+            cursor = cursor - trimmed.DroppedCharacters,
+            oldestCursor,
+            latestCursor,
+            gap,
+            hasMore = hasMore || trimmed.DroppedCharacters > 0 || capped,
+            truncated = trimmed.DroppedCharacters > 0 || capped,
+            idle = !timedOut && !capped,
+            timedOut,
+            elapsedMilliseconds = total.ElapsedMilliseconds,
+            commandCompletionKnown = false,
+            screen = screen with
+            {
+                Text = screenTail.Text,
+                Truncated = screen.Truncated || screenTail.DroppedCharacters > 0,
+            },
+        });
+    }
+
+    private async Task<AgentResponse> ExecuteFileAsync(Grant grant, AgentRequest request, CancellationToken ct)
+    {
+        // Reading access is read-only. Mutating files requires the stronger
+        // terminal-control grant, even when the host file policy would allow it.
+        if (!grant.Info.TerminalControl && request.Method is ("files.write" or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download"))
+            return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel before changing remote files.");
+        var files = grant.Session.FileSystem ?? throw new NotSupportedException();
+        switch (request.Method)
+        {
+            case "files.list":
+            {
+                var entries = await files.ListAsync(request.Path!, ct).ConfigureAwait(false);
+                var offset = request.Offset ?? 0;
+                if (offset < 0) return AgentResponse.Error("invalid_arguments", "The listing offset must be non-negative.");
+                var limit = Math.Clamp(request.Limit ?? 500, 1, 500);
+                var start = offset > int.MaxValue ? int.MaxValue : (int)offset;
+                var page = entries.Skip(start).Take(limit).ToArray();
+                return AgentResponse.Ok(new
+                {
+                    entries = page, total = entries.Count, offset, limit,
+                    truncated = start + page.Length < entries.Count,
+                });
+            }
+            case "files.read":
+                return await ReadFileAsync(files, request, ct).ConfigureAwait(false);
+            case "files.stat":
+            {
+                var entry = await files.TryStatAsync(request.Path!, ct).ConfigureAwait(false);
+                return AgentResponse.Ok(new { exists = entry is not null, entry });
+            }
+            case "files.write":
+            {
+                if (request.Text is null) return AgentResponse.Error("invalid_arguments", "Supply text to write.");
+                if (!request.Path!.StartsWith('/')) return AgentResponse.Error("invalid_path", "A remote write path must be absolute.");
+                var bytes = new UTF8Encoding(false, true).GetBytes(request.Text);
+                try
+                {
+                    await RemoteFileWrite.WriteAsync(files, request.Path, bytes.Length, null, request.Overwrite,
+                        async (stream, token) => await stream.WriteAsync(bytes, token).ConfigureAwait(false), ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    return AgentResponse.Error("write_failed", ex.Message);
+                }
+                return AgentResponse.Ok(new { path = request.Path, bytesWritten = bytes.Length, overwrite = request.Overwrite });
+            }
+            case "files.delete":
+                if (request.Recursive && request.Path == "/") return AgentResponse.Error("invalid_path", "Refusing to delete the remote root directory recursively.");
+                await files.DeleteAsync(request.Path!, request.Recursive, ct).ConfigureAwait(false);
+                return AgentResponse.Ok(new { path = request.Path, deleted = true, recursive = request.Recursive });
+            case "files.rename":
+                await files.RenameAsync(request.Path!, request.Destination!, ct).ConfigureAwait(false);
+                return AgentResponse.Ok(new { path = request.Path, destination = request.Destination, moved = true });
+            case "files.mkdir":
+                await files.CreateDirectoryAsync(request.Path!, ct).ConfigureAwait(false);
+                return AgentResponse.Ok(new { path = request.Path, created = true });
+            case "files.upload":
+                return await UploadFileAsync(files, request, ct).ConfigureAwait(false);
+            case "files.download":
+                return await DownloadFileAsync(files, request, ct).ConfigureAwait(false);
+            default:
+                throw new NotSupportedException();
+        }
+    }
+
+    private static async Task<AgentResponse> UploadFileAsync(IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.LocalPath) || request.LocalPath.Length > 4096 || request.LocalPath.Any(char.IsControl))
+            return AgentResponse.Error("invalid_path", "Supply a local upload path without control characters.");
+        string localPath;
+        try { localPath = Path.GetFullPath(request.LocalPath); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        { return AgentResponse.Error("invalid_path", "The local upload path is invalid."); }
+        if (!File.Exists(localPath)) return AgentResponse.Error("local_file_not_found", "The local upload file does not exist.");
+        if (!request.Path!.StartsWith('/')) return AgentResponse.Error("invalid_path", "A remote upload path must be absolute.");
+        var length = new FileInfo(localPath).Length;
+        try
+        {
+            await RemoteFileWrite.WriteAsync(files, request.Path, length, null, request.Overwrite,
+                async (stream, token) =>
+                {
+                    await using var source = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous);
+                    await source.CopyToAsync(stream, 81920, token).ConfigureAwait(false);
+                }, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return AgentResponse.Error("write_failed", ex.Message);
+        }
+        return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = length, overwrite = request.Overwrite });
+    }
+
+    private static async Task<AgentResponse> DownloadFileAsync(IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.LocalPath) || request.LocalPath.Length > 4096 || request.LocalPath.Any(char.IsControl))
+            return AgentResponse.Error("invalid_path", "Supply a local download path without control characters.");
+        string localPath;
+        try { localPath = Path.GetFullPath(request.LocalPath); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        { return AgentResponse.Error("invalid_path", "The local download path is invalid."); }
+        if (!request.Overwrite && File.Exists(localPath))
+            return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
+        try
+        {
+            await using var source = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false);
+            await using var target = new FileStream(localPath,
+                request.Overwrite ? FileMode.Create : FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous);
+            await source.CopyToAsync(target, 81920, ct).ConfigureAwait(false);
+            var written = target.Length;
+            return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = written, overwrite = request.Overwrite });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return AgentResponse.Error("read_failed", ex.Message);
+        }
+    }
+
+    private static async Task<AgentResponse> ReadFileAsync(IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
+    {
+        await using var stream = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false);
+        if (request.MaxBytes is null && request.Offset is null)
+        {
+            var legacyText = await BoundedTextFile.ReadAsync(stream, 128 * 1024, ct).ConfigureAwait(false);
+            return AgentResponse.Ok(new { path = request.Path, text = legacyText });
+        }
+
+        if (request.Offset is < 0) return AgentResponse.Error("invalid_arguments", "The file offset must be non-negative.");
+        var offset = request.Offset ?? 0;
+        var limit = Math.Clamp(request.MaxBytes ?? 128 * 1024, 1, 512 * 1024);
+        if (offset > 0)
+        {
+            if (stream.CanSeek) stream.Position = offset;
+            else
+            {
+                var skip = offset;
+                var buffer = new byte[81920];
+                while (skip > 0)
+                {
+                    var read = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, skip)), ct).ConfigureAwait(false);
+                    if (read == 0) break;
+                    skip -= read;
+                }
+            }
+        }
+
+        var data = new byte[limit + 1];
+        var total = 0;
+        while (total < data.Length)
+        {
+            var read = await stream.ReadAsync(data.AsMemory(total, data.Length - total), ct).ConfigureAwait(false);
+            if (read == 0) break;
+            total += read;
+        }
+        var truncated = total > limit;
+        if (truncated) total = limit;
+        var text = new UTF8Encoding(false, true).GetString(data, 0, total);
+        if (offset == 0 && text.Length > 0 && text[0] == '\uFEFF') text = text[1..];
+        return AgentResponse.Ok(new { path = request.Path, text, offset, bytesRead = total, truncated, nextOffset = offset + total });
     }
 
     private static void ThrowIfCancelled(Grant grant, CancellationToken ct)
@@ -255,8 +518,9 @@ public sealed partial class AgentGateway
         "User is operating this terminal. Stop all current operations and wait for the user to return control; do not retry or re-acquire the session.");
 
     private static bool IsKnownMethod(string method) => method is "sessions.list" or "sessions.info" or "sessions.activate" or "sessions.check"
-        or "terminal.screen" or "terminal.output" or "terminal.text" or "terminal.key"
-        or "monitor.snapshot" or "files.list" or "files.read";
+        or "terminal.screen" or "terminal.output" or "terminal.wait" or "terminal.text" or "terminal.key"
+        or "monitor.snapshot" or "files.list" or "files.read" or "files.stat" or "files.write"
+        or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download";
 
     private sealed class Grant(string connectionKey, AgentSessionInfo info, IProtocolSession session, Func<string>? readScreen,
         ITerminalAutomation? terminal, Func<string, CancellationToken, Task>? activate, Func<bool>? isActive)
@@ -270,6 +534,7 @@ public sealed partial class AgentGateway
         public Func<bool>? IsActive { get; } = isActive;
         public bool HumanOperating { get; set; }
         public Dictionary<string, (string Fingerprint, AgentResponse Response)> Inputs { get; } = new(StringComparer.Ordinal);
+        public Queue<string> InputOrder { get; } = new();
         public SessionCheck? Check { get; set; }
         public bool InputOutcomeUnknown { get; set; }
         public CancellationTokenSource Lifetime { get; } = new();
@@ -278,7 +543,7 @@ public sealed partial class AgentGateway
 
     private sealed record SessionCheck(string Token, DateTimeOffset ExpiresUtc, TerminalScreenSnapshot Screen, bool IsActive);
 
-    private AgentResponse CheckSession(Grant grant)
+    private AgentResponse CheckSession(Grant grant, bool brief)
     {
         if (grant.Info.Target is null) return AgentResponse.Error("session_context_unavailable", "The host must supply the connection target before terminal control.");
         if (grant.Terminal is null) throw new NotSupportedException();
@@ -288,11 +553,25 @@ public sealed partial class AgentGateway
         var expires = _timeProvider.GetUtcNow().AddMinutes(2);
         var check = new SessionCheck(Convert.ToHexString(RandomNumberGenerator.GetBytes(24)), expires, screen, active);
         grant.Check = check;
+        object screenResult = screen;
+        if (brief)
+        {
+            var tail = AgentText.Trim(screen.Text, stripAnsi: false, maxBytes: 4096, maxLines: 8);
+            screenResult = new
+            {
+                text = tail.Text,
+                truncated = screen.Truncated || tail.DroppedCharacters > 0,
+                screen.Columns, screen.Rows, screen.CursorRow, screen.CursorColumn, screen.CursorVisible,
+                screen.AlternateScreen, screen.BracketedPaste, screen.MouseTracking, screen.InputRevision,
+                screen.OutputCursor, screen.IsClosed, screen.ViewportOffset, screen.Source,
+            };
+        }
         return AgentResponse.Ok(new
         {
             session = grant.Info with { IsActive = active }, connectionState = grant.Session.State,
             usernameSource = "configured_login", effectiveShellUser = (string?)null,
-            screen, checkToken = check.Token, expiresUtc = expires,
+            screen = screenResult, checkToken = check.Token, expiresUtc = expires,
+            brief,
             instruction = "Verify server, port, session ID, configured login and current screen against your intended target. Effective user after su, nested SSH or containers is unknown. Use this checkToken and screen.inputRevision for one new terminal input; repeat Check Sessions before each new operation.",
         });
     }

@@ -110,6 +110,7 @@ public sealed class AgentGatewayTests
     [InlineData("sessions.activate")]
     [InlineData("terminal.screen")]
     [InlineData("terminal.output")]
+    [InlineData("terminal.wait")]
     [InlineData("terminal.text")]
     [InlineData("terminal.key")]
     [InlineData("monitor.snapshot")]
@@ -318,7 +319,7 @@ public sealed class AgentGatewayTests
     }
 
     [Theory]
-    [InlineData("files.delete", 1, "unknown_method")]
+    [InlineData("files.chmod", 1, "unknown_method")]
     [InlineData("run_command", 1, "unknown_method")]
     [InlineData("sessions.list", 999, "version_mismatch")]
     public async Task UnsupportedRequestsFailClosed(string method, int version, string expected)

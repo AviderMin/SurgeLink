@@ -51,7 +51,8 @@
 | sessions.list / info / check | ✗ | ✓ | ✓ |
 | terminal.screen / output | ✗ | ✓ | ✓ |
 | monitor.snapshot | ✗ | ✓ | ✓ |
-| files.list / files.read | ✗ | ✓（策略钩子，桌面端当前恒真） | ✓ |
+| files.list / files.read / files.stat | ✗ | ✓（策略钩子，桌面端当前恒真） | ✓ |
+| files.write / files.delete / files.rename / files.mkdir / files.upload / files.download | ✗ | ✗（控制授权才开放） | ✓ |
 | terminal.text / key | ✗ | ✗ | ✓ + check-token 流程 |
 | sessions.activate | ✗ | ✗ | ✓ |
 
@@ -92,7 +93,7 @@
 
 ### R1【最值得做】文件读取与 Observe 拆分，或给策略钩子装真实策略
 
-- **现状**：Observe 即可 files.read；AgentWorkspaceService.cs:18 把 `_confirmFile` 写死为恒真——这是**有意的设计决定**（注释明确"执行策略属于外部 Agent 应用"），但意味着"允许读终端"顺带授权了读远端 ~/.ssh/、.env、配置文件里的凭据。提示注入的现实目标恰是这些文件。
+- **现状**：Observe 即可 files.read；AgentWorkspaceService.cs:18 把 `_confirmFile` 写死为恒真——这是**有意的设计决定**（注释明确"执行策略属于外部 Agent 应用"），但意味着"允许读终端"顺带授权了读远端 ~/.ssh/、.env、配置文件里的凭据。提示注入的现实目标恰是这些文件。当前已把写/删/改名/建目录/上传/下载全部收紧到 Control，读侧的范围策略仍需按下方方案细化。
 - **最小改动**：`AgentGateway._confirmFile`（AgentGateway.cs:17-23、183）就是现成的边界插入点，**默认拒绝**。三档可选（按需选一）：
   1. 面板把"允许读取"细分为"终端/监控"与"文件"两个开关（能力最小化）；
   2. 策略函数按敏感路径模式拒绝（.ssh/、.aws/、.env、*credential* 等）；

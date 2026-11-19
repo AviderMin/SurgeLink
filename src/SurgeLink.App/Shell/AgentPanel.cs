@@ -85,8 +85,17 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
                 // Keep each clipboard attachment intact even if instructions are copied again.
                 var folder = Path.Combine(Path.GetTempPath(), "SurgeLink", "AgentInstructions");
                 Directory.CreateDirectory(folder);
+                foreach (var old in Directory.EnumerateFiles(folder, "SurgeLink-Agent-*.md"))
+                {
+                    try
+                    {
+                        if (File.GetLastWriteTimeUtc(old) < DateTime.UtcNow.AddHours(-1)) File.Delete(old);
+                    }
+                    catch (IOException) { /* Old clipboard files are best-effort cleanup. */ }
+                    catch (UnauthorizedAccessException) { /* Keep the current copy working. */ }
+                }
                 var path = Path.Combine(folder, $"SurgeLink-Agent-{Environment.ProcessId}-{Guid.NewGuid():N}.md");
-                await File.WriteAllTextAsync(path, "# SurgeLink Agent\n\n" + BuildCliInstructions(agent),
+                await File.WriteAllTextAsync(path, "# SurgeLink Agent\n\n" + BuildCliInstructions(agent, pinInstance ? Environment.ProcessId : null),
                     new System.Text.UTF8Encoding(false));
                 var file = await StorageFile.GetFileFromPathAsync(path);
                 var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
@@ -145,7 +154,7 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
         var sessions = workspace.Tabs.Count == 0
             ? new[] { Caption(Str.T("shell.agent.empty", "Open a session to allow Agent access.")).Foreground(Theme.SecondaryText) }
             : workspace.Tabs.Select(SessionCard).ToArray();
-        var activities = agent.Activity.Take(8).Select(entry => VStack(AppTheme.SpacingXs,
+        var activities = agent.Activity.Take(20).Select(entry => VStack(AppTheme.SpacingXs,
                 Caption(Str.F("shell.agent.activityLine", "{0} · {1}", entry.Time.ToLocalTime().ToString("HH:mm:ss"), OperationLabel(entry.Operation))),
                 Caption(entry.Session).Private(entry.Session).Foreground(Theme.SecondaryText).TextTrimming(TextTrimming.CharacterEllipsis),
                 Caption(entry.Outcome == "ok" && entry.Operation is "terminal.text" or "terminal.key"
@@ -183,6 +192,10 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
                                 () => Copy(AgentMcpSetup.Registration(client, agent.McpHostPath, pinInstance ? Environment.ProcessId : null)))
                             .IsEnabled(agent.McpHostAvailable).HAlign(HorizontalAlignment.Stretch)
                             .AutomationName(copySetupLabel).AutomationId("AgentCopyMcp"),
+                        Button(Str.T("shell.agent.mcp.diagnostics", "Copy MCP diagnostics"), () => Copy(BuildMcpDiagnostics(agent)))
+                            .HAlign(HorizontalAlignment.Stretch)
+                            .AutomationName(Str.T("shell.agent.mcp.diagnostics", "Copy MCP diagnostics"))
+                            .AutomationId("AgentCopyMcpDiagnostics"),
                         CheckBox(Optional<bool?>.Of(pinInstance), value => setPinInstance(value == true),
                                 label: Str.T("shell.agent.mcp.pin", "Bind to this desktop (multiple instances)"))
                             .AutomationId("AgentMcpPinInstance"),
@@ -218,6 +231,13 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
             .CornerRadius(AppTheme.CardRadius).VAlign(VerticalAlignment.Stretch).AutomationId("AgentPanel");
     }
 
+    private static string BuildMcpDiagnostics(AgentWorkspaceService agent) => string.Join(Environment.NewLine,
+        $"SurgeLink PID: {Environment.ProcessId}",
+        $"MCP host: {agent.McpHostPath}",
+        $"MCP host exists: {agent.McpHostAvailable}",
+        $"MCP clients: {agent.McpPeers.Count}",
+        $"MCP client names: {string.Join(", ", agent.McpPeers.Select(peer => peer.Name))}");
+
     private static string McpSetupHint(AgentMcpClient client) => client switch
     {
         AgentMcpClient.Codex => Str.T("shell.agent.mcp.codexHint", "Run the copied command once in local PowerShell with Codex CLI installed. It registers SurgeLink in your user MCP configuration for all workspaces."),
@@ -226,13 +246,15 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
         _ => Str.T("shell.agent.mcp.genericHint", "Merge this configuration into your client's user-level MCP settings, preserving other servers. Use local stdio transport; the command is an absolute executable path."),
     };
 
-    private static string BuildCliInstructions(AgentWorkspaceService agent)
+    private static string BuildCliInstructions(AgentWorkspaceService agent, int? instancePid)
     {
         var cli = "& '" + agent.CliPath.Replace("'", "''", StringComparison.Ordinal) + "'";
-        var instance = " --instance " + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) + " --json";
+        var instance = instancePid is int pid
+            ? " --instance " + pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + " --json"
+            : " --json";
         return string.Join(Environment.NewLine + Environment.NewLine,
             Str.T("shell.agent.instructions.intro", "Use SurgeLink CLI to carry out my task in the remote session I have shared. First invoke your local command execution tool to establish access and observe the actual session, then proceed with the task using the results."),
-            Str.T("shell.agent.instructions.workspace", "Run the commands below in local Windows PowerShell on the same computer and Windows account as SurgeLink. The executable path is absolute: it works from any workspace without changing directory, installing packages or adding to PATH. If your command tool uses another shell, invoke PowerShell or adapt the invocation syntax. Keep this executable path and the explicit --instance PID in EVERY session/terminal/file/monitor call; do not assume variables persist between tool calls."),
+            Str.T("shell.agent.instructions.workspace", "Run the commands below in local Windows PowerShell on the same computer and Windows account as SurgeLink. The executable path is absolute: it works from any workspace without changing directory, installing packages or adding to PATH. If your command tool uses another shell, invoke PowerShell or adapt the invocation syntax. Keep this executable path in EVERY session/terminal/file/monitor call; do not assume variables persist between tool calls. With one running SurgeLink instance the CLI discovers it automatically; if several are running, run `surgelink-cli desktops list` and add `--instance PID` to every call."),
             Str.T("shell.agent.instructions.launch", "CLI calls are short-lived requests that return output and exit. Use your command execution tool with stdout/stderr capture and wait for its exit code; do not open Windows Terminal, use wt.exe, or launch an interactive window for the CLI. When starting a process directly from Python on Windows, use subprocess.run([absolute_exe_path, ...arguments], shell=False, capture_output=True, encoding='utf-8', creationflags=subprocess.CREATE_NO_WINDOW). With .NET ProcessStartInfo, use UseShellExecute=false, CreateNoWindow=true and RedirectStandardOutput/RedirectStandardError=true; drain both streams concurrently. Pass the executable path and arguments separately, with no extra quotes around the executable path. A terminal popup reporting 0x800700e8 is a launch/console error: retry the read-only --help using this captured, no-window process launch and report its stdout/stderr/exit code. Never retry terminal input under a new operation ID because of a launch error."),
             Str.T("shell.agent.instructions.first", "1. Execute these commands now to read the CLI usage and list shared sessions:"),
             "```powershell" + Environment.NewLine + cli + " --help" + Environment.NewLine + cli + " sessions list" + instance + Environment.NewLine + "```",
@@ -242,8 +264,10 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
             Str.T("shell.agent.instructions.send", "4. To execute a command in the shared terminal, use terminal send with --text, --submit, --revision (data.screen.inputRevision), --check-token (data.checkToken) and a fresh --operation-id. Replace every placeholder below with actual values, and escape apostrophes inside PowerShell single-quoted arguments by doubling them. Each check token expires after two minutes and is single-use. For a separate key input, use terminal key with --key instead of --text/--submit. Follow the CLI help for other reading and navigation operations:"),
             "```powershell" + Environment.NewLine + cli + " terminal send --session '<HANDLE>' --text '<COMMAND>' --submit --revision '<INPUT_REVISION>' --check-token '<CHECK_TOKEN>' --operation-id '<UNIQUE_OPERATION_ID>'" + instance + Environment.NewLine + "```",
             Str.T("shell.agent.instructions.observe", "5. input_sent acknowledges input, not command completion or success. Keep data.screen.outputCursor from the pre-input check and read incremental output from that cursor using the command below. Continue with returned data.cursor while data.hasMore=true; if data.gap=true, inspect the current screen and account for missing output. Observe and verify the actual result before reporting completion. Before any further input, repeat step 3:"),
-            "```powershell" + Environment.NewLine + cli + " terminal output --session '<HANDLE>' --cursor '<OUTPUT_CURSOR>'" + instance + Environment.NewLine + "```",
-            Str.T("shell.agent.instructions.failures", "6. Retry an uncertain transport request only with the exact same operation ID and arguments. For input_outcome_unknown, observe the terminal before deciding what to do; do not resend under a new ID. Human terminal input pauses Agent operations and returns user_operating: stop all current operations immediately, do not retry, do not re-acquire the session, and wait for the user to return control. If command execution is unavailable, a local access restriction prevents calling the executable, or the connection fails, report the actual blocker without claiming access or completion. SurgeLink must remain running; after a restart, ask me for freshly copied instructions with the new PID."),
+            "```powershell" + Environment.NewLine + cli + " terminal output --session '<HANDLE>' --cursor '<OUTPUT_CURSOR>' --strip-ansi" + instance + Environment.NewLine + "```",
+            Str.T("shell.agent.instructions.wait", "If you need to wait for a command that produces output for a while, use terminal wait after the pre-input cursor. It returns when output has been quiet for the requested idle interval; this is an observation, not proof that the command completed or an exit code:"),
+            "```powershell" + Environment.NewLine + cli + " terminal wait --session '<HANDLE>' --cursor '<OUTPUT_CURSOR>' --idle-ms 500 --timeout-ms 30000 --strip-ansi" + instance + Environment.NewLine + "```",
+            Str.T("shell.agent.instructions.failures", "6. Retry an uncertain transport request only with the exact same operation ID and arguments. For input_outcome_unknown, observe the terminal before deciding what to do; do not resend under a new ID. Human terminal input pauses Agent operations and returns user_operating: stop all current operations immediately, do not retry, do not re-acquire the session, and wait for the user to return control. If command execution is unavailable, a local access restriction prevents calling the executable, or the connection fails, report the actual blocker without claiming access or completion. SurgeLink must remain running; after a restart, ask me for freshly copied instructions (the desktop may have a new PID)."),
             Str.T("shell.agent.instructions.task", "My task:"));
     }
 
@@ -251,7 +275,7 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
     {
         "terminal.text" => Str.T("shell.agent.action.text", "Send terminal text"),
         "terminal.key" => Str.T("shell.agent.action.key", "Send terminal key"),
-        "terminal.screen" or "terminal.output" => Str.T("shell.agent.action.read", "Read terminal"),
+        "terminal.screen" or "terminal.output" or "terminal.wait" => Str.T("shell.agent.action.read", "Read terminal"),
         "sessions.activate" => Str.T("shell.agent.action.select", "Select session"),
         "access" => Str.T("shell.agent.action.access", "Access changed"),
         _ => Str.T("shell.agent.action.request", "Agent request"),

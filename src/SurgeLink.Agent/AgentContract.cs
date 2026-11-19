@@ -8,7 +8,10 @@ namespace SurgeLink.Agent;
 public sealed record AgentRequest(string Method, string? Session = null, string? Path = null, int Version = 1,
     string? Text = null, bool Submit = false, string? Key = null, long? Cursor = null,
     long? ExpectedInputRevision = null, string? OperationId = null, string? View = null, string? CheckToken = null,
-    string? ClientId = null, string? ClientName = null, int? DesktopProcessId = null);
+    string? ClientId = null, string? ClientName = null, int? DesktopProcessId = null,
+    bool Brief = false, bool StripAnsi = false, int? MaxBytes = null, int? MaxLines = null, int? TailRows = null,
+    long? Offset = null, int? Limit = null, string? Destination = null, bool Recursive = false, bool Overwrite = false,
+    int? IdleMilliseconds = null, int? TimeoutMilliseconds = null, string? LocalPath = null);
 
 public sealed record AgentResponse(bool Success, JsonElement? Data = null, string? ErrorCode = null, string? Message = null)
 {
