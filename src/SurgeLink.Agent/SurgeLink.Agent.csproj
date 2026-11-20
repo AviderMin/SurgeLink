@@ -5,4 +5,7 @@
   <ItemGroup>
     <ProjectReference Include="..\SurgeLink.Core\SurgeLink.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SurgeLink.Agent.Tests" />
+  </ItemGroup>
 </Project>

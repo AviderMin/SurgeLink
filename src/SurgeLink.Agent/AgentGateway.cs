@@ -230,22 +230,22 @@ public sealed partial class AgentGateway
         if (grant.Terminal is not null)
         {
             var screen = grant.Terminal.ReadScreen();
-            var trimmed = AgentText.Trim(screen.Text, request.StripAnsi, request.MaxBytes, lineLimit);
+            var trimmed = AgentText.TrimTail(screen.Text, request.StripAnsi, request.MaxBytes, lineLimit);
             return AgentResponse.Ok(screen with
             {
                 Text = trimmed.Text,
-                Truncated = screen.Truncated || trimmed.DroppedCharacters > 0,
+                Truncated = screen.Truncated || trimmed.Truncated,
             });
         }
         if (grant.ReadScreen is null) throw new NotSupportedException();
         var raw = grant.ReadScreen();
         var count = Math.Min(raw.Length, 32768);
         if (count > 0 && char.IsHighSurrogate(raw[count - 1])) count--;
-        var visible = AgentText.Trim(raw[..count], request.StripAnsi, request.MaxBytes, lineLimit);
+        var visible = AgentText.TrimTail(raw[..count], request.StripAnsi, request.MaxBytes, lineLimit);
         return AgentResponse.Ok(new
         {
             source = "screen", text = visible.Text,
-            truncated = count < raw.Length || visible.DroppedCharacters > 0,
+            truncated = count < raw.Length || visible.Truncated,
             originalCharacters = raw.Length,
         });
     }
@@ -257,17 +257,18 @@ public sealed partial class AgentGateway
         try
         {
             var page = grant.Terminal.ReadOutput(request.Cursor);
-            var trimmed = AgentText.Trim(page.Text, request.StripAnsi, request.MaxBytes, request.MaxLines);
+            var trimmed = AgentText.TrimHead(page.Text, request.StripAnsi, request.MaxBytes, request.MaxLines);
             return AgentResponse.Ok(new
             {
                 text = trimmed.Text,
-                // A partially returned page must not advance the client past unseen text.
-                cursor = page.Cursor - trimmed.DroppedCharacters,
+                // The cursor always points just after the characters actually
+                // returned, so the next page neither repeats nor skips output.
+                cursor = page.Cursor - page.Text.Length + trimmed.KeptCharacters,
                 oldestCursor = page.OldestCursor,
                 latestCursor = page.LatestCursor,
                 gap = page.Gap,
-                hasMore = page.HasMore || trimmed.DroppedCharacters > 0,
-                truncated = trimmed.DroppedCharacters > 0,
+                hasMore = page.HasMore || trimmed.Truncated,
+                truncated = trimmed.Truncated,
                 originalCharacters = page.Text.Length,
                 returnedCharacters = trimmed.Text.Length,
             });
@@ -284,7 +285,9 @@ public sealed partial class AgentGateway
         if (request.Cursor is < 0) return AgentResponse.Error("invalid_cursor", "The output cursor must be non-negative.");
         var idleMilliseconds = Math.Clamp(request.IdleMilliseconds ?? 500, 50, 5000);
         var timeoutMilliseconds = Math.Clamp(request.TimeoutMilliseconds ?? 30000, 100, 55000);
-        var cursor = request.Cursor ?? grant.Terminal.ReadScreen().OutputCursor;
+        var fromCursor = request.Cursor ?? grant.Terminal.ReadScreen().OutputCursor;
+        var cursor = fromCursor;
+        var pageStart = fromCursor;
         var text = new StringBuilder();
         long oldestCursor = cursor;
         long latestCursor = cursor;
@@ -306,6 +309,7 @@ public sealed partial class AgentGateway
             gap |= page.Gap;
             if (page.Text.Length > 0)
             {
+                if (text.Length == 0) pageStart = page.Cursor - page.Text.Length;
                 text.Append(page.Text);
                 cursor = page.Cursor;
                 hasMore = page.HasMore;
@@ -322,21 +326,33 @@ public sealed partial class AgentGateway
         var timedOut = total.ElapsedMilliseconds >= timeoutMilliseconds
             && (text.Length == 0 || sinceOutput.ElapsedMilliseconds < idleMilliseconds);
         var rawText = text.ToString();
-        // Echo removal needs plain text: PTY mode switches often precede the echo.
-        if (request.StripAnsi) rawText = AgentText.StripAnsi(rawText);
-        if (grant.LastInputText is { } echoText) rawText = AgentText.StripLeadingEcho(rawText, echoText);
-        var trimmed = AgentText.Trim(rawText, request.StripAnsi, request.MaxBytes ?? 65536, request.MaxLines);
+        // A command result needs its sentinel and final output, so exec keeps the
+        // tail. Incremental waits keep the head and report the cursor just after
+        // the returned characters, which makes repeated pages lossless.
+        var trimmed = expectText is not null
+            ? AgentText.TrimTail(rawText, stripAnsi: false, request.MaxBytes ?? 65536, request.MaxLines)
+            : AgentText.TrimHead(rawText, stripAnsi: false, request.MaxBytes ?? 65536, request.MaxLines);
+        // Cleaning happens after the raw cut so cursor arithmetic stays in raw
+        // character units even when ANSI escapes or the sent echo are removed.
+        var visible = trimmed.Text;
+        if (request.StripAnsi) visible = AgentText.StripAnsi(visible);
+        // Only the segment that starts at the wait's original cursor can begin
+        // with the just-sent echo; a later page must not lose real output that
+        // happens to repeat the command text near its start.
+        if (grant.LastInputText is { } echoText && (expectText is not null || pageStart == fromCursor))
+            visible = AgentText.StripLeadingEcho(visible, echoText);
+        var nextCursor = expectText is not null ? cursor : pageStart + trimmed.KeptCharacters;
         var screen = grant.Terminal.ReadScreen();
-        var screenTail = AgentText.Trim(screen.Text, request.StripAnsi, 4096, 4);
+        var screenTail = AgentText.TrimTail(screen.Text, request.StripAnsi, 4096, 4);
         return AgentResponse.Ok(new
         {
-            text = trimmed.Text,
-            cursor = cursor - trimmed.DroppedCharacters,
+            text = visible,
+            cursor = nextCursor,
             oldestCursor,
             latestCursor,
             gap,
-            hasMore = hasMore || trimmed.DroppedCharacters > 0 || capped,
-            truncated = trimmed.DroppedCharacters > 0 || capped,
+            hasMore = hasMore || capped || expectText is null && trimmed.Truncated,
+            truncated = trimmed.Truncated || capped,
             idle = !timedOut && !capped,
             timedOut,
             elapsedMilliseconds = total.ElapsedMilliseconds,
@@ -344,7 +360,7 @@ public sealed partial class AgentGateway
             screen = screen with
             {
                 Text = screenTail.Text,
-                Truncated = screen.Truncated || screenTail.DroppedCharacters > 0,
+                Truncated = screen.Truncated || screenTail.Truncated,
             },
         });
     }
@@ -526,35 +542,19 @@ public sealed partial class AgentGateway
         if (request.Offset is < 0) return AgentResponse.Error("invalid_arguments", "The file offset must be non-negative.");
         var offset = request.Offset ?? 0;
         var limit = Math.Clamp(request.MaxBytes ?? 128 * 1024, 1, 512 * 1024);
-        if (offset > 0)
-        {
-            if (stream.CanSeek) stream.Position = offset;
-            else
-            {
-                var skip = offset;
-                var buffer = new byte[81920];
-                while (skip > 0)
-                {
-                    var read = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, skip)), ct).ConfigureAwait(false);
-                    if (read == 0) break;
-                    skip -= read;
-                }
-            }
-        }
-
-        var data = new byte[limit + 1];
-        var total = 0;
-        while (total < data.Length)
-        {
-            var read = await stream.ReadAsync(data.AsMemory(total, data.Length - total), ct).ConfigureAwait(false);
-            if (read == 0) break;
-            total += read;
-        }
-        var truncated = total > limit;
-        if (truncated) total = limit;
-        var text = new UTF8Encoding(false, true).GetString(data, 0, total);
+        var page = await AgentFilePage.ReadAsync(stream, offset, limit, ct).ConfigureAwait(false);
+        var text = page.Text;
         if (offset == 0 && text.Length > 0 && text[0] == '\uFEFF') text = text[1..];
-        return AgentResponse.Ok(new { path = request.Path, text, offset, bytesRead = total, truncated, nextOffset = offset + total });
+        return AgentResponse.Ok(new
+        {
+            path = request.Path, text, offset,
+            // Pages end on a UTF-8 character boundary. A request whose offset falls
+            // inside a character is aligned forward and reports the skipped bytes.
+            bytesRead = page.BytesRead,
+            skippedBytes = page.SkippedBytes,
+            truncated = page.Truncated,
+            nextOffset = offset + page.BytesRead,
+        });
     }
 
     private static void ThrowIfCancelled(Grant grant, CancellationToken ct)
@@ -600,8 +600,7 @@ public sealed partial class AgentGateway
         public Func<bool>? IsActive { get; } = isActive;
         public bool HumanOperating { get; set; }
         public string? LastInputText { get; set; }
-        public Dictionary<string, (string Fingerprint, AgentResponse Response)> Inputs { get; } = new(StringComparer.Ordinal);
-        public Queue<string> InputOrder { get; } = new();
+        public InputReplayCache Inputs { get; } = new();
         public SessionCheck? Check { get; set; }
         public bool InputOutcomeUnknown { get; set; }
         public CancellationTokenSource Lifetime { get; } = new();
@@ -632,12 +631,12 @@ public sealed partial class AgentGateway
         object screenResult = screen;
         if (compact)
         {
-            var tail = AgentText.Trim(screen.Text, stripAnsi: false,
+            var tail = AgentText.TrimTail(screen.Text, stripAnsi: false,
                 maxBytes: minimal ? 2048 : 4096, maxLines: minimal ? 3 : 8);
             screenResult = new
             {
                 text = tail.Text,
-                truncated = screen.Truncated || tail.DroppedCharacters > 0,
+                truncated = screen.Truncated || tail.Truncated,
                 screen.Columns, screen.Rows, screen.CursorRow, screen.CursorColumn, screen.CursorVisible,
                 screen.AlternateScreen, screen.BracketedPaste, screen.MouseTracking, screen.InputRevision,
                 screen.OutputCursor, screen.IsClosed, screen.ViewportOffset, screen.Source,

@@ -4,9 +4,9 @@ using System.Text.RegularExpressions;
 namespace SurgeLink.Agent;
 
 /// <summary>
-/// Bounds terminal/file text before it reaches an Agent. The output cursor uses the
-/// original text length, so trimming always reports how many leading characters
-/// were dropped and callers advance the cursor by the same amount.
+/// Bounds terminal/file text before it reaches an Agent. Incremental output keeps
+/// its leading part so the next cursor continues where the page ended; screens and
+/// summaries keep their trailing part because the prompt is the useful end.
 /// </summary>
 internal static partial class AgentText
 {
@@ -35,11 +35,13 @@ internal static partial class AgentText
         return removed ? result.TrimStart('\r', '\n') : result;
     }
 
-    public static TrimmedText Trim(string text, bool stripAnsi, int? maxBytes, int? maxLines)
+    /// <summary>
+    /// Keeps the final lines of <paramref name="text"/>. Trailing padding newlines do
+    /// not count as lines so a small tail still contains the prompt.
+    /// </summary>
+    public static TrimmedText TrimTail(string text, bool stripAnsi, int? maxBytes, int? maxLines)
     {
         var originalChars = text.Length;
-        // Screens and PTY pages often end with padding newlines. Counting those
-        // as lines would drop the actual prompt from a compact tail.
         var withoutTrailingNewlines = text.TrimEnd('\n');
         if (withoutTrailingNewlines.Length > 0) text = withoutTrailingNewlines;
         var start = 0;
@@ -51,17 +53,39 @@ internal static partial class AgentText
 
         if (maxBytes is int byteLimit && byteLimit > 0)
         {
-            start = Math.Max(start, StartWithinUtf8Bytes(text, start, byteLimit));
+            start = Math.Max(start, TailStartWithinUtf8Bytes(text, byteLimit));
         }
 
         var kept = start == 0 ? text : text[start..];
         if (stripAnsi) kept = StripAnsi(kept);
-        return new TrimmedText(kept, start, start > 0, originalChars);
+        return new TrimmedText(kept, text.Length - start, start > 0, originalChars);
+    }
+
+    /// <summary>
+    /// Keeps the leading part of <paramref name="text"/> up to the same limits.
+    /// <paramref name="maxBytes"/> may be exceeded by at most one code point so a
+    /// caller always makes progress.
+    /// </summary>
+    public static TrimmedText TrimHead(string text, bool stripAnsi, int? maxBytes, int? maxLines)
+    {
+        var end = text.Length;
+        if (maxLines is int lineLimit && lineLimit > 0)
+        {
+            end = Math.Min(end, EndOfFirstLines(text, lineLimit));
+        }
+
+        if (maxBytes is int byteLimit && byteLimit > 0)
+        {
+            end = Math.Min(end, EndWithinUtf8Bytes(text, byteLimit));
+        }
+
+        var kept = text[..end];
+        if (stripAnsi) kept = StripAnsi(kept);
+        return new TrimmedText(kept, end, end < text.Length, text.Length);
     }
 
     private static int StartOfLastLines(string text, int lineLimit)
     {
-        var end = text.Length;
         var lines = 0;
         for (var index = text.Length - 1; index >= 0; index--)
         {
@@ -72,25 +96,90 @@ internal static partial class AgentText
         return 0;
     }
 
-    private static int StartWithinUtf8Bytes(string text, int start, int maximumBytes)
+    private static int EndOfFirstLines(string text, int lineLimit)
     {
-        if (Encoding.UTF8.GetByteCount(text.AsSpan(start)) <= maximumBytes) return start;
+        var lines = 0;
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (text[index] != '\n') continue;
+            lines++;
+            if (lines >= lineLimit) return index + 1;
+        }
+        return text.Length;
+    }
 
+    /// <summary>Returns the end index of the longest prefix that fits the byte budget.</summary>
+    private static int EndWithinUtf8Bytes(string text, int maximumBytes)
+    {
         var bytes = 0;
-        var index = start;
+        var index = 0;
         while (index < text.Length)
         {
-            var width = char.IsHighSurrogate(text[index]) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1])
-                ? 4
-                : text[index] <= 0x7F ? 1 : text[index] <= 0x7FF ? 2 : 3;
+            var width = Utf8WidthAt(text, index, out var chars);
             if (bytes + width > maximumBytes) break;
             bytes += width;
-            index += width == 4 ? 2 : 1;
+            index += chars;
         }
-        // Never leave a dangling high surrogate at the cut.
-        if (index > start && index < text.Length && char.IsLowSurrogate(text[index])) index--;
+        // An incomplete character must never yield an empty page; include it even
+        // when it is a little wider than the requested budget.
+        if (index == 0 && text.Length > 0) index += Utf8CharsAt(text, 0);
         return index;
+    }
+
+    /// <summary>Returns the start index of the longest suffix that fits the byte budget.</summary>
+    private static int TailStartWithinUtf8Bytes(string text, int maximumBytes)
+    {
+        if (Encoding.UTF8.GetByteCount(text) <= maximumBytes) return 0;
+
+        var bytes = 0;
+        var index = text.Length;
+        while (index > 0)
+        {
+            var width = Utf8WidthBefore(text, index, out var chars);
+            if (bytes + width > maximumBytes) break;
+            bytes += width;
+            index -= chars;
+        }
+        // Keep at least the final character even when a single code point exceeds
+        // the budget, otherwise a tiny limit would return an empty summary.
+        if (index == text.Length && index > 0) index -= Utf8CharsBefore(text, index);
+        return index;
+    }
+
+    private static int Utf8WidthAt(string text, int index, out int chars)
+    {
+        if (char.IsHighSurrogate(text[index]) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1]))
+        {
+            chars = 2;
+            return 4;
+        }
+        chars = 1;
+        return text[index] <= 0x7F ? 1 : text[index] <= 0x7FF ? 2 : 3;
+    }
+
+    private static int Utf8CharsAt(string text, int index)
+    {
+        Utf8WidthAt(text, index, out var chars);
+        return chars;
+    }
+
+    private static int Utf8WidthBefore(string text, int end, out int chars)
+    {
+        var last = text[end - 1];
+        if (char.IsLowSurrogate(last) && end >= 2 && char.IsHighSurrogate(text[end - 2]))
+        {
+            chars = 2;
+            return 4;
+        }
+        chars = 1;
+        return last <= 0x7F ? 1 : last <= 0x7FF ? 2 : 3;
+    }
+
+    private static int Utf8CharsBefore(string text, int end)
+    {
+        Utf8WidthBefore(text, end, out var chars);
+        return chars;
     }
 }
 
-internal sealed record TrimmedText(string Text, int DroppedCharacters, bool Truncated, int OriginalCharacters);
+internal sealed record TrimmedText(string Text, int KeptCharacters, bool Truncated, int OriginalCharacters);

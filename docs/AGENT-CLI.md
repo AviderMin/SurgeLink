@@ -347,22 +347,26 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   commands. Output retains ANSI escapes, decodes UTF-8 across incoming chunks,
   retains at most 131,072 units and pages at most 16,384 units without splitting
   surrogate pairs. A history gap is explicit; future/negative cursors fail.
-  `maxBytes` and `maxLines` bound the returned page; when a page is trimmed from
-  the start, `cursor` points at the end of the returned text so the next call can
-  continue without losing output. `stripAnsi` removes escape sequences for easier
-  reading.
+  `maxBytes` and `maxLines` bound the returned page from its start; `cursor` points
+  just after the characters actually returned, so successive calls page through
+  the output without repeating or skipping it. A page may exceed `maxBytes` by at
+  most one code point. `stripAnsi` removes escape sequences for easier reading.
 - terminal.wait polls incremental output from the supplied cursor and returns
   when output has been quiet for `idleMilliseconds` or `timeoutMilliseconds`
   expires. It returns text, cursor, timing, `idle`, `timedOut`, a short screen
-  tail and `commandCompletionKnown=false`. Quiet output is an observation, not a
-  shell prompt detector or an exit code; inspect the returned screen/prompt and
-  verify the actual result before reporting completion. Leading PTY echo of the
-  just-sent command is removed from the returned text.
+  tail and `commandCompletionKnown=false`. The text is the first bounded part of
+  the accumulated output and `cursor` continues after it; when `hasMore` is true,
+  call terminal.output with that cursor to read the remainder. Quiet output is an
+  observation, not a shell prompt detector or an exit code; inspect the returned
+  screen/prompt and verify the actual result before reporting completion. Leading
+  PTY echo of the just-sent command is removed from the returned text.
 - terminal.exec sends one command with a POSIX-shell sentinel appended and waits
   for that sentinel. It returns `status=executed`, `exitCode`,
   `commandCompletionKnown=true` when the sentinel is observed, and `output`.
-  This is best-effort for POSIX bash/sh; non-POSIX shells may time out without an
-  exit code, in which case `commandCompletionKnown=false`.
+  The returned output keeps the end of the stream so the sentinel and final
+  result are present when `maxBytes` truncates a long response. This is best
+  effort for POSIX bash/sh; non-POSIX shells may time out without an exit code,
+  in which case `commandCompletionKnown=false`.
 - sessions.check supports `brief=true` (compact screen) and `minimal=true`
   (compact screen plus only handle, label, target and control state instead of
   the full host/session metadata). Both are opt-in; the full check remains the
@@ -381,8 +385,10 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
 - Operation IDs are 1–128 ASCII letters/digits/dots/dashes/underscores. Exact retries
   under the same shared handle replay the acknowledgement; different arguments
   with the same ID return operation_conflict. The gateway retains at most 1,024
-  input records per handle without eviction; at that limit, stop and re-enable
-  control for a fresh handle.
+  input records or 16 MiB of serialized responses per handle, whichever is
+  reached first, so a long session with large outputs can evict old records.
+  Evicted IDs are no longer replay-protected; when exact retry protection matters,
+  stop and re-enable control for a fresh handle.
 - A successful write returns status=input_sent, operationId, inputRevision,
   outputCursor, acceptedBytes, submitted and commandCompletionKnown=false.
   Its outputCursor is captured before the PTY write to avoid skipping a fast reply.
@@ -397,8 +403,11 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
 - Files accept strict Unicode text up to 128 KiB of actual bytes. Directory results
   contain at most 500 entries per page; `offset`/`limit` page through the listing.
   `files.read` also accepts `offset` and `maxBytes` (up to 512 KiB) to read a
-  bounded page of a larger file. Paths and symlinks use server semantics, without
-  a separate path sandbox.
+  bounded page of a larger file. Pages start and end on UTF-8 character
+  boundaries; `maxBytes` may be exceeded by at most one code point, and an
+  unaligned `offset` is aligned forward with `skippedBytes` reporting the bytes
+  skipped. `nextOffset` is the aligned position for the next page. Paths and
+  symlinks use server semantics, without a separate path sandbox.
 - `files.stat` returns metadata without reading content. `files.write` stages
   complete UTF-8 text and commits atomically where the protocol supports it;
   existing files are protected unless `overwrite` is true. `files.delete`,

@@ -73,7 +73,7 @@ public sealed partial class AgentGateway
         catch (Exception) { response = AgentResponse.Error("input_outcome_unknown", "The input outcome is uncertain. Observe the terminal before continuing."); }
         if (response.ErrorCode == "input_outcome_unknown") grant.InputOutcomeUnknown = true;
         if (response.Success) grant.LastInputText = request.Method is "terminal.text" or "terminal.exec" ? request.Text : null;
-        RememberInput(grant, operationId, fingerprint, response);
+        grant.Inputs.Remember(operationId, fingerprint, response);
         // Do not replace a successful acknowledgement with cancellation after bytes were accepted.
         return response;
     }
@@ -172,17 +172,5 @@ public sealed partial class AgentGateway
                 "The session's active state changed after the check. Select the intended terminal and run Check Sessions again.");
 
         return null;
-    }
-
-    private static void RememberInput(Grant grant, string operationId, string fingerprint, AgentResponse response)
-    {
-        grant.Inputs[operationId] = (fingerprint, response);
-        grant.InputOrder.Enqueue(operationId);
-        // Keep exact-retry protection for the recent history without forcing the user
-        // to re-authorize a long-running terminal after 1024 commands.
-        while (grant.Inputs.Count > 1024 && grant.InputOrder.TryDequeue(out var oldest))
-        {
-            if (oldest != operationId) grant.Inputs.Remove(oldest);
-        }
     }
 }

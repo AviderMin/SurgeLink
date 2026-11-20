@@ -10,7 +10,8 @@ public sealed class AgentErgonomicsTests
     [Fact]
     public async Task TerminalOutputSupportsAnsiCleaningLineLimitAndContinuationCursor()
     {
-        var terminal = new RichTerminal("one\n\u001b[31mtwo\u001b[0m\nthree\nfour", cursor: 100);
+        const string raw = "one\n\u001b[31mtwo\u001b[0m\nthree\nfour";
+        var terminal = new RichTerminal(raw, cursor: raw.Length);
         var gateway = new AgentGateway();
         var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession(), null, terminal);
 
@@ -20,10 +21,17 @@ public sealed class AgentErgonomicsTests
         var data = response.Data!.Value;
         var text = data.GetProperty("text").GetString()!;
         Assert.DoesNotContain('\u001b', text);
-        Assert.Equal("three\nfour", text);
+        Assert.Equal("one\ntwo\n", text);
         Assert.True(data.GetProperty("truncated").GetBoolean());
         Assert.True(data.GetProperty("hasMore").GetBoolean());
-        Assert.True(data.GetProperty("cursor").GetInt64() < 100);
+        var cursor = data.GetProperty("cursor").GetInt64();
+        Assert.Equal(17, cursor);
+
+        var next = await gateway.ExecuteAsync(new("terminal.output", handle, Cursor: cursor, StripAnsi: true, MaxLines: 2), default);
+        Assert.True(next.Success);
+        Assert.Equal("three\nfour", next.Data!.Value.GetProperty("text").GetString());
+        Assert.False(next.Data.Value.GetProperty("hasMore").GetBoolean());
+        Assert.False(next.Data.Value.GetProperty("truncated").GetBoolean());
     }
 
     [Fact]
@@ -221,8 +229,10 @@ public sealed class AgentErgonomicsTests
         public TerminalScreenSnapshot ReadScreen() => new(text, 80, 24, 0, 0, true, false, false, false, 0, cursor, false, false);
         public TerminalOutputPage ReadOutput(long? requested)
         {
-            if (EmptyAfterFirstPage && _reads++ > 0) return new("", cursor, 0, cursor, false, false);
-            return new(text, cursor, 0, cursor, false, false);
+            var start = requested ?? 0;
+            if (EmptyAfterFirstPage && _reads++ > 0) return new("", text.Length, 0, text.Length, false, false);
+            var pageText = start < text.Length ? text[(int)start..] : string.Empty;
+            return new(pageText, text.Length, 0, text.Length, false, start + pageText.Length < text.Length);
         }
         public Task<TerminalInputReceipt> SendTextAsync(string value, bool submit, long expectedRevision, CancellationToken ct) =>
             Task.FromResult(new TerminalInputReceipt(expectedRevision + 1, cursor, value.Length, submit));
