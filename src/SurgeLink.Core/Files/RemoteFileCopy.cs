@@ -43,8 +43,11 @@ public static class RemoteFileCopy
             if (createdDestination && fileSystem.SupportsPermissions)
             {
                 // Only directories created by this copy need their owner write
-                // permission back before the recursive delete can succeed.
-                foreach (var (path, _) in createdDirectories.AsEnumerable().Reverse())
+                // permission back before the recursive delete can succeed. Restore
+                // from the root down: a parent without execute permission blocks
+                // chmod on its children, so deepest-first would fail until the
+                // parent is fixed and would never retry the children.
+                foreach (var (path, _) in createdDirectories)
                 {
                     try { await fileSystem.SetPermissionsAsync(path, 0x1C0, CancellationToken.None).ConfigureAwait(false); }
                     catch (Exception) { /* Best effort; keep the original failure. */ }

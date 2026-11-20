@@ -70,15 +70,14 @@ internal sealed class SshCommandRunner
         var output = CopyWithIdleTimeoutAsync(sshCommand.OutputStream, destination,
             FirstByteTimeout, ReadIdleTimeout, ct);
         var error = ReadBoundedOutputAsync(sshCommand.ExtendedOutputStream, _encoding, 2 * 1024 * 1024, ct);
-        var pending = new List<Task> { execution, output, error };
         try
         {
-            while (pending.Count > 0)
-            {
-                var finished = await Task.WhenAny(pending).ConfigureAwait(false);
-                await finished.ConfigureAwait(false);
-                pending.Remove(finished);
-            }
+            // The transfer itself is bounded by first-byte and idle timeouts. Once
+            // stdout reaches EOF, bound the command's exit and stderr drain too:
+            // a lost exit status or a child that inherited stderr must not hold the
+            // transfer lock forever.
+            await output.ConfigureAwait(false);
+            await WaitForCompletionAsync(execution, error, CommandExitTimeout, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             if (sshCommand.ExitStatus != 0) throw new IOException("The remote file read command failed.");
         }
@@ -95,6 +94,26 @@ internal sealed class SshCommandRunner
 
     internal static readonly TimeSpan FirstByteTimeout = TimeSpan.FromSeconds(90);
     internal static readonly TimeSpan ReadIdleTimeout = TimeSpan.FromSeconds(60);
+    internal static readonly TimeSpan CommandExitTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>Waits for the command exit and the stderr drain after stdout EOF.</summary>
+    internal static async Task WaitForCompletionAsync(Task execution, Task error, TimeSpan timeout, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(execution);
+        ArgumentNullException.ThrowIfNull(error);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        var settled = Task.WhenAll(execution, error);
+        try
+        {
+            await settled.WaitAsync(timeout, ct).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            ct.ThrowIfCancellationRequested();
+            throw new TimeoutException(
+                $"The remote file read command did not exit within {timeout.TotalSeconds:0} seconds.");
+        }
+    }
 
     /// <summary>Copies bytes and fails when the source stays silent for too long.</summary>
     internal static async Task CopyWithIdleTimeoutAsync(Stream source, Stream destination,
@@ -111,8 +130,14 @@ internal sealed class SshCommandRunner
         {
             var timeout = waitingForFirstByte ? firstByteTimeout : idleTimeout;
             var read = source.ReadAsync(buffer, ct).AsTask();
-            var delay = Task.Delay(timeout, ct);
-            if (await Task.WhenAny(read, delay).ConfigureAwait(false) != read && !read.IsCompleted)
+            int count;
+            try
+            {
+                // Task.WaitAsync owns and cleans up its timeout timer; a completed
+                // read does not leave an uncancelled Task.Delay behind per chunk.
+                count = await read.WaitAsync(timeout, ct).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
             {
                 ct.ThrowIfCancellationRequested();
                 // The abandoned read is completed by disposing the SSH command.
@@ -124,7 +149,6 @@ internal sealed class SshCommandRunner
                     $"The remote file read produced no data for {timeout.TotalSeconds:0} seconds.");
             }
 
-            var count = await read.ConfigureAwait(false);
             if (count == 0) return;
             await destination.WriteAsync(buffer.AsMemory(0, count), ct).ConfigureAwait(false);
             waitingForFirstByte = false;

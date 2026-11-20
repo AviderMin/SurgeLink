@@ -31,6 +31,32 @@ public sealed class ScpReadSafetyTests
     }
 
     [Fact]
+    public async Task CommandExitAfterStdoutEndIsBounded()
+    {
+        var stalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await Assert.ThrowsAsync<TimeoutException>(() => SshCommandRunner.WaitForCompletionAsync(
+            stalled.Task, Task.CompletedTask, TimeSpan.FromMilliseconds(100), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CommandExitAndStderrDrainCompleteTogether()
+    {
+        await SshCommandRunner.WaitForCompletionAsync(
+            Task.CompletedTask, Task.CompletedTask, TimeSpan.FromSeconds(1), CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task CommandExitWaitObservesCancellation()
+    {
+        var stalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => SshCommandRunner.WaitForCompletionAsync(
+            stalled.Task, Task.CompletedTask, TimeSpan.FromSeconds(30), cancellation.Token));
+    }
+
+    [Fact]
     public async Task DataWithinTheIdleBudgetIsCopied()
     {
         var content = new byte[100_000];

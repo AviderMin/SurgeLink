@@ -215,7 +215,9 @@ change and rejection, terminal resize and TERM propagation, SFTP listing and upl
 SCP fallback when no SFTP subsystem is available, transfer cancellation, overwrite conflicts,
 and reconnect after a dropped connection. For the SCP fallback, also replace a file with a FIFO
 between the metadata probe and the read, and stall the command channel; the read must fail through
-its first-byte/idle timeout instead of holding the transfer lock. Record the server
+its first-byte/idle timeout instead of holding the transfer lock. Once stdout reaches EOF, a lost
+exit status or a stderr stream held open by a child process must fail within the exit timeout and
+release the transport for the next download. Record the server
 implementation/version, network latency and exact result; offline tests cannot prove these
 transport paths.
 

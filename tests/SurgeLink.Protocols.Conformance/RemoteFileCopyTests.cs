@@ -140,6 +140,28 @@ public sealed class RemoteFileCopyTests
         Assert.Equal(0x140, (await fs.StatAsync("/home/demo/tree-copy/aaa-readonly", CancellationToken.None)).UnixMode);
     }
 
+    [Fact]
+    public async Task FailedPermissionFinalizationRollsBackANestedReadOnlyTree()
+    {
+        var fs = new DemoFileSystem();
+        await fs.CreateDirectoryAsync("/home/demo/tree", CancellationToken.None);
+        await fs.CreateDirectoryAsync("/home/demo/tree/a", CancellationToken.None);
+        await fs.CreateDirectoryAsync("/home/demo/tree/a/b", CancellationToken.None);
+        await fs.SetPermissionsAsync("/home/demo/tree/a", 0x100, CancellationToken.None);
+        await fs.SetPermissionsAsync("/home/demo/tree/a/b", 0x100, CancellationToken.None);
+
+        // The root chmod fails after the deeper directories were made read-only.
+        var failing = new TraversingPermissionFileSystem(fs, failFinalModeAt: "/home/demo/tree-copy");
+        await Assert.ThrowsAsync<IOException>(() => RemoteFileCopy.CopyAsync(failing,
+            "/home/demo/tree", "/home/demo/tree-copy", CancellationToken.None));
+
+        Assert.DoesNotContain(await fs.ListAsync("/home/demo", CancellationToken.None), entry => entry.Name == "tree-copy");
+
+        await RemoteFileCopy.CopyAsync(new TraversingPermissionFileSystem(fs),
+            "/home/demo/tree", "/home/demo/tree-copy", CancellationToken.None);
+        Assert.Equal(0x100, (await fs.StatAsync("/home/demo/tree-copy/a", CancellationToken.None)).UnixMode);
+    }
+
     private sealed class FailingReadFileSystem(IRemoteFileSystem inner, string failingPath) : IRemoteFileSystem
     {
         public bool SupportsPermissions => inner.SupportsPermissions;
@@ -195,6 +217,62 @@ public sealed class RemoteFileCopyTests
         public Task CommitWriteAsync(string temporary, string destination, bool overwrite, CancellationToken ct) =>
             inner.CommitWriteAsync(temporary, destination, overwrite, ct);
         public Task SetPermissionsAsync(string path, int mode, CancellationToken ct) => inner.SetPermissionsAsync(path, mode, ct);
+    }
+
+    private sealed class TraversingPermissionFileSystem(IRemoteFileSystem inner, string? failFinalModeAt = null) : IRemoteFileSystem
+    {
+        public bool SupportsPermissions => true;
+        public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => inner.GetHomeDirectoryAsync(ct);
+        public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => inner.GetCurrentDirectoryAsync(ct);
+        public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken ct) => inner.ListAsync(path, ct);
+        public Task<RemoteFileEntry> StatAsync(string path, CancellationToken ct) => inner.StatAsync(path, ct);
+        public Task<RemoteFileEntry?> TryStatAsync(string path, CancellationToken ct) => inner.TryStatAsync(path, ct);
+        public Task<Stream> OpenReadAsync(string path, CancellationToken ct) => inner.OpenReadAsync(path, ct);
+        public Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct) =>
+            inner.OpenWriteAsync(path, size, progress, ct);
+        public Task CreateDirectoryAsync(string path, CancellationToken ct) => inner.CreateDirectoryAsync(path, ct);
+        public Task RenameAsync(string source, string destination, CancellationToken ct) => inner.RenameAsync(source, destination, ct);
+        public Task CommitWriteAsync(string temporary, string destination, bool overwrite, CancellationToken ct) =>
+            inner.CommitWriteAsync(temporary, destination, overwrite, ct);
+
+        public async Task SetPermissionsAsync(string path, int mode, CancellationToken ct)
+        {
+            if (path == failFinalModeAt && mode != 0x1C0)
+                throw new IOException("injected final permission failure");
+            await RequireTraversableAsync(path, ct);
+            await inner.SetPermissionsAsync(path, mode, ct);
+        }
+
+        public async Task DeleteAsync(string path, bool recursive, CancellationToken ct)
+        {
+            await RequireTraversableAsync(path, ct);
+            if (recursive) await RequireWritableTreeAsync(path, ct);
+            await inner.DeleteAsync(path, recursive, ct);
+        }
+
+        // A POSIX chmod or unlink resolves every ancestor and needs execute on it.
+        private async Task RequireTraversableAsync(string path, CancellationToken ct)
+        {
+            var index = path.IndexOf('/', 1);
+            while (index > 0)
+            {
+                var ancestor = path[..index];
+                var entry = await inner.StatAsync(ancestor, ct);
+                if (entry.Kind == RemoteEntryKind.Directory && ((entry.UnixMode ?? 0) & 0x40) == 0)
+                    throw new IOException("Permission denied traversing " + ancestor);
+                index = path.IndexOf('/', index + 1);
+            }
+        }
+
+        private async Task RequireWritableTreeAsync(string path, CancellationToken ct)
+        {
+            var entry = await inner.StatAsync(path, ct);
+            if (entry.Kind != RemoteEntryKind.Directory) return;
+            if (((entry.UnixMode ?? 0) & 0xC0) != 0xC0)
+                throw new IOException("Permission denied deleting under " + path);
+            foreach (var child in await inner.ListAsync(path, ct))
+                await RequireWritableTreeAsync(child.FullPath, ct);
+        }
     }
 
     private sealed class CountingFileSystem(IRemoteFileSystem inner) : IRemoteFileSystem
