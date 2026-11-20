@@ -161,6 +161,36 @@ public sealed class AgentErgonomicsTests
     }
 
     [Fact]
+    public async Task SourceCloseFailureDoesNotReplaceTheDestination()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "surge-download-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var destination = Path.Combine(directory, "target.txt");
+        try
+        {
+            await File.WriteAllTextAsync(destination, "original");
+            var files = new MemoryFiles();
+            files.Files["/remote.txt"] = Encoding.UTF8.GetBytes("replacement");
+            files.FailingDisposals.Add("/remote.txt");
+            var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+            var session = new AgentGatewayTests.TestSession { FileSystem = files };
+            var handle = gateway.GrantSession("tab", "Demo", session, null, new RichTerminal("", 0), true,
+                target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+
+            var response = await gateway.ExecuteAsync(new("files.download", handle, "/remote.txt",
+                LocalPath: destination, Overwrite: true), default);
+
+            Assert.Equal("read_failed", response.ErrorCode);
+            Assert.Equal("original", await File.ReadAllTextAsync(destination));
+            Assert.Empty(Directory.GetFiles(directory, ".surge-*"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task MinimalCheckOmitsHostMetadata()
     {
         var gateway = new AgentGateway();
@@ -271,6 +301,7 @@ public sealed class AgentErgonomicsTests
         private readonly Dictionary<string, MemoryStream> _staging = new(StringComparer.Ordinal);
         public Dictionary<string, byte[]> Files { get; } = new(StringComparer.Ordinal);
         public HashSet<string> FailingReads { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> FailingDisposals { get; } = new(StringComparer.Ordinal);
         public bool SupportsPermissions => false;
         public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => throw new NotSupportedException();
@@ -283,7 +314,9 @@ public sealed class AgentErgonomicsTests
         public Task<Stream> OpenReadAsync(string path, CancellationToken ct) =>
             Task.FromResult<Stream>(FailingReads.Contains(path)
                 ? new PartialThenFailingStream(Files[path])
-                : new MemoryStream(Files[path], writable: false));
+                : FailingDisposals.Contains(path)
+                    ? new ThrowOnDisposeStream(Files[path])
+                    : new MemoryStream(Files[path], writable: false));
         public Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct)
         {
             var stream = new MemoryStream();
@@ -317,6 +350,21 @@ public sealed class AgentErgonomicsTests
                 _reads++ == 0
                     ? base.ReadAsync(buffer, cancellationToken)
                     : ValueTask.FromException<int>(new IOException("injected read failure"));
+        }
+
+        /// <summary>Reads successfully but reports a failed remote close.</summary>
+        private sealed class ThrowOnDisposeStream(byte[] content) : MemoryStream(content)
+        {
+            private int _disposed;
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
+                {
+                    base.Dispose(disposing);
+                    throw new IOException("injected close failure");
+                }
+                base.Dispose(disposing);
+            }
         }
     }
 }

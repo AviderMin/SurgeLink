@@ -309,6 +309,13 @@ public sealed partial class AgentGateway
             gap |= page.Gap;
             if (page.Text.Length > 0)
             {
+                if (page.Gap && text.Length > 0)
+                {
+                    // The retained history skipped a range. Keep the first
+                    // contiguous segment; the next call continues from its end.
+                    hasMore = true;
+                    break;
+                }
                 if (text.Length == 0) pageStart = page.Cursor - page.Text.Length;
                 text.Append(page.Text);
                 cursor = page.Cursor;
@@ -328,14 +335,12 @@ public sealed partial class AgentGateway
         var rawText = text.ToString();
         // A command result needs its sentinel and final output, so exec keeps the
         // tail. Incremental waits keep the head and report the cursor just after
-        // the returned characters, which makes repeated pages lossless.
+        // the returned characters, which makes repeated pages lossless. Trimming
+        // accepts ANSI-aware limits so a page never ends inside an escape.
         var trimmed = expectText is not null
-            ? AgentText.TrimTail(rawText, stripAnsi: false, request.MaxBytes ?? 65536, request.MaxLines)
-            : AgentText.TrimHead(rawText, stripAnsi: false, request.MaxBytes ?? 65536, request.MaxLines);
-        // Cleaning happens after the raw cut so cursor arithmetic stays in raw
-        // character units even when ANSI escapes or the sent echo are removed.
+            ? AgentText.TrimTail(rawText, request.StripAnsi, request.MaxBytes ?? 65536, request.MaxLines)
+            : AgentText.TrimHead(rawText, request.StripAnsi, request.MaxBytes ?? 65536, request.MaxLines);
         var visible = trimmed.Text;
-        if (request.StripAnsi) visible = AgentText.StripAnsi(visible);
         // Only the segment that starts at the wait's original cursor can begin
         // with the just-sent echo; a later page must not lose real output that
         // happens to repeat the command text near its start.
@@ -493,18 +498,22 @@ public sealed partial class AgentGateway
         long written = 0;
         try
         {
-            await using var source = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false);
-            await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
-                FileShare.None, 81920, FileOptions.Asynchronous))
+            // Close the remote source before publishing the destination. A failed
+            // close must not leave a replaced file behind a read_failed response.
+            await using (var source = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false))
             {
-                var buffer = new byte[81920];
-                int read;
-                while ((read = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
+                    FileShare.None, 81920, FileOptions.Asynchronous))
                 {
-                    await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-                    written += read;
+                    var buffer = new byte[81920];
+                    int read;
+                    while ((read = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                    {
+                        await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                        written += read;
+                    }
+                    await target.FlushAsync(ct).ConfigureAwait(false);
                 }
-                await target.FlushAsync(ct).ConfigureAwait(false);
             }
             ct.ThrowIfCancellationRequested();
             try

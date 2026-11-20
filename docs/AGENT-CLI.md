@@ -347,10 +347,12 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   commands. Output retains ANSI escapes, decodes UTF-8 across incoming chunks,
   retains at most 131,072 units and pages at most 16,384 units without splitting
   surrogate pairs. A history gap is explicit; future/negative cursors fail.
-  `maxBytes` and `maxLines` bound the returned page from its start; `cursor` points
+  `maxBytes` and `maxLines` bound the returned page from its start. `cursor` points
   just after the characters actually returned, so successive calls page through
-  the output without repeating or skipping it. A page may exceed `maxBytes` by at
-  most one code point. `stripAnsi` removes escape sequences for easier reading.
+  the output without repeating or skipping it. With `stripAnsi`, the limits count
+  visible text and an escape sequence is never split across pages; a page may
+  exceed the byte budget by at most one code point. `stripAnsi` removes escape
+  sequences for easier reading.
 - terminal.wait polls incremental output from the supplied cursor and returns
   when output has been quiet for `idleMilliseconds` or `timeoutMilliseconds`
   expires. It returns text, cursor, timing, `idle`, `timedOut`, a short screen
@@ -406,8 +408,10 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   bounded page of a larger file. Pages start and end on UTF-8 character
   boundaries; `maxBytes` may be exceeded by at most one code point, and an
   unaligned `offset` is aligned forward with `skippedBytes` reporting the bytes
-  skipped. `nextOffset` is the aligned position for the next page. Paths and
-  symlinks use server semantics, without a separate path sandbox.
+  skipped. An offset that points inside the final character returns an empty EOF
+  page instead of a decode failure. `nextOffset` is the aligned position for the
+  next page. Paths and symlinks use server semantics, without a separate path
+  sandbox.
 - `files.stat` returns metadata without reading content. `files.write` stages
   complete UTF-8 text and commits atomically where the protocol supports it;
   existing files are protected unless `overwrite` is true. `files.delete`,

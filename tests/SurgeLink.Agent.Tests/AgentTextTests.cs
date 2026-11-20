@@ -54,14 +54,28 @@ public sealed class AgentTextTests
     }
 
     [Fact]
-    public void AnsiIsRemovedAfterTheRawCutSoCursorUnitsStayStable()
+    public void AnsiLimitsCountVisibleTextAndNeverSplitAnEscape()
     {
         const string text = "\u001b[31mabcdef\u001b[0m";
 
-        var trimmed = AgentText.TrimHead(text, stripAnsi: true, maxBytes: 6, maxLines: null);
+        var head = AgentText.TrimHead(text, stripAnsi: true, maxBytes: 1, maxLines: null);
+        Assert.Equal("a", head.Text);
+        Assert.Equal(6, head.KeptCharacters);
+        Assert.True(head.Truncated);
 
-        Assert.Equal("a", trimmed.Text);
-        Assert.Equal(6, trimmed.KeptCharacters);
+        var tail = AgentText.TrimTail("A\u001b[31mB", stripAnsi: true, maxBytes: 1, maxLines: null);
+        Assert.Equal("B", tail.Text);
+        Assert.DoesNotContain('\u001b', tail.Text);
+
+        var incomplete = AgentText.TrimHead("abc\u001b[3", stripAnsi: true, maxBytes: null, maxLines: null);
+        Assert.Equal("abc", incomplete.Text);
+        Assert.Equal(3, incomplete.KeptCharacters);
+        Assert.True(incomplete.Truncated);
+
+        var onlyIncomplete = AgentText.TrimHead("\u001b[3", stripAnsi: true, maxBytes: null, maxLines: null);
+        Assert.Equal(string.Empty, onlyIncomplete.Text);
+        Assert.Equal(3, onlyIncomplete.KeptCharacters);
+        Assert.False(onlyIncomplete.Truncated);
     }
 
     [Fact]
@@ -138,6 +152,37 @@ public sealed class AgentTextTests
     {
         await Assert.ThrowsAsync<DecoderFallbackException>(() =>
             AgentFilePage.ReadAsync(new MemoryStream(new byte[] { 0xFF, 0x41 }), 0, 8, default));
+    }
+
+    [Fact]
+    public async Task FilePageReturnsAnEmptyEofPageForAnOffsetInsideTheLastCharacter()
+    {
+        var bytes = Encoding.UTF8.GetBytes("中");
+
+        var page = await AgentFilePage.ReadAsync(new MemoryStream(bytes), 1, 8, default);
+
+        Assert.Equal(string.Empty, page.Text);
+        Assert.Equal(2, page.BytesRead);
+        Assert.Equal(2, page.SkippedBytes);
+        Assert.False(page.Truncated);
+    }
+
+    [Fact]
+    public async Task FilePageRejectsContinuationBytesAtOffsetZero()
+    {
+        var bytes = new byte[] { 0x80, 0x41 };
+
+        await Assert.ThrowsAsync<DecoderFallbackException>(() =>
+            AgentFilePage.ReadAsync(new MemoryStream(bytes), 0, 8, default));
+    }
+
+    [Fact]
+    public async Task FilePageRejectsMoreThanThreeContinuationBytes()
+    {
+        var bytes = new byte[] { 0x80, 0x80, 0x80, 0x80, 0x41 };
+
+        await Assert.ThrowsAsync<DecoderFallbackException>(() =>
+            AgentFilePage.ReadAsync(new MemoryStream(bytes), 0, 16, default));
     }
 
     [Fact]

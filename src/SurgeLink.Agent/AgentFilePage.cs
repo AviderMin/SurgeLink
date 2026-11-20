@@ -53,10 +53,22 @@ internal static class AgentFilePage
         if (total == 0) return new FileTextPage(string.Empty, 0, 0, false);
 
         // The requested offset may point inside a multi-byte code point. Skip the
-        // remaining continuation bytes and report them, so nextOffset stays aligned.
+        // remaining continuation bytes (at most three for a four-byte character)
+        // and report them, so nextOffset stays aligned. A continuation byte at
+        // offset zero is invalid data, not an unaligned request.
         var start = 0;
-        while (start < total && start < 4 && (data[start] & 0xC0) == 0x80) start++;
-        if (start == total) throw new DecoderFallbackException("The file offset is not a UTF-8 character boundary.");
+        if (offset > 0)
+        {
+            while (start < total && start < 3 && (data[start] & 0xC0) == 0x80) start++;
+        }
+        if (start == total && offset > 0)
+        {
+            // The offset points into the final character and the file ends there,
+            // so there is no complete character left to return. An empty EOF page
+            // is more useful than a read failure, and nextOffset reaches the end.
+            if (total < data.Length) return new FileTextPage(string.Empty, total, total, false);
+            throw new DecoderFallbackException("The file offset is not a UTF-8 character boundary.");
+        }
 
         var end = start;
         while (end < total)

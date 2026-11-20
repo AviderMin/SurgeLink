@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace SurgeLink.Agent;
 
@@ -8,13 +7,8 @@ namespace SurgeLink.Agent;
 /// its leading part so the next cursor continues where the page ended; screens and
 /// summaries keep their trailing part because the prompt is the useful end.
 /// </summary>
-internal static partial class AgentText
+internal static class AgentText
 {
-    [GeneratedRegex(@"\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[PX^_].*?(?:\x1B\\)|[@-_])", RegexOptions.Singleline)]
-    private static partial Regex AnsiSequence();
-
-    public static string StripAnsi(string text) => AnsiSequence().Replace(text, string.Empty);
-
     /// <summary>
     /// Removes the leading PTY echo of a just-sent command. Some terminals echo the
     /// paste once locally and once from the remote line discipline, so allow a
@@ -37,51 +31,133 @@ internal static partial class AgentText
 
     /// <summary>
     /// Keeps the final lines of <paramref name="text"/>. Trailing padding newlines do
-    /// not count as lines so a small tail still contains the prompt.
+    /// not count as lines so a small tail still contains the prompt. With
+    /// <paramref name="stripAnsi"/>, the limits count visible text only and the
+    /// returned page never starts inside an escape sequence.
     /// </summary>
     public static TrimmedText TrimTail(string text, bool stripAnsi, int? maxBytes, int? maxLines)
     {
         var originalChars = text.Length;
         var withoutTrailingNewlines = text.TrimEnd('\n');
         if (withoutTrailingNewlines.Length > 0) text = withoutTrailingNewlines;
-        var start = 0;
 
-        if (maxLines is int lineLimit && lineLimit > 0)
+        if (stripAnsi)
         {
-            start = StartOfLastLines(text, lineLimit);
+            var spans = FindAnsiSpans(text);
+            var visible = StripAnsi(text, spans);
+            var start = 0;
+            if (maxLines is int lineLimit && lineLimit > 0)
+            {
+                start = StartOfLastLines(visible, lineLimit);
+            }
+
+            if (maxBytes is int byteLimit && byteLimit > 0)
+            {
+                start = Math.Max(start, TailStartWithinUtf8Bytes(visible, byteLimit));
+            }
+
+            if (start == 0)
+            {
+                return new TrimmedText(visible, text.Length, false, originalChars);
+            }
+
+            var ansiStart = RawIndexAtVisible(text, spans, start);
+            return new TrimmedText(visible[start..], text.Length - ansiStart, true, originalChars);
         }
 
-        if (maxBytes is int byteLimit && byteLimit > 0)
+        var rawStart = 0;
+        if (maxLines is int rawLineLimit && rawLineLimit > 0)
         {
-            start = Math.Max(start, TailStartWithinUtf8Bytes(text, byteLimit));
+            rawStart = StartOfLastLines(text, rawLineLimit);
         }
 
-        var kept = start == 0 ? text : text[start..];
-        if (stripAnsi) kept = StripAnsi(kept);
-        return new TrimmedText(kept, text.Length - start, start > 0, originalChars);
+        if (maxBytes is int rawByteLimit && rawByteLimit > 0)
+        {
+            rawStart = Math.Max(rawStart, TailStartWithinUtf8Bytes(text, rawByteLimit));
+        }
+
+        return new TrimmedText(text[rawStart..], text.Length - rawStart, rawStart > 0, originalChars);
     }
 
     /// <summary>
     /// Keeps the leading part of <paramref name="text"/> up to the same limits.
-    /// <paramref name="maxBytes"/> may be exceeded by at most one code point so a
-    /// caller always makes progress.
+    /// With <paramref name="stripAnsi"/>, the limits count visible text only and an
+    /// escape sequence is never split across a page. A page may exceed the byte
+    /// budget by at most one code point so a caller always makes progress.
     /// </summary>
     public static TrimmedText TrimHead(string text, bool stripAnsi, int? maxBytes, int? maxLines)
     {
-        var end = text.Length;
-        if (maxLines is int lineLimit && lineLimit > 0)
+        if (stripAnsi)
         {
-            end = Math.Min(end, EndOfFirstLines(text, lineLimit));
+            var spans = FindAnsiSpans(text);
+            var visible = StripAnsi(text, spans);
+            var end = visible.Length;
+            if (maxLines is int lineLimit && lineLimit > 0)
+            {
+                end = Math.Min(end, EndOfFirstLines(visible, lineLimit));
+            }
+
+            if (maxBytes is int byteLimit && byteLimit > 0)
+            {
+                end = Math.Min(end, EndWithinUtf8Bytes(visible, byteLimit));
+            }
+
+            if (end == visible.Length)
+            {
+                // Consume trailing complete escapes, but leave an unfinished one
+                // for the next page: the remaining bytes may arrive later.
+                if (spans.Count > 0 && !spans[^1].Complete && spans[^1].Start > 0)
+                {
+                    return new TrimmedText(visible, spans[^1].Start, true, text.Length);
+                }
+
+                return new TrimmedText(visible, text.Length, false, text.Length);
+            }
+
+            var ansiEnd = end == 0
+                ? RawIndexAtVisible(text, spans, 0)
+                : RawEndAfterVisible(text, spans, end);
+            return new TrimmedText(visible[..end], ansiEnd, ansiEnd < text.Length, text.Length);
         }
 
-        if (maxBytes is int byteLimit && byteLimit > 0)
+        var rawEnd = text.Length;
+        if (maxLines is int rawLineLimit && rawLineLimit > 0)
         {
-            end = Math.Min(end, EndWithinUtf8Bytes(text, byteLimit));
+            rawEnd = Math.Min(rawEnd, EndOfFirstLines(text, rawLineLimit));
         }
 
-        var kept = text[..end];
-        if (stripAnsi) kept = StripAnsi(kept);
-        return new TrimmedText(kept, end, end < text.Length, text.Length);
+        if (maxBytes is int rawByteLimit && rawByteLimit > 0)
+        {
+            rawEnd = Math.Min(rawEnd, EndWithinUtf8Bytes(text, rawByteLimit));
+        }
+
+        return new TrimmedText(text[..rawEnd], rawEnd, rawEnd < text.Length, text.Length);
+    }
+
+    /// <summary>Removes complete ANSI sequences and an unfinished trailing sequence.</summary>
+    public static string StripAnsi(string text) => StripAnsi(text, FindAnsiSpans(text));
+
+    private static string StripAnsi(string text, List<AnsiSpan> spans)
+    {
+        if (spans.Count == 0) return text;
+        var builder = new StringBuilder(text.Length);
+        var index = 0;
+        foreach (var span in spans)
+        {
+            if (span.Start > index)
+            {
+                builder.Append(text, index, span.Start - index);
+            }
+
+            index = Math.Max(index, span.End);
+        }
+
+        if (index < text.Length)
+        {
+            builder.Append(text, index, text.Length - index);
+        }
+
+        return builder.ToString();
     }
 
     private static int StartOfLastLines(string text, int lineLimit)
@@ -179,6 +255,139 @@ internal static partial class AgentText
     {
         Utf8WidthBefore(text, end, out var chars);
         return chars;
+    }
+
+    /// <summary>Raw index of the visible UTF-16 unit, skipping leading escape sequences.</summary>
+    private static int RawIndexAtVisible(string text, List<AnsiSpan> spans, int visibleUnit)
+    {
+        var spanIndex = 0;
+        var visible = 0;
+        for (var index = 0; index < text.Length;)
+        {
+            if (spanIndex < spans.Count && spans[spanIndex].Start == index)
+            {
+                index = spans[spanIndex].End;
+                spanIndex++;
+                continue;
+            }
+
+            if (visible >= visibleUnit) return index;
+            Utf8WidthAt(text, index, out var chars);
+            visible += chars;
+            index += chars;
+        }
+        return text.Length;
+    }
+
+    /// <summary>Raw index just after the visible prefix, before any following escape sequence.</summary>
+    private static int RawEndAfterVisible(string text, List<AnsiSpan> spans, int visibleUnits)
+    {
+        var spanIndex = 0;
+        var visible = 0;
+        for (var index = 0; index < text.Length;)
+        {
+            if (spanIndex < spans.Count && spans[spanIndex].Start == index)
+            {
+                index = spans[spanIndex].End;
+                spanIndex++;
+                continue;
+            }
+
+            Utf8WidthAt(text, index, out var chars);
+            visible += chars;
+            index += chars;
+            if (visible >= visibleUnits) return index;
+        }
+        return text.Length;
+    }
+
+    private readonly record struct AnsiSpan(int Start, int End, bool Complete);
+
+    /// <summary>Splits text into CSI, OSC/DCS-like strings and single-character escapes.</summary>
+    private static List<AnsiSpan> FindAnsiSpans(string text)
+    {
+        List<AnsiSpan>? spans = null;
+        var index = 0;
+        while (index < text.Length)
+        {
+            if (text[index] != '\u001B')
+            {
+                index++;
+                continue;
+            }
+
+            var start = index;
+            if (start + 1 >= text.Length)
+            {
+                (spans ??= []).Add(new AnsiSpan(start, text.Length, false));
+                break;
+            }
+
+            var kind = text[start + 1];
+            int end;
+            bool complete;
+            switch (kind)
+            {
+                case '[':
+                    var cursor = start + 2;
+                    while (cursor < text.Length && text[cursor] is >= '\u0030' and <= '\u003F') cursor++;
+                    while (cursor < text.Length && text[cursor] is >= '\u0020' and <= '\u002F') cursor++;
+                    if (cursor < text.Length && text[cursor] is >= '\u0040' and <= '\u007E')
+                    {
+                        end = cursor + 1;
+                        complete = true;
+                    }
+                    else
+                    {
+                        end = text.Length;
+                        complete = false;
+                    }
+                    break;
+                case ']':
+                case 'P':
+                case 'X':
+                case '^':
+                case '_':
+                    var terminator = start + 2;
+                    end = text.Length;
+                    complete = false;
+                    while (terminator < text.Length)
+                    {
+                        if (kind == ']' && text[terminator] == '\u0007')
+                        {
+                            end = terminator + 1;
+                            complete = true;
+                            break;
+                        }
+
+                        if (text[terminator] == '\u001B' && terminator + 1 < text.Length && text[terminator + 1] == '\\')
+                        {
+                            end = terminator + 2;
+                            complete = true;
+                            break;
+                        }
+
+                        terminator++;
+                    }
+                    break;
+                default:
+                    if (kind is < '\u0040' or > '\u005F')
+                    {
+                        index++;
+                        continue;
+                    }
+
+                    end = start + 2;
+                    complete = true;
+                    break;
+            }
+
+            (spans ??= []).Add(new AnsiSpan(start, end, complete));
+            if (!complete) break;
+            index = end;
+        }
+
+        return spans ?? [];
     }
 }
 
