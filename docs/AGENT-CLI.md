@@ -406,8 +406,10 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   available. Local upload/download paths refer to the Windows machine running
   SurgeLink and each such operation requires an explicit confirmation in the
   desktop window that shows the exact local path; declining returns
-  `denied`. Mutating file operations require terminal-control access; read-only
-  sharing cannot write or delete.
+  `denied`. Downloads stage beside the local destination and replace it only
+  after the remote read completes, so a failed or cancelled transfer preserves
+  an existing file. Mutating file operations require terminal-control access;
+  read-only sharing cannot write or delete.
 
 Error codes additionally include user_operating, session_check_required, session_context_unavailable,
 control_required, invalid_arguments, input_conflict,

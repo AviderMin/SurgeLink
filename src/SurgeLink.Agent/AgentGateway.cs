@@ -467,18 +467,50 @@ public sealed partial class AgentGateway
         { return AgentResponse.Error("invalid_path", "The local download path is invalid."); }
         if (!request.Overwrite && File.Exists(localPath))
             return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
+        var directory = Path.GetDirectoryName(localPath) ?? Path.GetPathRoot(localPath);
+        if (string.IsNullOrEmpty(directory))
+            return AgentResponse.Error("invalid_path", "The local download path has no directory.");
+        // Stage beside the destination and publish only after the remote read
+        // finished. Truncating or creating the destination up front would turn a
+        // failed or cancelled transfer into data loss.
+        var temporary = Path.Combine(directory, ".surge-" + Guid.NewGuid().ToString("N") + ".tmp");
+        long written = 0;
         try
         {
             await using var source = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false);
-            await using var target = new FileStream(localPath,
-                request.Overwrite ? FileMode.Create : FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous);
-            await source.CopyToAsync(target, 81920, ct).ConfigureAwait(false);
-            var written = target.Length;
+            await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
+                FileShare.None, 81920, FileOptions.Asynchronous))
+            {
+                var buffer = new byte[81920];
+                int read;
+                while ((read = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                {
+                    await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                    written += read;
+                }
+                await target.FlushAsync(ct).ConfigureAwait(false);
+            }
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                // Same directory, so this is an atomic replace on the local volume
+                // and never exposes a partially written file under localPath.
+                File.Move(temporary, localPath, request.Overwrite);
+            }
+            catch (IOException) when (!request.Overwrite && File.Exists(localPath))
+            {
+                return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
+            }
             return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = written, overwrite = request.Overwrite });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return AgentResponse.Error("read_failed", ex.Message);
+        }
+        finally
+        {
+            try { File.Delete(temporary); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
     }
 
