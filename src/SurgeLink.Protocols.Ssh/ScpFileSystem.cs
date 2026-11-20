@@ -134,9 +134,9 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 {
                     token.ThrowIfCancellationRequested();
                     await RemoteFileAccess.RequireRegularFileAsync(this, fullPath, token).ConfigureAwait(false);
-                    // Re-test and read in one remote command. A FIFO swapped in
-                    // after the metadata probe then fails the test instead of
-                    // blocking cat; CopyToAsync also bounds a stalled read.
+                    // Re-test and read in one remote command, narrowing the window between
+                    // the type probe and cat. A swap after this test can still block
+                    // cat; CopyToAsync's first-byte/idle timeouts bound that case.
                     await runner.CopyToAsync(BuildReadCommand(fullPath), target, token).ConfigureAwait(false);
                     token.ThrowIfCancellationRequested();
                 }
