@@ -18,7 +18,10 @@ public static class RemoteFileDelete
             try
             {
                 var leaf = entry.FullPath[(entry.FullPath.LastIndexOf('/') + 1)..];
-                if (!entry.FullPath.StartsWith('/') || leaf.Length == 0 || leaf is "." or ".." || entry.FullPath.Contains('\0'))
+                if (!entry.FullPath.StartsWith('/') || leaf.Length == 0 || leaf is "." or ".." || entry.FullPath.Contains('\0')
+                    // Dot segments inside the path would delete something other
+                    // than the entry the user saw selected.
+                    || entry.FullPath.Split('/').Any(segment => segment is "." or ".."))
                     throw new IOException("Refusing to delete an invalid path or the remote root directory.");
                 await fileSystem.DeleteAsync(entry.FullPath, entry.IsDirectory, cancellationToken).ConfigureAwait(false);
                 deleted.Add(entry);

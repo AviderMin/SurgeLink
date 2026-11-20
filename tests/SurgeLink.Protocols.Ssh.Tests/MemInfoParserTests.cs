@@ -87,6 +87,23 @@ public sealed class MemInfoParserTests
         Assert.Equal(1000L * 1024, memory.AvailableBytes);
     }
 
+    [Fact]
+    public void HugeKilobyteValueDoesNotOverflowIntoANegativeSize()
+    {
+        var memory = MemInfoParser.Parse("MemTotal: 9223372036854775807 kB\nMemFree: 1 kB\n");
+
+        Assert.Equal(0, memory.TotalBytes);
+    }
+
+    [Fact]
+    public void SwapUsedIsClampedBetweenZeroAndSwapTotal()
+    {
+        var memory = MemInfoParser.Parse("SwapTotal: 100 kB\nSwapFree: 200 kB\n");
+
+        Assert.Equal(100L * 1024, memory.SwapTotalBytes);
+        Assert.Equal(0, memory.SwapUsedBytes);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

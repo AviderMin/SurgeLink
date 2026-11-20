@@ -260,6 +260,24 @@ public sealed class SessionManagerTests
     }
 
     [Fact]
+    public async Task KeyboardInteractiveProfileDoesNotQueryCredentialStore()
+    {
+        await using var harness = new Harness();
+        SessionProfile profile = Profile(authentication: AuthenticationMethod.KeyboardInteractive);
+        harness.Credentials.Save(profile.Id, new StoredCredential
+        {
+            Password = "stored-password",
+            PrivateKeyPassphrase = "key-passphrase",
+        });
+
+        await harness.Manager.OpenAsync(profile, null, CancellationToken.None);
+
+        Assert.Equal(0, harness.Credentials.GetCalls);
+        Assert.Null(harness.Plugin.LastRequest!.Password);
+        Assert.Null(harness.Plugin.LastRequest.PrivateKeyPassphrase);
+    }
+
+    [Fact]
     public async Task PasswordAuthDoesNotUseStoredPassphrase()
     {
         await using var harness = new Harness();

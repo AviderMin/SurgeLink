@@ -49,6 +49,24 @@ public sealed class SelectionAndTextTests
     }
 
     [Fact]
+    public void WrappedLineCopyDoesNotInsertLineBreak()
+    {
+        var terminal = new TestTerminal(10, 3);
+        terminal.Feed("0123456789AB");
+        Assert.Equal("0123456789", terminal.Line(0));
+        Assert.Equal("AB", terminal.Line(1));
+        Assert.Equal("0123456789AB", Select(terminal, 0, 0, 1, 1));
+    }
+
+    [Fact]
+    public void HardLineBreakStillCopiesAsNewLine()
+    {
+        var terminal = new TestTerminal(10, 3);
+        terminal.Feed("abc\r\ndef");
+        Assert.Equal("abc\ndef", Select(terminal, 0, 0, 1, 2));
+    }
+
+    [Fact]
     public void SelectionTrimsTrailingBlanks()
     {
         TestTerminal terminal = Create();

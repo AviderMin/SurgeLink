@@ -27,4 +27,10 @@ public sealed class WindowsDiskIoParserTests
         Assert.Equal(new DiskIoRates(0, 0), WindowsDiskIoParser.Parse(null));
         Assert.Equal(new DiskIoRates(0, 0), WindowsDiskIoParser.Parse(""));
     }
+
+    [Fact]
+    public void InfiniteRatesAreRejected()
+    {
+        Assert.Equal(new DiskIoRates(0, 0), WindowsDiskIoParser.Parse("_Total|Infinity|Infinity"));
+    }
 }

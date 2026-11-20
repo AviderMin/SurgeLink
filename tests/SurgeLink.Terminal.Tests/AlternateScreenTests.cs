@@ -79,6 +79,23 @@ public sealed class AlternateScreenTests
     }
 
     [Fact]
+    public void Mode1049RestoresPrimaryPenAndOriginMode()
+    {
+        var terminal = new TestTerminal(20, 5);
+        terminal.Feed("\u001b[31m\u001b[3;4H");
+        terminal.Feed("\u001b[?1049h\u001b[42m\u001b[?6h");
+        Assert.True(terminal.Modes.OriginMode);
+        terminal.Feed("\u001b[?1049l");
+
+        Assert.False(terminal.Modes.OriginMode);
+        // The saved cursor returns to 3;4 and keeps the primary red pen; the
+        // application's green background must not leak into the primary screen.
+        terminal.Feed("X");
+        Assert.Equal(TerminalColor.FromIndex(1), terminal.Cell(2, 3).Foreground);
+        Assert.Equal(TerminalColor.Default, terminal.Cell(2, 3).Background);
+    }
+
+    [Fact]
     public void AlternateScreenIgnoresScrollViewport()
     {
         var terminal = new TestTerminal(10, 2);

@@ -34,6 +34,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Repository check failed.' }
           python tools/check-ui-localization.py
           if ($LASTEXITCODE -ne 0) { throw 'Localization check failed.' }
+          python tools/check-version.py
+          if ($LASTEXITCODE -ne 0) { throw 'Documented version check failed.' }
       - name: Release tooling regression checks
         run: |
           python -m unittest discover -s tools/tests -p test_release_notes.py -v

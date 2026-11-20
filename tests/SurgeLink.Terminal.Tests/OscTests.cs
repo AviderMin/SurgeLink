@@ -109,6 +109,17 @@ public sealed class OscTests
     }
 
     [Fact]
+    public void OscAbortedByDoubleEscapeStillStartsCsi()
+    {
+        var terminal = new TestTerminal();
+        terminal.Feed("\u001b]0;title\u001b\u001b[31mR\u001b[0m");
+
+        Assert.Equal("title", terminal.Modes.WindowTitle);
+        Assert.Equal("R", terminal.Line(0));
+        Assert.Equal(TerminalColor.FromIndex(1), terminal.Cell(0, 0).Foreground);
+    }
+
+    [Fact]
     public void OscDoesNotWriteToTheScreen()
     {
         var terminal = new TestTerminal();

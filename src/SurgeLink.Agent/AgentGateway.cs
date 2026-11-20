@@ -207,8 +207,11 @@ public sealed partial class AgentGateway
                         return AgentResponse.Error("invalid_path", "Supply a destination path without control characters (maximum 4096 characters).");
                     // Evaluate the host policy for every exact path and operation. The desktop
                     // explicitly allows reads within a shared connection; this is not a path sandbox
-                    // or a per-read prompt. Symlinks may resolve outside a lexical root.
-                    var approved = await _confirmFile(new AgentFileAccess(grant.Info.Label, request.Method, request.Path), ct).ConfigureAwait(false);
+                    // or a per-read prompt. Local upload/download paths are included so the host
+                    // can make the Agent's local file access visible to the user.
+                    var approved = await _confirmFile(
+                        new AgentFileAccess(grant.Info.Label, request.Method, request.Path,
+                            request.LocalPath, request.Destination), ct).ConfigureAwait(false);
                     ThrowIfCancelled(grant, ct);
                     if (!approved)
                         return AgentResponse.Error("denied", "File access was declined by the host policy.");
@@ -408,7 +411,8 @@ public sealed partial class AgentGateway
                 return AgentResponse.Ok(new { path = request.Path, bytesWritten = bytes.Length, overwrite = request.Overwrite });
             }
             case "files.delete":
-                if (request.Recursive && request.Path == "/") return AgentResponse.Error("invalid_path", "Refusing to delete the remote root directory recursively.");
+                if (request.Recursive && IsRemoteRoot(request.Path!))
+                    return AgentResponse.Error("invalid_path", "Refusing to delete the remote root directory recursively.");
                 await files.DeleteAsync(request.Path!, request.Recursive, ct).ConfigureAwait(false);
                 return AgentResponse.Ok(new { path = request.Path, deleted = true, recursive = request.Recursive });
             case "files.rename":
@@ -527,6 +531,16 @@ public sealed partial class AgentGateway
         // A delayed callback must not let a revoked operation continue or return data.
         grant.Lifetime.Token.ThrowIfCancellationRequested();
         ct.ThrowIfCancellationRequested();
+    }
+
+    /// <summary>True when every segment is a dot segment, i.e. the path names the POSIX root.</summary>
+    private static bool IsRemoteRoot(string path)
+    {
+        foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment is not ("." or "..")) return false;
+        }
+        return true;
     }
 
     private bool IsHumanOperating(Grant grant)

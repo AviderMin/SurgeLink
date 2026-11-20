@@ -40,6 +40,7 @@ public static class DfParser
 
             if (line.StartsWith("df:", StringComparison.OrdinalIgnoreCase))
             {
+                wrappedDevice = null;
                 continue;
             }
 
@@ -52,6 +53,7 @@ public static class DfParser
 
             if (tokens.Length < 5)
             {
+                wrappedDevice = null;
                 continue;
             }
 

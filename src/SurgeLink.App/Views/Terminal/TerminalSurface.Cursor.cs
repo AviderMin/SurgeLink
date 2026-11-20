@@ -17,19 +17,23 @@ internal sealed partial class TerminalSurface
         TerminalCursor cursor;
         TerminalModes modes;
         TerminalCell cell;
+        int viewportRow;
 
         lock (emulator.SyncRoot)
         {
             cursor = emulator.Cursor;
             modes = emulator.Modes;
-            cell = emulator.GetCell(cursor.Row, cursor.Column);
+            // Cursor reports a screen row; the paint surface addresses viewport
+            // rows, which are shifted down by the history the user scrolled back.
+            viewportRow = cursor.Row + emulator.ViewportOffset;
+            cell = emulator.GetCell(viewportRow, cursor.Column);
         }
 
         bool visible = modes.CursorVisible
             && !_bridge.IsClosed
             && cursor.Visible
             && _hasFocus
-            && cursor.Row >= 0 && cursor.Row < _paintedRowCount
+            && viewportRow >= 0 && viewportRow < _paintedRowCount
             && cursor.Column >= 0 && cursor.Column < _paintedColumns;
 
         if (!visible)
@@ -42,7 +46,7 @@ internal sealed partial class TerminalSurface
         _cursorLayer.Opacity = !modes.CursorBlink || _blinkOn ? 1 : 0;
 
         double left = cursor.Column * metrics.CellWidth;
-        double top = cursor.Row * metrics.CellHeight;
+        double top = viewportRow * metrics.CellHeight;
         var brush = resolver.Brush(resolver.Cursor);
 
         _cursorRect.Fill = brush;

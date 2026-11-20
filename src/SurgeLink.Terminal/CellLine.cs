@@ -27,11 +27,19 @@ internal sealed class CellLine
     /// <summary>Number of columns currently visible on the screen.</summary>
     public int Length => _columns;
 
+    /// <summary>
+    /// True when the next logical line continues on the following row because this
+    /// row was filled without a hard line break. Copying must not insert a newline
+    /// between the two rows of one logical line.
+    /// </summary>
+    public bool Wrapped { get; set; }
+
     /// <summary>Resets every cell, including hidden cells, to blank.</summary>
     public void Clear()
     {
         Array.Fill(Cells, TerminalCell.Blank);
         _hiddenDirty = false;
+        Wrapped = false;
     }
 
     public void Clear(TerminalCell blank)
@@ -40,6 +48,7 @@ internal sealed class CellLine
         // stale content for a later widening to resurrect.
         Array.Fill(Cells, blank);
         _hiddenDirty = false;
+        Wrapped = false;
     }
 
     /// <summary>

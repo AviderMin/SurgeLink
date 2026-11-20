@@ -4,7 +4,7 @@
 
 **把远程终端、文件管理和系统监控放进同一个 Windows 工作区。**
 
-SurgeLink 是一款开源的 Windows 桌面 SSH／Telnet／串口客户端，使用 C#、WinUI 3 与 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建，采用 MIT 许可证。当前版本：**1.0.3.1**。版本更新、构建与打包说明见 [README-FULL.md](README-FULL.md)。
+SurgeLink 是一款开源的 Windows 桌面 SSH／Telnet／串口客户端，使用 C#、WinUI 3 与 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建，采用 MIT 许可证。当前版本：**1.0.3.6**。版本更新、构建与打包说明见 [README-FULL.md](README-FULL.md)。
 
 ## 这是什么？
 

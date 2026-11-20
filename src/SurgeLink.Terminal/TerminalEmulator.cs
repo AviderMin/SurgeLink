@@ -142,8 +142,9 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             try
             {
                 // Preserve the reading position while the user is inspecting history.
-                // Appending history does not change the viewport offset; eviction is
-                // compensated in OnLineScrolledOff. ScrollToBottom resumes live output.
+                // Every line added to scrollback advances the absolute viewport, so
+                // OnLineScrolledOff increases the offset by one. ScrollToBottom
+                // resumes live output.
                 _parser.Feed(data);
             }
             finally
@@ -308,7 +309,9 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         var builder = new StringBuilder();
         for (int row = startRow; row <= endRow; row++)
         {
-            if (row > startRow)
+            // A soft-wrapped row is one logical line: joining the next row with a
+            // newline would break a pasted command in two.
+            if (row > startRow && !IsWrappedRow(row - 1))
             {
                 builder.Append('\n');
             }
@@ -319,6 +322,24 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
 
         return builder.ToString();
+    }
+
+    /// <summary>True when the buffer row ends without a hard line break.</summary>
+    private bool IsWrappedRow(int row)
+    {
+        int index = _scrollback.Count - _viewportOffset + row;
+        if (index < 0)
+        {
+            return false;
+        }
+
+        if (index < _scrollback.Count)
+        {
+            return _scrollback[index].Wrapped;
+        }
+
+        int screenRow = index - _scrollback.Count;
+        return screenRow >= 0 && screenRow < _screen.Rows && _screen.LineAt(screenRow).Wrapped;
     }
 
     /// <inheritdoc />
@@ -778,12 +799,14 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
 
         CellLine? evicted = _scrollback.Add(line);
-        if (_viewportOffset > 0 && evicted is not null)
+        if (_viewportOffset > 0)
         {
-            // A full history drops its oldest line, reducing the offset to the
-            // content being read by one. Appending without eviction does not
-            // change that offset or the rows displayed in the viewport.
-            _viewportOffset--;
+            // One more line now sits above the live screen, so the absolute
+            // position of the viewport start advances by one. Raising the offset
+            // by the same amount keeps the lines the user is reading on screen.
+            // This also holds when the ring buffer evicts its oldest line: the
+            // count stays the same but every retained index shifts by one.
+            _viewportOffset = Math.Min(_viewportOffset + 1, _scrollback.Count);
         }
         return evicted ?? RentLine();
     }
@@ -1134,6 +1157,11 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                     _alternateSavedCursor.Row,
                     _alternateSavedCursor.Column,
                     _alternateSavedCursor.PendingWrap);
+                // xterm's alternate screen keeps a full cursor state: leaving an
+                // application must not leak its colours or origin mode into the
+                // primary shell (for example after quitting vim or less).
+                _sgr = _alternateSavedCursor.Sgr;
+                SetModes(_modes with { OriginMode = _alternateSavedCursor.OriginMode });
             }
 
             _viewportOffset = 0;

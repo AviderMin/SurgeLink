@@ -255,6 +255,25 @@ public sealed class InputEncoderTests
     }
 
     [Fact]
+    public void BracketedPasteCannotBeTerminatedByPayload()
+    {
+        TerminalModes modes = TerminalModes.Default with { BracketedPaste = true };
+        byte[] encoded = TerminalInputEncoder.EncodePaste("safe\u001b[201~rm -rf ~\r", modes);
+        // The payload's ESC is removed so the only terminator is the one added
+        // after the payload; the application cannot mistake it for typed input.
+        Assert.Equal("\u001b[200~safe[201~rm -rf ~\r\u001b[201~", Encoding.UTF8.GetString(encoded));
+    }
+
+    [Fact]
+    public void NonBracketedPasteKeepsControlCharacters()
+    {
+        // Without bracketed paste there is no frame to escape, so the payload is
+        // forwarded unchanged (a user may deliberately paste an escape sequence).
+        byte[] encoded = TerminalInputEncoder.EncodePaste("a\u001b[31mb", Normal);
+        Assert.Equal("a\u001b[31mb", Encoding.UTF8.GetString(encoded));
+    }
+
+    [Fact]
     public void NullArgumentsThrow()
     {
         Assert.Throws<ArgumentNullException>(() => TerminalInputEncoder.EncodeText(null!, Normal));

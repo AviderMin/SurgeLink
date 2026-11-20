@@ -55,6 +55,9 @@ internal sealed class ScreenBuffer
     /// <summary>True for the alternate screen buffer.</summary>
     public bool IsAlternate => _isAlternate;
 
+    /// <summary>Returns the storage row, used for wrapping metadata.</summary>
+    internal CellLine LineAt(int row) => _lines[row];
+
     /// <summary>Cursor row, zero based.</summary>
     public int CursorRow => _cursorRow;
 
@@ -313,6 +316,7 @@ internal sealed class ScreenBuffer
             {
                 _pendingWrap = false;
                 _cursorColumn = 0;
+                _lines[_cursorRow].Wrapped = true;
                 LineFeedInternal();
             }
             else
@@ -327,6 +331,7 @@ internal sealed class ScreenBuffer
             {
                 _pendingWrap = false;
                 _cursorColumn = 0;
+                _lines[_cursorRow].Wrapped = true;
                 LineFeedInternal();
             }
             else

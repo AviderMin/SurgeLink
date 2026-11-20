@@ -82,6 +82,20 @@ public sealed class DfParserTests
         Assert.Equal("/mnt/x", disks[0].MountPoint);
     }
 
+    [Theory]
+    [InlineData("df: /mnt: Permission denied")]
+    [InlineData("short junk line")]
+    public void SkippedLineClearsPendingWrappedDevice(string skippedLine)
+    {
+        string text = "/dev/mapper/long-name\n" + skippedLine + "\n/dev/sda1 100 20 80 20% /\n";
+
+        var disks = DfParser.Parse(text);
+
+        var disk = Assert.Single(disks);
+        Assert.Equal("/dev/sda1", disk.FileSystem);
+        Assert.Equal("/", disk.MountPoint);
+    }
+
     [Fact]
     public void ParseSkipsRowsWithUnparsableSizes()
     {

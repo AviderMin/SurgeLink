@@ -168,13 +168,15 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
             };
         }
 
-        var stored = options?.Password is null || options?.PrivateKeyPassphrase is null
-            ? _credentials.Get(profile.Id)
-            : null;
+        // Only touch the credential store when this connection actually needs a
+        // stored secret. Keyboard-interactive and local-device profiles must not
+        // decrypt unrelated values (DPAPI calls are neither free nor side-effect free).
+        var needsStoredPassword = profile.Authentication == AuthenticationMethod.Password && options?.Password is null;
+        var needsStoredPassphrase = profile.Authentication == AuthenticationMethod.PublicKey && options?.PrivateKeyPassphrase is null;
+        var stored = needsStoredPassword || needsStoredPassphrase ? _credentials.Get(profile.Id) : null;
 
-        var password = options?.Password ?? (profile.Authentication == AuthenticationMethod.Password ? stored?.Password : null);
-        var passphrase = options?.PrivateKeyPassphrase ??
-                         (profile.Authentication == AuthenticationMethod.PublicKey ? stored?.PrivateKeyPassphrase : null);
+        var password = options?.Password ?? (needsStoredPassword ? stored?.Password : null);
+        var passphrase = options?.PrivateKeyPassphrase ?? (needsStoredPassphrase ? stored?.PrivateKeyPassphrase : null);
         var keyPath = options?.PrivateKeyPath ?? profile.PrivateKeyPath;
 
         if (profile.Authentication == AuthenticationMethod.PublicKey && string.IsNullOrWhiteSpace(keyPath))

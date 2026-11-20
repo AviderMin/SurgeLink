@@ -13,8 +13,8 @@ public sealed class LeadExperienceTests
 
         Feed(terminal, "\r\n6");
 
-        Assert.Equal(2, terminal.ViewportOffset);
-        Assert.Equal("2\n3\n4", terminal.GetVisibleText());
+        Assert.Equal(3, terminal.ViewportOffset);
+        Assert.Equal("1\n2\n3", terminal.GetVisibleText());
     }
 
     [Fact]
@@ -56,9 +56,10 @@ public sealed class LeadExperienceTests
         Feed(terminal, "\r\n7");
 
         Assert.Equal(2, terminal.ScrollbackLength);
-        Assert.Equal(1, terminal.ViewportOffset);
-        // The original first line was evicted; keep the same surviving line visible.
-        Assert.Equal("5\n6", terminal.GetVisibleText());
+        Assert.Equal(2, terminal.ViewportOffset);
+        // The original first line was evicted; the top visible line becomes the
+        // next surviving line instead of skipping it.
+        Assert.Equal("4\n5", terminal.GetVisibleText());
     }
 
     private static void Feed(TerminalEmulator terminal, string text) =>

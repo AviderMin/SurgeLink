@@ -44,5 +44,6 @@ public static class WindowsDiskIoParser
     }
 
     private static bool TryParseRate(string text, out double value) =>
-        double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value) && value >= 0;
+        double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+        && value >= 0 && !double.IsInfinity(value);
 }

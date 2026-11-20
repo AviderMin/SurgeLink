@@ -55,12 +55,20 @@ public static class TerminalInputEncoder
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(modes);
-        var payload = Encoding.UTF8.GetBytes(text);
         if (!modes.BracketedPaste)
         {
-            return payload;
+            return Encoding.UTF8.GetBytes(text);
         }
 
+        // Pasted content may come from remote-controlled output. ESC is the only
+        // way to start the ESC[201~ terminator, so dropping it prevents a payload
+        // from closing the bracketed-paste frame and smuggling the remainder in
+        // as typed input. C1 controls are removed for the same reason.
+        var payload = Encoding.UTF8.GetBytes(text
+            .Replace("\u001b", string.Empty, StringComparison.Ordinal)
+            .Replace("\u009b", string.Empty, StringComparison.Ordinal)
+            .Replace("\u009d", string.Empty, StringComparison.Ordinal)
+            .Replace("\u009c", string.Empty, StringComparison.Ordinal));
         const string prefix = "\u001b[200~";
         const string suffix = "\u001b[201~";
         byte[] prefixBytes = Encoding.UTF8.GetBytes(prefix);

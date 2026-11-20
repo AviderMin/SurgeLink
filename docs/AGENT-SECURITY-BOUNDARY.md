@@ -28,6 +28,8 @@
 2. 让每个状态变更动作带机械前置条件（不依赖 LLM 自觉）；
 3. 保持人在场优先（human-in-the-loop wins）。
 
+补充：`files.upload`/`files.download` 读写本机文件，超出远端会话的授权范围；每次操作必须在桌面端弹窗确认并显示确切本地路径，无 UI 时默认拒绝（`AgentFilePolicy`）。
+
 ### 1.3 资产清单
 
 | 资产 | 暴露路径 | 现有防护 |
@@ -36,7 +38,7 @@
 | 远端文件数据（含远端凭据文件） | files.list / read | 随 Observe 授权开放，策略钩子可拦（见 R1） |
 | 终端输出与监控数据 | terminal.screen / output、monitor.snapshot | 有界出口（32K 字符 / 1 MiB 帧 / 500 条） |
 | 会话元数据（主机/端口/登录名） | sessions.list / info | 仅已共享会话可见；身份只报"配置的登录名" |
-| 本地凭据 | **无暴露路径** | Gateway 无凭据读取能力；报错文案明令禁止"读取本地凭据/配置文件" |
+| 本地凭据 | **无静默暴露路径** | Gateway 无凭据读取能力；`files.upload/download` 的本地路径进入宿主策略，桌面端逐次弹窗确认并显示确切的本地路径（`AgentFilePolicy`）；报错文案明令禁止"读取本地凭据/配置文件" |
 
 ---
 
@@ -70,7 +72,7 @@
 | 失败安全 | input_outcome_unknown 锁死后续输入，需人工续期；不确定写不自动重发 | AgentGateway.Input.cs:29-30、65 |
 | 人优先 | 人工键入立即暂停 Agent 操作并返回 user_operating，显式 Stop 才撤销；授权过程中的输入竞态也转为暂停 | AgentWorkspaceService.cs:89-133 |
 | 出口有界 | 1 MiB 帧、屏幕 32K 字符、文件 128 KiB、目录 500 条、输入 16384 字符 | AgentWire.cs、AgentGateway.cs:164-197、AgentGateway.Input.cs:33 |
-| 超时有界 | 读 2s / 执行 60s / 回复 2s；连接上限 64 | AgentPipeServer.cs:9、97-104 |
+| 超时有界 | 读 2s / 执行 60s / 序列化后回复 10s；连接上限 64 | AgentPipeServer.cs:9、97-112 |
 | 身份诚实 | 只声明"配置的登录名"，不探测、不冒充有效 shell 用户 | AgentContract.cs:23-24 |
 | 执法收口 | 方法白名单、路径校验、token 校验全部在桌面端 Gateway；适配器只做 schema 校验 | AgentGateway.cs:132-199、McpAdapter.cs:70-86 |
 | 审计 | OperationCompleted 只记方法/句柄/结果码，不记调用方字符串与负载 | AgentGateway.cs:110-118 |

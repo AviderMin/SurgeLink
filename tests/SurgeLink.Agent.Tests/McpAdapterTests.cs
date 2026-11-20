@@ -30,7 +30,9 @@ public sealed class McpAdapterTests
         using var desktopProcess = HelperProcessLifetimeTests.IdleProcess();
         var instance = desktopProcess.Process.Id;
         await using var server = new AgentPipeServer(AgentEndpoint.ForProcess(instance), gateway);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        // Cold `dotnet` startup of the stdio host can exceed 15 s on a loaded
+        // windows-2025 runner; the suite still has a hard upper bound.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var transport = new StdioClientTransport(new StdioClientTransportOptions
         {
             Name = "SurgeLink test",
@@ -67,7 +69,7 @@ public sealed class McpAdapterTests
         using var desktopProcess = HelperProcessLifetimeTests.IdleProcess();
         var instance = desktopProcess.Process.Id;
         await using var desktop = new AgentPipeServer(AgentEndpoint.ForProcess(instance), gateway);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
         {
             Name = "SurgeLink control test", Command = "dotnet",

@@ -100,22 +100,29 @@ public sealed class AgentPipeServer : IAsyncDisposable
             readDeadline.CancelAfter(TimeSpan.FromSeconds(2));
             var request = await AgentWire.ReadAsync<AgentRequest>(pipe, readDeadline.Token).ConfigureAwait(false);
             var response = await _gateway.ExecuteAsync(request, deadline.Token).ConfigureAwait(false);
-            using var reply = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
-            reply.CancelAfter(TimeSpan.FromSeconds(2));
-            // A response that cannot fit never produces a partial frame.
-            try { await AgentWire.WriteAsync(pipe, response, reply.Token).ConfigureAwait(false); }
-            catch (AgentFrameTooLargeException) when (pipe.IsConnected && !reply.IsCancellationRequested)
+            // Serialize before starting the reply deadline: a large response can
+            // take a while to encode on a loaded runner, and the deadline must
+            // cover the write, not the CPU work that may legitimately exceed it.
+            byte[] frame;
+            try { frame = AgentWire.Serialize(response); }
+            catch (AgentFrameTooLargeException)
             {
-                await AgentWire.WriteAsync(pipe, AgentResponse.Error("output_limit",
-                    "The result exceeds the 1 MiB transport limit. Retry with a narrower request: read terminal output incrementally or read a smaller file/directory instead of listing everything."), reply.Token).ConfigureAwait(false);
+                // A response too large for one frame is replaced by a small,
+                // actionable error, independent of how long encoding took.
+                frame = AgentWire.Serialize(AgentResponse.Error("output_limit",
+                    "The result exceeds the 1 MiB transport limit. Retry with a narrower request: read terminal output incrementally or read a smaller file/directory instead of listing everything."));
             }
+
+            using var reply = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+            reply.CancelAfter(TimeSpan.FromSeconds(10));
+            await AgentWire.WriteFrameAsync(pipe, frame, reply.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or JsonException or OperationCanceledException) { }
         catch (Exception)
         {
             // Unexpected handler/serialization failures still produce a bounded reply.
             using var reply = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
-            reply.CancelAfter(TimeSpan.FromSeconds(2));
+            reply.CancelAfter(TimeSpan.FromSeconds(10));
             try { await AgentWire.WriteAsync(pipe, AgentResponse.Error("operation_failed", "The Agent request failed."), reply.Token).ConfigureAwait(false); }
             catch (Exception) { /* The client may already have disconnected. */ }
         }

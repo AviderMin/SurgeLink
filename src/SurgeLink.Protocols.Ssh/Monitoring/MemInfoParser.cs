@@ -41,6 +41,13 @@ public static class MemInfoParser
                 var multiplier = tokens.Length > 1 && tokens[1].Equals("kB", StringComparison.OrdinalIgnoreCase)
                     ? BytesPerKilobyte
                     : 1L;
+                // Untrusted /proc data can carry values that overflow the byte
+                // conversion; skip them instead of wrapping to a negative size.
+                if (value > long.MaxValue / multiplier)
+                {
+                    continue;
+                }
+
                 values[key] = value * multiplier;
             }
         }
@@ -64,7 +71,7 @@ public static class MemInfoParser
             AvailableBytes = Math.Clamp(available, 0, Math.Max(0, total)),
             CachedBytes = Math.Max(0, cached),
             SwapTotalBytes = Math.Max(0, swapTotal),
-            SwapUsedBytes = Math.Max(0, swapTotal - swapFree),
+            SwapUsedBytes = Math.Clamp(swapTotal - swapFree, 0, Math.Max(0, swapTotal)),
         };
     }
 

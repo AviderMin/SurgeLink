@@ -112,6 +112,7 @@ public sealed class RemoteFileDeleteTests
     [InlineData("//")]
     [InlineData("/.")]
     [InlineData("/..")]
+    [InlineData("/home/user/../etc/passwd")]
     [InlineData("relative")]
     [InlineData("/bad\0path")]
     public async Task UnsafeTargetsNeverReachTheProtocol(string path)

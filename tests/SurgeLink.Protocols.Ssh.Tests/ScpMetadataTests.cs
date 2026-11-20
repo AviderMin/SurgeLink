@@ -157,6 +157,23 @@ public sealed class ScpMetadataTests
     [InlineData("/data/link/../target")]
     public void CommandPathsKeepTheirExactPosixMeaning(string path) => Assert.Equal(path, ScpFileSystem.NormalizePath(path));
 
+    [Theory]
+    [InlineData("/")]
+    [InlineData("//")]
+    [InlineData("/./")]
+    [InlineData("/..")]
+    [InlineData("/tmp/..")]
+    public void RootDeleteGuardRecognisesEveryLexicalRoot(string path) =>
+        Assert.True(ScpFileSystem.IsRootPath(path));
+
+    [Theory]
+    [InlineData("/tmp")]
+    [InlineData("/tmp/.")]
+    [InlineData("/home/user")]
+    [InlineData("/..hidden")]
+    public void RootDeleteGuardKeepsRealPaths(string path) =>
+        Assert.False(ScpFileSystem.IsRootPath(path));
+
     [PosixShellFact]
     public async Task ActualShellPreservesNewlineFileIdentityForListAndStat()
     {

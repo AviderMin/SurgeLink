@@ -15,8 +15,10 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     private readonly ILogger _logger;
     // Allow reading includes read-only file access; mutating file operations are
     // additionally gated by the gateway on the control grant. Per-operation
-    // execution policy belongs to the external Agent app; no extra desktop prompt.
-    private readonly AgentGateway _gateway = new((_, _) => Task.FromResult(true));
+    // execution policy belongs to the external Agent app; local upload/download
+    // is the exception because it touches files outside the shared session, so
+    // the injected host policy requires an explicit user confirmation for it.
+    private readonly AgentGateway _gateway;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _accessChanges = new(1, 1);
     private long _stopGeneration;
@@ -33,12 +35,16 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     private long _activityId;
     private string? _error;
 
-    public AgentWorkspaceService(WorkspaceStore workspace, IUiDispatcher dispatcher, ILogger logger, string? pipeName = null)
+    public AgentWorkspaceService(WorkspaceStore workspace, IUiDispatcher dispatcher, ILogger logger, string? pipeName = null,
+        Func<AgentFileAccess, CancellationToken, Task<bool>>? confirmFile = null)
     {
         _pipeName = pipeName ?? AgentEndpoint.ForProcess(Environment.ProcessId);
         _workspace = workspace;
         _dispatcher = dispatcher;
         _logger = logger;
+        // Without a host policy, keep the historical remote-read behaviour but fail
+        // closed for local transfers: they need a real user decision.
+        _gateway = new AgentGateway(confirmFile ?? DefaultFilePolicyAsync);
         _gateway.OperationCompleted += OnOperationCompleted;
         _gateway.McpPeersChanged += Notify;
         workspace.SessionClosing += OnSessionClosingAsync;
@@ -203,6 +209,9 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
 
     private Task OnSessionClosingAsync(WorkspaceTab tab) => RevokeAsync(tab, "connection_closed");
     private Task OnTerminalReplacingAsync(WorkspaceTab tab) => RevokeAsync(tab, "shell_replaced");
+
+    private static Task<bool> DefaultFilePolicyAsync(AgentFileAccess access, CancellationToken cancellationToken) =>
+        Task.FromResult(access.Operation is not ("files.upload" or "files.download"));
 
     private void OnOperationCompleted(string method, string? handle, string outcome)
     {

@@ -6,6 +6,13 @@ namespace SurgeLink.Agent.Tests;
 public sealed class AgentExperienceTests
 {
     [Fact]
+    public void OversizedFrameIsRejectedBeforeAnyBytesAreWritten()
+    {
+        var response = AgentResponse.Ok(new { text = new string('a', AgentWire.MaximumFrameBytes) });
+        Assert.Throws<AgentFrameTooLargeException>(() => AgentWire.Serialize(response));
+    }
+
+    [Fact]
     public async Task OversizedDirectoryReadReturnsAnActionableTransportError()
     {
         var gateway = new AgentGateway((_, _) => Task.FromResult(true));

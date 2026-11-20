@@ -38,6 +38,7 @@ Static repository and UI text checks:
 ```powershell
 python tools/check-repository.py
 python tools/check-ui-localization.py
+python tools/check-version.py
 dotnet list SurgeLink.slnx package --vulnerable --include-transitive
 ```
 

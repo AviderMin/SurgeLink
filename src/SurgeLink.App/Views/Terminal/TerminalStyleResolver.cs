@@ -12,6 +12,10 @@ namespace SurgeLink.App.Views.Terminal;
 /// </summary>
 internal sealed class TerminalStyleResolver
 {
+    // True-colour output can mention millions of distinct colours. A hard cap
+    // keeps one long session from pinning an unbounded number of XAML brushes.
+    private const int MaximumCachedBrushes = 4096;
+
     private readonly Dictionary<uint, SolidColorBrush> _brushes = new();
 
     /// <summary>Creates a resolver for a palette.</summary>
@@ -91,6 +95,11 @@ internal sealed class TerminalStyleResolver
         }
 
         brush = new SolidColorBrush(ToColor(rgb));
+        if (_brushes.Count >= MaximumCachedBrushes)
+        {
+            _brushes.Clear();
+        }
+
         _brushes[rgb] = brush;
         return brush;
     }

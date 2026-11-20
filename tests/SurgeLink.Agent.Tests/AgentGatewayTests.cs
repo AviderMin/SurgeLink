@@ -227,6 +227,41 @@ public sealed class AgentGatewayTests
     }
 
     [Fact]
+    public async Task LocalTransferPolicyReceivesTheLocalPath()
+    {
+        AgentFileAccess? requested = null;
+        var gateway = new AgentGateway((access, _) => { requested = access; return Task.FromResult(false); });
+        var session = new TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, new CountingTerminal(), allowControl: true,
+            target: new AgentSessionTarget(session.SessionId, "server.test", 22, "alice"));
+
+        var response = await gateway.ExecuteAsync(
+            new("files.upload", handle, "/remote/dest", LocalPath: @"C:\Users\alice\.ssh\id_ed25519"), default);
+
+        Assert.Equal("denied", response.ErrorCode);
+        Assert.Equal(@"C:\Users\alice\.ssh\id_ed25519", requested!.LocalPath);
+        Assert.Equal("/remote/dest", requested.Path);
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Theory]
+    [InlineData("//")]
+    [InlineData("/./")]
+    [InlineData("/..")]
+    public async Task RecursiveDeleteRejectsLexicalRootPaths(string path)
+    {
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var session = new TestSession { FileSystem = new CountingFiles() };
+        var handle = gateway.GrantSession("tab", "Demo", session, null, new CountingTerminal(), allowControl: true,
+            target: new AgentSessionTarget(session.SessionId, "server.test", 22, "alice"));
+
+        var response = await gateway.ExecuteAsync(new("files.delete", handle, path, Recursive: true), default);
+
+        Assert.Equal("invalid_path", response.ErrorCode);
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Fact]
     public async Task InjectedFilePolicyIsEvaluatedForEveryOperation()
     {
         var approvals = 0;

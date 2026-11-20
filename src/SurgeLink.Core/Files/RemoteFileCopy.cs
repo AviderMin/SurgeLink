@@ -18,9 +18,26 @@ public static class RemoteFileCopy
         {
             throw new IOException("Cannot copy an item into itself or its own subfolder.");
         }
-        await CopyEntryAsync(source, destination, 0).ConfigureAwait(false);
 
-        async Task CopyEntryAsync(string from, string to, int depth)
+        var createdDestination = false;
+        try
+        {
+            await CopyEntryAsync(source, destination, 0, isRoot: true).ConfigureAwait(false);
+        }
+        catch
+        {
+            // A failure part-way through a folder copy would otherwise leave a
+            // half-populated destination that permanently blocks every retry.
+            if (createdDestination)
+            {
+                try { await fileSystem.DeleteAsync(destination, recursive: true, CancellationToken.None).ConfigureAwait(false); }
+                catch (Exception) { /* Best effort; keep the original failure. */ }
+            }
+
+            throw;
+        }
+
+        async Task CopyEntryAsync(string from, string to, int depth, bool isRoot = false)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (depth > 128) { throw new IOException("Directory nesting exceeds the copy limit."); }
@@ -38,6 +55,7 @@ public static class RemoteFileCopy
             {
                 var children = await fileSystem.ListAsync(from, cancellationToken).ConfigureAwait(false);
                 await fileSystem.CreateDirectoryAsync(to, cancellationToken).ConfigureAwait(false);
+                if (isRoot) { createdDestination = true; }
                 if (fileSystem.SupportsPermissions)
                     await fileSystem.SetPermissionsAsync(to, 0x1C0, cancellationToken).ConfigureAwait(false);
                 foreach (var child in children)

@@ -200,7 +200,9 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     public async Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken)
     {
         var fullPath = NormalizePath(path);
-        if (fullPath == "/")
+        // The guard must use lexical normalisation: "//", "/./" and "/.." all name
+        // the same remote root but survive the literal-preserving Resolve above.
+        if (IsRootPath(fullPath))
         {
             throw new ProtocolException("Refusing to delete the remote root directory.", ProtocolFailureKind.Configuration);
         }
@@ -534,6 +536,9 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     }
 
     internal static string NormalizePath(string path) => PosixPath.Resolve(path);
+
+    /// <summary>True when a path lexically resolves to the remote root; used before any recursive delete.</summary>
+    internal static bool IsRootPath(string path) => PosixPath.Normalize(path) == "/";
 
     private static string Quote(string value) => "'" + value.Replace("'", "'\\''") + "'";
 

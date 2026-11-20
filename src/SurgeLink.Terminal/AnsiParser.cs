@@ -117,7 +117,11 @@ internal sealed class AnsiParser
     {
         if (value == EscapeByte)
         {
+            // Stay in Escape state: an aborted OSC/DCS string sets Ground before
+            // delegating here, so ESC ESC must still leave the parser waiting for
+            // the final byte of the second sequence.
             ResetSequence();
+            _state = ParserState.Escape;
             return;
         }
 

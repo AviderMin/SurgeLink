@@ -32,7 +32,14 @@ public enum AgentAccessMode { None, Observe, Control }
 /// <summary>Advisory MCP presence, not an authenticated client identity or an access grant.</summary>
 public sealed record AgentMcpPeer(string Id, string Name, DateTimeOffset LastSeenUtc);
 
-public sealed record AgentFileAccess(string Label, string Operation, string Path);
+/// <summary>
+/// One file operation awaiting host policy. <see cref="Path"/> is the remote path;
+/// <see cref="LocalPath"/> is the Windows path used by upload/download. The local
+/// path is deliberately part of the consent record so the host can require an
+/// explicit user decision before an Agent touches files outside the session.
+/// </summary>
+public sealed record AgentFileAccess(string Label, string Operation, string Path,
+    string? LocalPath = null, string? Destination = null);
 
 public sealed record AgentDesktopProcess(int ProcessId, string? ExecutablePath, DateTimeOffset? StartedUtc = null);
 

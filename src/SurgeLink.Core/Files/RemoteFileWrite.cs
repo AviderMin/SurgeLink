@@ -46,8 +46,11 @@ public static class RemoteFileWrite
             {
                 throw new IOException($"Destination already exists or is not a regular file: {destination}");
             }
-            await fileSystem.CreateDirectoryAsync(stagingDirectory, cancellationToken).ConfigureAwait(false);
+            // Mark before the await returns: a lost reply can leave the directory
+            // behind even though CreateDirectoryAsync throws, and the finally block
+            // must still try to remove it.
             stagingStarted = true;
+            await fileSystem.CreateDirectoryAsync(stagingDirectory, cancellationToken).ConfigureAwait(false);
             if (fileSystem.SupportsPermissions)
                 await fileSystem.SetPermissionsAsync(stagingDirectory, 0x1C0, cancellationToken).ConfigureAwait(false);
             temporary = stagingDirectory + "/" + Guid.NewGuid().ToString("N");

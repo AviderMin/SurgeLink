@@ -404,7 +404,9 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   existing files are protected unless `overwrite` is true. `files.delete`,
   `files.rename`, `files.mkdir`, `files.upload` and `files.download` are also
   available. Local upload/download paths refer to the Windows machine running
-  SurgeLink. Mutating file operations require terminal-control access; read-only
+  SurgeLink and each such operation requires an explicit confirmation in the
+  desktop window that shows the exact local path; declining returns
+  `denied`. Mutating file operations require terminal-control access; read-only
   sharing cannot write or delete.
 
 Error codes additionally include user_operating, session_check_required, session_context_unavailable,
@@ -429,8 +431,8 @@ monitor calls therefore do not prevent other connections from listing sessions o
 sending heartbeats. The gateway still serializes operations for an individual
 shared session, including terminal writes. The MCP Host keeps terminal input and
 desktop selection ordered; ordinary reads are concurrent, and presence uses a
-separate request path. Server requests have a cooperative 60s deadline and 2s
-reply budget; clients have a 3s connection timeout and 65s total deadline. Ctrl+C stops the local CLI request; it does not itself send Ctrl+C to the
+separate request path. Server requests have a cooperative 60s deadline and a 10s
+reply budget that starts after the response is serialized; clients have a 3s connection timeout and 65s total deadline. Ctrl+C stops the local CLI request; it does not itself send Ctrl+C to the
 remote PTY or immediately cancel all work after a client disconnects.
 
 Grants and input records are process-local and bound to one open connection.
