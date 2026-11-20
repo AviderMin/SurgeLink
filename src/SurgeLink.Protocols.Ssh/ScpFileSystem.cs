@@ -134,7 +134,10 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 {
                     token.ThrowIfCancellationRequested();
                     await RemoteFileAccess.RequireRegularFileAsync(this, fullPath, token).ConfigureAwait(false);
-                    await runner.CopyToAsync("cat -- " + Quote(fullPath), target, token).ConfigureAwait(false);
+                    // Re-test and read in one remote command. A FIFO swapped in
+                    // after the metadata probe then fails the test instead of
+                    // blocking cat; CopyToAsync also bounds a stalled read.
+                    await runner.CopyToAsync(BuildReadCommand(fullPath), target, token).ConfigureAwait(false);
                     token.ThrowIfCancellationRequested();
                 }
                 catch (Exception exception)
@@ -254,6 +257,10 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     internal static string BuildRenameCommand(string source, string destination) =>
         "mv -nT -- " + Quote(source) + " " + Quote(destination)
         + " && test ! -e " + Quote(source) + " && test ! -L " + Quote(source);
+
+    /// <summary>Re-validates the regular-file type in the same command that reads it.</summary>
+    internal static string BuildReadCommand(string path) =>
+        "test -f " + Quote(path) + " && cat -- " + Quote(path);
 
     /// <inheritdoc />
     public async Task SetPermissionsAsync(string path, int unixMode, CancellationToken cancellationToken)

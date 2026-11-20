@@ -118,6 +118,28 @@ public sealed class RemoteFileCopyTests
             (await fs.StatAsync("/home/demo/Projects-copy/surgelink/README.md", CancellationToken.None)).Kind);
     }
 
+    [Fact]
+    public async Task FailedFolderCopyCanDeleteFilesFromReadOnlySubdirectories()
+    {
+        var fs = new DemoFileSystem();
+        await fs.CreateDirectoryAsync("/home/demo/tree", CancellationToken.None);
+        await fs.CreateDirectoryAsync("/home/demo/tree/aaa-readonly", CancellationToken.None);
+        await fs.SetPermissionsAsync("/home/demo/tree/aaa-readonly", 0x140, CancellationToken.None);
+        foreach (var path in new[] { "/home/demo/tree/aaa-readonly/inside.txt", "/home/demo/tree/z-failing.txt" })
+        {
+            await using var output = await fs.OpenWriteAsync(path, 1, null, CancellationToken.None);
+            await output.WriteAsync(new byte[] { 42 });
+        }
+
+        var failing = new FailingReadFileSystem(new PermissionEnforcingFileSystem(fs), "/home/demo/tree/z-failing.txt");
+        await Assert.ThrowsAsync<IOException>(() => RemoteFileCopy.CopyAsync(failing,
+            "/home/demo/tree", "/home/demo/tree-copy", CancellationToken.None));
+
+        Assert.DoesNotContain(await fs.ListAsync("/home/demo", CancellationToken.None), entry => entry.Name == "tree-copy");
+        await RemoteFileCopy.CopyAsync(new PermissionEnforcingFileSystem(fs), "/home/demo/tree", "/home/demo/tree-copy", CancellationToken.None);
+        Assert.Equal(0x140, (await fs.StatAsync("/home/demo/tree-copy/aaa-readonly", CancellationToken.None)).UnixMode);
+    }
+
     private sealed class FailingReadFileSystem(IRemoteFileSystem inner, string failingPath) : IRemoteFileSystem
     {
         public bool SupportsPermissions => inner.SupportsPermissions;
@@ -132,6 +154,43 @@ public sealed class RemoteFileCopyTests
             inner.OpenWriteAsync(path, size, progress, ct);
         public Task CreateDirectoryAsync(string path, CancellationToken ct) => inner.CreateDirectoryAsync(path, ct);
         public Task DeleteAsync(string path, bool recursive, CancellationToken ct) => inner.DeleteAsync(path, recursive, ct);
+        public Task RenameAsync(string source, string destination, CancellationToken ct) => inner.RenameAsync(source, destination, ct);
+        public Task CommitWriteAsync(string temporary, string destination, bool overwrite, CancellationToken ct) =>
+            inner.CommitWriteAsync(temporary, destination, overwrite, ct);
+        public Task SetPermissionsAsync(string path, int mode, CancellationToken ct) => inner.SetPermissionsAsync(path, mode, ct);
+    }
+
+    private sealed class PermissionEnforcingFileSystem(IRemoteFileSystem inner) : IRemoteFileSystem
+    {
+        public bool SupportsPermissions => true;
+        public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => inner.GetHomeDirectoryAsync(ct);
+        public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => inner.GetCurrentDirectoryAsync(ct);
+        public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken ct) => inner.ListAsync(path, ct);
+        public Task<RemoteFileEntry> StatAsync(string path, CancellationToken ct) => inner.StatAsync(path, ct);
+        public Task<RemoteFileEntry?> TryStatAsync(string path, CancellationToken ct) => inner.TryStatAsync(path, ct);
+        public Task<Stream> OpenReadAsync(string path, CancellationToken ct) => inner.OpenReadAsync(path, ct);
+        public Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct) =>
+            inner.OpenWriteAsync(path, size, progress, ct);
+        public Task CreateDirectoryAsync(string path, CancellationToken ct) => inner.CreateDirectoryAsync(path, ct);
+
+        public async Task DeleteAsync(string path, bool recursive, CancellationToken ct)
+        {
+            // A real POSIX server cannot unlink children of a directory without
+            // owner write permission, even when the caller owns the files.
+            if (recursive) await RequireWritableTreeAsync(path, ct);
+            await inner.DeleteAsync(path, recursive, ct);
+        }
+
+        private async Task RequireWritableTreeAsync(string path, CancellationToken ct)
+        {
+            var entry = await inner.StatAsync(path, ct);
+            if (entry.Kind != RemoteEntryKind.Directory) return;
+            if ((entry.UnixMode & 0x1C0) != 0x1C0)
+                throw new IOException("Permission denied while deleting files under " + path);
+            foreach (var child in await inner.ListAsync(path, ct))
+                await RequireWritableTreeAsync(child.FullPath, ct);
+        }
+
         public Task RenameAsync(string source, string destination, CancellationToken ct) => inner.RenameAsync(source, destination, ct);
         public Task CommitWriteAsync(string temporary, string destination, bool overwrite, CancellationToken ct) =>
             inner.CommitWriteAsync(temporary, destination, overwrite, ct);

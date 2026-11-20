@@ -195,6 +195,9 @@ and confirm the viewport scrolls back to it while new output continues to arrive
   is the expected per-file probe. Existing destinations must still fail before commit.
 - Repeat with nested and empty directories and verify permissions, bytes and empty directories are
   preserved.
+- Repeat with a read-only (`0500`) subdirectory followed by an injected read failure in a later
+  sibling. The partial destination must be removed so a retry succeeds; the offline regression uses
+  a permission-enforcing wrapper, so confirm the same rollback on a real Unix account.
 
 ## Verifying real SSH
 
@@ -210,8 +213,11 @@ When testing host key handling, switch the server's key and confirm the app show
 A repeatable real-SSH matrix should cover: password/key/keyboard-interactive login, host-key
 change and rejection, terminal resize and TERM propagation, SFTP listing and upload/download,
 SCP fallback when no SFTP subsystem is available, transfer cancellation, overwrite conflicts,
-and reconnect after a dropped connection. Record the server implementation/version, network
-latency and exact result; offline tests cannot prove these transport paths.
+and reconnect after a dropped connection. For the SCP fallback, also replace a file with a FIFO
+between the metadata probe and the read, and stall the command channel; the read must fail through
+its first-byte/idle timeout instead of holding the transfer lock. Record the server
+implementation/version, network latency and exact result; offline tests cannot prove these
+transport paths.
 
 ## Logs and on-disk state
 

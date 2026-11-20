@@ -189,6 +189,42 @@ public sealed class InputEncoderTests
     }
 
     [Theory]
+    [InlineData(0x32, 0x00)] // Ctrl+2 / Ctrl+@
+    [InlineData(0x33, 0x1B)] // Ctrl+3 / Ctrl+[
+    [InlineData(0x34, 0x1C)] // Ctrl+4 / Ctrl+\
+    [InlineData(0x35, 0x1D)] // Ctrl+5 / Ctrl+]
+    [InlineData(0x36, 0x1E)] // Ctrl+6 / Ctrl+^
+    [InlineData(0x37, 0x1F)] // Ctrl+7 / Ctrl+_
+    [InlineData(0x38, 0x7F)] // Ctrl+8
+    public void ControlDigitsProduceAsciiControlCharacters(int virtualKey, int expected)
+    {
+        byte[]? bytes = TerminalInputEncoder.EncodeKey(virtualKey, ctrl: true, alt: false, shift: false, Normal);
+        Assert.Equal(new byte[] { (byte)expected }, bytes!);
+    }
+
+    [Fact]
+    public void ControlMinusProducesUnitSeparatorInBothShiftStates()
+    {
+        byte[] unshifted = TerminalInputEncoder.EncodeKey(0xBD, true, false, false, Normal)!;
+        byte[] shifted = TerminalInputEncoder.EncodeKey(0xBD, true, false, true, Normal)!;
+        Assert.Equal(new byte[] { 0x1F }, unshifted);
+        Assert.Equal(new byte[] { 0x1F }, shifted);
+    }
+
+    [Fact]
+    public void ControlDigitWithAltKeepsTheEscapePrefix()
+    {
+        Assert.Equal(new byte[] { 0x1B, 0x1E }, TerminalInputEncoder.EncodeKey(0x36, true, true, false, Normal)!);
+    }
+
+    [Fact]
+    public void ControlQuestionMarkProducesDel()
+    {
+        Assert.Equal(new byte[] { 0x7F }, TerminalInputEncoder.EncodeKey(0xBF, true, false, true, Normal)!);
+        Assert.Equal("?", Encode(0xBF, shift: true));
+    }
+
+    [Theory]
     [InlineData(0x10)]
     [InlineData(0x11)]
     [InlineData(0x12)]

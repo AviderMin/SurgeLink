@@ -152,6 +152,11 @@ public static class TerminalInputEncoder
             case 0x37:
             case 0x38:
             case 0x39:
+                if (ctrl && ControlDigitCharacters[virtualKey - 0x30] is char controlDigit)
+                {
+                    return WithAlt(controlDigit.ToString(), alt);
+                }
+
                 return EncodeCharacter(shift ? ShiftedDigits[virtualKey - 0x30] : (char)virtualKey, alt);
             case >= 0x41 and <= 0x5A:
                 if (ctrl)
@@ -169,11 +174,14 @@ public static class TerminalInputEncoder
             case 0xBC:
                 return EncodeCharacter(shift ? '<' : ',', alt);
             case 0xBD:
-                return EncodeCharacter(shift ? '_' : '-', alt);
+                // Ctrl+- is Ctrl+_ on a US layout and must reach programs such as
+                // readline as 0x1F instead of a literal minus.
+                return ctrl ? WithAlt("\u001f", alt) : EncodeCharacter(shift ? '_' : '-', alt);
             case 0xBE:
                 return EncodeCharacter(shift ? '>' : '.', alt);
             case 0xBF:
-                return EncodeCharacter(shift ? '?' : '/', alt);
+                // Ctrl+? is ASCII DEL, a common readline/Emacs editing key.
+                return ctrl && shift ? WithAlt("\u007f", alt) : EncodeCharacter(shift ? '?' : '/', alt);
             case 0xC0:
                 return EncodeCharacter(shift ? '~' : '\u0060', alt);
             case 0xDB:
@@ -190,6 +198,11 @@ public static class TerminalInputEncoder
     }
 
     private static readonly char[] ShiftedDigits = { ')', '!', '@', '#', '$', '%', '^', '&', '*', '(' };
+
+    // Windows terminals map Ctrl+2..Ctrl+8 onto the ASCII control range; the
+    // remaining digits and Ctrl+0 keep their printable character.
+    private static readonly char?[] ControlDigitCharacters =
+        { null, null, '\0', '\u001b', '\u001c', '\u001d', '\u001e', '\u001f', '\u007f', null };
 
     private static int ModifierParameter(bool ctrl, bool alt, bool shift) =>
         1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0);

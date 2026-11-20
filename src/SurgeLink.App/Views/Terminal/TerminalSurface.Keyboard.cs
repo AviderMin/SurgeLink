@@ -129,7 +129,10 @@ internal sealed partial class TerminalSurface
                 return;
             }
 
-            if (key is 0xBD or 0x6D)
+            // Ctrl+_/Ctrl+Shift+- is a common readline and terminal shortcut (0x1F),
+            // so zoom-out must not consume the shifted OEM-minus form. The numpad
+            // key has no terminal control mapping, so it always zooms.
+            if (key == 0x6D || (!shift && key == 0xBD))
             {
                 ZoomFont(-1);
                 e.Handled = true;

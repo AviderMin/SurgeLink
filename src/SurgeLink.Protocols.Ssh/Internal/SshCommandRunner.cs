@@ -63,7 +63,12 @@ internal sealed class SshCommandRunner
         using var sshCommand = _client.CreateCommand(command, _encoding);
         sshCommand.CommandTimeout = Timeout.InfiniteTimeSpan;
         var execution = sshCommand.ExecuteAsync(ct);
-        var output = sshCommand.OutputStream.CopyToAsync(destination, 32 * 1024, ct);
+        // A large file may take longer than the command timeout, but a FIFO that
+        // replaced the file, a half-open peer or a stalled channel must not hold
+        // the transfer lock until the connection is closed. Bound the wait before
+        // the first byte and any later read separately.
+        var output = CopyWithIdleTimeoutAsync(sshCommand.OutputStream, destination,
+            FirstByteTimeout, ReadIdleTimeout, ct);
         var error = ReadBoundedOutputAsync(sshCommand.ExtendedOutputStream, _encoding, 2 * 1024 * 1024, ct);
         var pending = new List<Task> { execution, output, error };
         try
@@ -85,6 +90,44 @@ internal sealed class SshCommandRunner
             try { await Task.WhenAll(execution, output, error).ConfigureAwait(false); }
             catch (Exception) { /* Preserve the original transfer failure. */ }
             throw;
+        }
+    }
+
+    internal static readonly TimeSpan FirstByteTimeout = TimeSpan.FromSeconds(90);
+    internal static readonly TimeSpan ReadIdleTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>Copies bytes and fails when the source stays silent for too long.</summary>
+    internal static async Task CopyWithIdleTimeoutAsync(Stream source, Stream destination,
+        TimeSpan firstByteTimeout, TimeSpan idleTimeout, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(firstByteTimeout, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(idleTimeout, TimeSpan.Zero);
+
+        var buffer = new byte[32 * 1024];
+        var waitingForFirstByte = true;
+        while (true)
+        {
+            var timeout = waitingForFirstByte ? firstByteTimeout : idleTimeout;
+            var read = source.ReadAsync(buffer, ct).AsTask();
+            var delay = Task.Delay(timeout, ct);
+            if (await Task.WhenAny(read, delay).ConfigureAwait(false) != read && !read.IsCompleted)
+            {
+                ct.ThrowIfCancellationRequested();
+                // The abandoned read is completed by disposing the SSH command.
+                // Observe a later fault so it does not surface as unhandled.
+                _ = read.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                throw new TimeoutException(
+                    $"The remote file read produced no data for {timeout.TotalSeconds:0} seconds.");
+            }
+
+            var count = await read.ConfigureAwait(false);
+            if (count == 0) return;
+            await destination.WriteAsync(buffer.AsMemory(0, count), ct).ConfigureAwait(false);
+            waitingForFirstByte = false;
         }
     }
 
