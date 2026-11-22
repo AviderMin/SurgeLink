@@ -196,8 +196,14 @@ and confirm the viewport scrolls back to it while new output continues to arrive
 - Repeat with nested and empty directories and verify permissions, bytes and empty directories are
   preserved.
 - Repeat with a read-only (`0500`) subdirectory followed by an injected read failure in a later
-  sibling. The partial destination must be removed so a retry succeeds; the offline regression uses
+  sibling. The staging tree must be removed so a retry succeeds; the offline regression uses
   a permission-enforcing wrapper, so confirm the same rollback on a real Unix account.
+- A directory copy builds a unique sibling `.surge-*.tmp` tree, restores its permissions,
+  then renames it to the final destination without overwriting an existing entry. Verify
+  the final name is absent until commit and concurrent destination creation is preserved.
+  Simulate lost replies to mkdir and rename: cleanup may remove only the staging name,
+  never the final destination. A lost rename reply may mean the full copy was published;
+  inspect the destination before retrying. Cleanup is best effort with a three-second budget.
 
 ## Verifying real SSH
 
@@ -217,7 +223,13 @@ and reconnect after a dropped connection. For the SCP fallback, also replace a f
 between the metadata probe and the read, and stall the command channel; the read must fail through
 its first-byte/idle timeout instead of holding the transfer lock. Once stdout reaches EOF, a lost
 exit status or a stderr stream held open by a child process must fail within the exit timeout and
-release the transport for the next download. Record the server
+release the transport for the next download. SCP downloads enforce the regular file's
+reported size as a hard byte budget and require an exact byte count at EOF: growth or
+shrinkage fails rather than returning a partial snapshot. This also rejects virtual files
+whose reported size is zero but which produce content. Test a late swap to a continuously
+producing special file and a stalled local destination; size/read/write limits must stop
+those transfers. These checks do not detect content changes with the same length or
+eliminate the test/cat path-resolution race. Record the server
 implementation/version, network latency and exact result; offline tests cannot prove these
 transport paths.
 

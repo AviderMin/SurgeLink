@@ -325,13 +325,17 @@ public sealed partial class AgentGateway
                 if (text.Length > 512 * 1024) { capped = true; break; }
                 if (page.HasMore) continue;
             }
-            if (text.Length > 0 && sinceOutput.ElapsedMilliseconds >= idleMilliseconds) break;
+            // terminal.exec waits for its sentinel: a quiet gap in a long-running
+            // command's output is not completion. Only incremental waits settle on idle.
+            if (expectText is null && text.Length > 0 && sinceOutput.ElapsedMilliseconds >= idleMilliseconds) break;
             if (total.ElapsedMilliseconds >= timeoutMilliseconds) break;
             await Task.Delay(100, ct).ConfigureAwait(false);
         }
 
+        // For an exec wait the marker is the only completion signal, so reaching the
+        // deadline without it is a timeout no matter how recently output arrived.
         var timedOut = total.ElapsedMilliseconds >= timeoutMilliseconds
-            && (text.Length == 0 || sinceOutput.ElapsedMilliseconds < idleMilliseconds);
+            && (expectText is not null || text.Length == 0 || sinceOutput.ElapsedMilliseconds < idleMilliseconds);
         var rawText = text.ToString();
         // A command result needs its sentinel and final output, so exec keeps the
         // tail. Incremental waits keep the head and report the cursor just after
@@ -518,11 +522,14 @@ public sealed partial class AgentGateway
             ct.ThrowIfCancellationRequested();
             try
             {
-                // Same directory, so this is an atomic replace on the local volume
-                // and never exposes a partially written file under localPath.
-                File.Move(temporary, localPath, request.Overwrite);
+                // Same directory, so publishing is atomic on the local volume. A
+                // new destination is moved without overwrite; an existing one is
+                // replaced with File.Replace so its NTFS access control list and
+                // alternate data streams survive. Unsupported replacements fail
+                // here without falling back to a metadata-destroying overwrite.
+                LocalFileCommit.Publish(temporary, localPath, request.Overwrite);
             }
-            catch (IOException) when (!request.Overwrite && File.Exists(localPath))
+            catch (LocalFileAlreadyExistsException)
             {
                 return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
             }

@@ -58,17 +58,21 @@ internal sealed class SshCommandRunner
 
     /// <summary>Streams a file without decoding, capturing the whole payload, or
     /// imposing the short monitoring-command deadline on a large transfer.</summary>
-    internal async Task CopyToAsync(string command, Stream destination, CancellationToken ct)
+    internal async Task CopyToAsync(string command, Stream destination, long expectedBytes, CancellationToken ct)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(expectedBytes);
         using var sshCommand = _client.CreateCommand(command, _encoding);
         sshCommand.CommandTimeout = Timeout.InfiniteTimeSpan;
         var execution = sshCommand.ExecuteAsync(ct);
         // A large file may take longer than the command timeout, but a FIFO that
         // replaced the file, a half-open peer or a stalled channel must not hold
         // the transfer lock until the connection is closed. Bound the wait before
-        // the first byte and any later read separately.
+        // the first byte and any later read separately. The expected size is the
+        // strict byte budget: a special file cannot stream forever, and a file
+        // that changes size fails closed instead of producing a silently clipped
+        // download.
         var output = CopyWithIdleTimeoutAsync(sshCommand.OutputStream, destination,
-            FirstByteTimeout, ReadIdleTimeout, ct);
+            FirstByteTimeout, ReadIdleTimeout, ct, expectedBytes);
         var error = ReadBoundedOutputAsync(sshCommand.ExtendedOutputStream, _encoding, 2 * 1024 * 1024, ct);
         try
         {
@@ -115,17 +119,26 @@ internal sealed class SshCommandRunner
         }
     }
 
-    /// <summary>Copies bytes and fails when the source stays silent for too long.</summary>
+    /// <summary>Copies bytes and fails when the source stays silent for too long.
+    /// When an expected size is supplied, more bytes fail as growth and fewer
+    /// bytes at EOF fail as shrinkage; both are reported as server-side data
+    /// changes rather than a successful but altered file.</summary>
     internal static async Task CopyWithIdleTimeoutAsync(Stream source, Stream destination,
-        TimeSpan firstByteTimeout, TimeSpan idleTimeout, CancellationToken ct)
+        TimeSpan firstByteTimeout, TimeSpan idleTimeout, CancellationToken ct, long? expectedBytes = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(firstByteTimeout, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(idleTimeout, TimeSpan.Zero);
+        if (expectedBytes is < 0) throw new ArgumentOutOfRangeException(nameof(expectedBytes));
 
         var buffer = new byte[32 * 1024];
+        // One linked source covers every write in this transfer: cancelling it
+        // after a write timeout also cancels the pending channel write instead
+        // of only abandoning the task.
+        using var writeLifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var waitingForFirstByte = true;
+        long total = 0;
         while (true)
         {
             var timeout = waitingForFirstByte ? firstByteTimeout : idleTimeout;
@@ -139,21 +152,69 @@ internal sealed class SshCommandRunner
             }
             catch (TimeoutException)
             {
+                ObserveFault(read);
                 ct.ThrowIfCancellationRequested();
                 // The abandoned read is completed by disposing the SSH command.
-                // Observe a later fault so it does not surface as unhandled.
-                _ = read.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
                 throw new TimeoutException(
                     $"The remote file read produced no data for {timeout.TotalSeconds:0} seconds.");
             }
+            catch (OperationCanceledException)
+            {
+                ObserveFault(read);
+                throw;
+            }
 
-            if (count == 0) return;
-            await destination.WriteAsync(buffer.AsMemory(0, count), ct).ConfigureAwait(false);
+            if (count == 0)
+            {
+                if (expectedBytes is long expectedEnd && total < expectedEnd)
+                {
+                    throw new InvalidDataException(
+                        $"The remote file shrank below its reported size of {expectedEnd} bytes during the SCP download (only {total} bytes arrived).");
+                }
+
+                return;
+            }
+
+            if (expectedBytes is long expected && (total > expected || count > expected - total))
+            {
+                throw new InvalidDataException(
+                    $"The remote file grew beyond its reported size of {expected} bytes during the SCP download.");
+            }
+
+            // A stalled local destination must release the transfer just like a
+            // stalled read; reuse the same idle budget instead of waiting forever.
+            // The helper aborts on timeout and never reuses this buffer while the
+            // abandoned write may still be reading it.
+            var write = destination.WriteAsync(buffer.AsMemory(0, count), writeLifetime.Token).AsTask();
+            try
+            {
+                await write.WaitAsync(timeout, ct).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                ObserveFault(write);
+                ct.ThrowIfCancellationRequested();
+                try { writeLifetime.Cancel(); }
+                catch (AggregateException) { /* Cleanup only; the write timeout wins. */ }
+                throw new TimeoutException(
+                    $"The local download destination did not accept data for {timeout.TotalSeconds:0} seconds.");
+            }
+            catch (OperationCanceledException)
+            {
+                ObserveFault(write);
+                throw;
+            }
+
+            total += count;
             waitingForFirstByte = false;
         }
     }
+
+    /// <summary>Observes a fault on an abandoned read or write task.</summary>
+    private static void ObserveFault(Task task) =>
+        _ = task.ContinueWith(static completed => _ = completed.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     internal static async Task<string> ReadBoundedOutputAsync(Stream input, Encoding encoding, int maximumBytes, CancellationToken ct)
     {

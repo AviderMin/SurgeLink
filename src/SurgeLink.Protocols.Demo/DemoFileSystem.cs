@@ -146,8 +146,12 @@ public sealed class DemoFileSystem : IRemoteFileSystem
     }
 
     /// <inheritdoc />
-    public Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)
+    public Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken) =>
+        RenameCore(sourcePath, destinationPath, overwrite: false, cancellationToken);
+
+    private Task RenameCore(string sourcePath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
             var source = PosixPath.Normalize(sourcePath, _current);
@@ -160,6 +164,8 @@ public sealed class DemoFileSystem : IRemoteFileSystem
             }
 
             var destinationParent = Resolve(PosixPath.Parent(destination));
+            if (!overwrite && destinationParent.Children.ContainsKey(PosixPath.Name(destination)))
+                throw new IOException("Destination already exists.");
             sourceParent.Children.Remove(name);
             var moved = new Node
             {
@@ -191,7 +197,7 @@ public sealed class DemoFileSystem : IRemoteFileSystem
             {
                 throw new IOException("Destination already exists or is a directory.");
             }
-            return RenameAsync(temporaryPath, destination, cancellationToken);
+            return RenameCore(temporaryPath, destination, overwrite, cancellationToken);
         }
     }
 

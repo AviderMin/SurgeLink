@@ -87,6 +87,10 @@ Pass that token as `checkToken` / `--check-token` and the revision with the inpu
 A token expires after two minutes and is consumed by one new input. A newer check
 replaces the older check for that handle. Revocation/reconnection, an input revision
 change, a screen/output/mode change, or a change in the target's active state makes the old check unusable.
+Scrolling the history (`viewportOffset`) and output that leaves the visible screen
+unchanged are not such changes: the guard compares screen text, cursor position,
+terminal modes, closed/truncated state and input revision, so reading older output
+does not force a re-check.
 The gateway rejects missing/stale checks with `session_check_required` before writing;
 the message distinguishes an expired token, an input revision change, a screen
 change and an active-state change. `brief=true` / `--brief` keeps the target and
@@ -341,7 +345,9 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
 
 - terminal.screen includes text, dimensions, cursor, terminal modes, viewportOffset,
   inputRevision, outputCursor, isClosed, truncated and source=screen. It reads the
-  actual visible viewport, capped at 32,768 UTF-16 units.
+  actual visible viewport, capped at 32,768 UTF-16 units. `viewportOffset` and
+  `outputCursor` are informational: both are excluded from the input guard so a
+  scroll or invisible output cannot invalidate a fresh check.
 - terminal.output takes an optional cursor and returns text, cursor, oldestCursor,
   latestCursor, gap and hasMore. Cursors count decoded UTF-16 units, not bytes or
   commands. Output retains ANSI escapes, decodes UTF-8 across incoming chunks,
@@ -361,13 +367,18 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   call terminal.output with that cursor to read the remainder. Quiet output is an
   observation, not a shell prompt detector or an exit code; inspect the returned
   screen/prompt and verify the actual result before reporting completion. Leading
-  PTY echo of the just-sent command is removed from the returned text.
+  PTY echo of the just-sent command is removed from the returned text, but only an
+  occurrence that ends its own line counts as echo, so the same characters inside
+  real output are preserved.
 - terminal.exec sends one command with a POSIX-shell sentinel appended and waits
-  for that sentinel. It returns `status=executed`, `exitCode`,
-  `commandCompletionKnown=true` when the sentinel is observed, and `output`.
-  The returned output keeps the end of the stream so the sentinel and final
-  result are present when `maxBytes` truncates a long response. This is best
-  effort for POSIX bash/sh; non-POSIX shells may time out without an exit code,
+  for that sentinel; a quiet gap in the command's own output is not completion. It
+  returns `status=executed`, `exitCode`, `commandCompletionKnown=true` when the
+  sentinel is observed, and `output`. The wait ends at the sentinel, at
+  `timeoutMilliseconds`, or at the response cap, so a command that prompts for
+  input should pass a small `timeoutMilliseconds` rather than rely on idle
+  detection. The returned output keeps the end of the stream so the sentinel and
+  final result are present when `maxBytes` truncates a long response. This is best
+  effort for POSIX bash/sh; non-POSIX shells time out without an exit code,
   in which case `commandCompletionKnown=false`.
 - sessions.check supports `brief=true` (compact screen) and `minimal=true`
   (compact screen plus only handle, label, target and control state instead of
@@ -420,9 +431,12 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   SurgeLink and each such operation requires an explicit confirmation in the
   desktop window that shows the exact local path; declining returns
   `denied`. Downloads stage beside the local destination and replace it only
-  after the remote read completes, so a failed or cancelled transfer preserves
-  an existing file. Mutating file operations require terminal-control access;
-  read-only sharing cannot write or delete.
+  after the remote read and source close complete. Overwriting an existing local
+  file uses the platform replacement operation to preserve its metadata (ADS and
+  explicit DACL verified on local NTFS); unsupported replacement fails without a
+  fallback to a metadata-discarding move. New files use a non-overwriting move,
+  including when the target appears during transfer. Mutating file operations
+  require terminal-control access; read-only sharing cannot write or delete.
 
 Error codes additionally include user_operating, session_check_required, session_context_unavailable,
 control_required, invalid_arguments, input_conflict,

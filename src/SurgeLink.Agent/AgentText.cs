@@ -21,12 +21,33 @@ internal static class AgentText
         var removed = false;
         for (var repeat = 0; repeat < 3; repeat++)
         {
-            var index = result.IndexOf(echoText, StringComparison.Ordinal);
-            if (index < 0 || index > 64) break;
+            var index = FindEchoLine(result, echoText);
+            if (index < 0) break;
             result = result.Remove(index, echoText.Length);
             removed = true;
         }
         return removed ? result.TrimStart('\r', '\n') : result;
+    }
+
+    /// <summary>
+    /// The echo is a complete line: an optional short prompt, the sent command, then the
+    /// line break. Requiring the match to end its line keeps those same characters alive
+    /// when they legitimately appear in output, for example a short command such as
+    /// "slow" inside the exec sentinel line, which would otherwise be corrupted before
+    /// the exit code is parsed.
+    /// </summary>
+    private static int FindEchoLine(string text, string echoText)
+    {
+        for (var index = text.IndexOf(echoText, StringComparison.Ordinal);
+             index >= 0 && index <= 64;
+             index = text.IndexOf(echoText, index + 1, StringComparison.Ordinal))
+        {
+            var after = index + echoText.Length;
+            var lineEnd = text.IndexOf('\n', after);
+            var trailing = lineEnd < 0 ? text[after..] : text[after..lineEnd];
+            if (trailing.TrimEnd('\r').Length == 0) return index;
+        }
+        return -1;
     }
 
     /// <summary>

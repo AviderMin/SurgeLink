@@ -1,3 +1,6 @@
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using SurgeLink.Core.Files;
 using SurgeLink.Core.Terminal;
@@ -191,6 +194,206 @@ public sealed class AgentErgonomicsTests
     }
 
     [Fact]
+    public async Task DownloadWithoutOverwriteRejectsAnExistingTarget()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "surge-download-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var destination = Path.Combine(directory, "target.txt");
+        try
+        {
+            await File.WriteAllTextAsync(destination, "original");
+            var files = new MemoryFiles();
+            files.Files["/remote.txt"] = Encoding.UTF8.GetBytes("replacement");
+            var gateway = CreateDownloadGateway(files, out var handle);
+
+            var response = await gateway.ExecuteAsync(new("files.download", handle, "/remote.txt",
+                LocalPath: destination, Overwrite: false), default);
+
+            Assert.Equal("local_file_exists", response.ErrorCode);
+            Assert.Equal("original", await File.ReadAllTextAsync(destination));
+            Assert.Empty(Directory.GetFiles(directory, ".surge-*"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DownloadDoesNotOverwriteATargetThatAppearsDuringTheTransfer()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "surge-download-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var destination = Path.Combine(directory, "target.txt");
+        try
+        {
+            var files = new MemoryFiles();
+            files.Files["/remote.txt"] = Encoding.UTF8.GetBytes("replacement");
+            files.OnFirstRead = () => File.WriteAllText(destination, "appeared");
+            var gateway = CreateDownloadGateway(files, out var handle);
+
+            var response = await gateway.ExecuteAsync(new("files.download", handle, "/remote.txt",
+                LocalPath: destination, Overwrite: false), default);
+
+            Assert.Equal("local_file_exists", response.ErrorCode);
+            Assert.Equal("appeared", await File.ReadAllTextAsync(destination));
+            Assert.Empty(Directory.GetFiles(directory, ".surge-*"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DownloadOverwriteHandlesATargetThatDisappearsBeforeCommit()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "surge-download-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var destination = Path.Combine(directory, "target.txt");
+        try
+        {
+            await File.WriteAllTextAsync(destination, "original");
+            var files = new MemoryFiles();
+            files.Files["/remote.txt"] = Encoding.UTF8.GetBytes("replacement");
+            files.OnFirstRead = () => File.Delete(destination);
+            var gateway = CreateDownloadGateway(files, out var handle);
+
+            var response = await gateway.ExecuteAsync(new("files.download", handle, "/remote.txt",
+                LocalPath: destination, Overwrite: true), default);
+
+            Assert.True(response.Success, response.Message);
+            Assert.Equal("replacement", await File.ReadAllTextAsync(destination));
+            Assert.Empty(Directory.GetFiles(directory, ".surge-*"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [WindowsFact]
+    public async Task DownloadOverwritePreservesAlternateDataStreamOnWindows()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var directory = Path.Combine(Path.GetTempPath(), "surge-download-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var destination = Path.Combine(directory, "target.txt");
+        try
+        {
+            await File.WriteAllTextAsync(destination, "original");
+            AddAlternateStream(destination, "surge-download-test", new byte[] { 1, 2, 3 });
+            var files = new MemoryFiles();
+            files.Files["/remote.txt"] = Encoding.UTF8.GetBytes("replacement");
+            var gateway = CreateDownloadGateway(files, out var handle);
+
+            var response = await gateway.ExecuteAsync(new("files.download", handle, "/remote.txt",
+                LocalPath: destination, Overwrite: true), default);
+
+            Assert.True(response.Success, response.Message);
+            Assert.Equal("replacement", await File.ReadAllTextAsync(destination));
+            Assert.Equal(new byte[] { 1, 2, 3 }, ReadAlternateStream(destination, "surge-download-test"));
+            Assert.Empty(Directory.GetFiles(directory, ".surge-*"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [WindowsFact]
+    public async Task DownloadOverwritePreservesExplicitAclOnWindows()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var directory = Path.Combine(Path.GetTempPath(), "surge-download-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var destination = Path.Combine(directory, "target.txt");
+        try
+        {
+            await File.WriteAllTextAsync(destination, "original");
+            AddExplicitAclForGuests(destination);
+            var before = GetAccessSddl(destination);
+            var files = new MemoryFiles();
+            files.Files["/remote.txt"] = Encoding.UTF8.GetBytes("replacement");
+            var gateway = CreateDownloadGateway(files, out var handle);
+
+            var response = await gateway.ExecuteAsync(new("files.download", handle, "/remote.txt",
+                LocalPath: destination, Overwrite: true), default);
+
+            Assert.True(response.Success, response.Message);
+            Assert.Equal("replacement", await File.ReadAllTextAsync(destination));
+            Assert.Equal(before, GetAccessSddl(destination));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [WindowsFact]
+    public async Task DownloadOverwritePreservesMetadataWhenTargetAppearsDuringTheTransfer()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var directory = Path.Combine(Path.GetTempPath(), "surge-download-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var destination = Path.Combine(directory, "target.txt");
+        try
+        {
+            var files = new MemoryFiles();
+            files.Files["/remote.txt"] = Encoding.UTF8.GetBytes("replacement");
+            files.OnFirstRead = () =>
+            {
+                File.WriteAllText(destination, "appeared");
+                AddAlternateStream(destination, "surge-race-test", new byte[] { 9 });
+            };
+            var gateway = CreateDownloadGateway(files, out var handle);
+
+            var response = await gateway.ExecuteAsync(new("files.download", handle, "/remote.txt",
+                LocalPath: destination, Overwrite: true), default);
+
+            Assert.True(response.Success, response.Message);
+            Assert.Equal("replacement", await File.ReadAllTextAsync(destination));
+            Assert.Equal(new byte[] { 9 }, ReadAlternateStream(destination, "surge-race-test"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [WindowsFact]
+    public async Task DownloadOverwriteFailsSafelyWhenTheTargetCannotBeReplaced()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var directory = Path.Combine(Path.GetTempPath(), "surge-download-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var destination = Path.Combine(directory, "target.txt");
+        try
+        {
+            await File.WriteAllTextAsync(destination, "original");
+            using var hold = new FileStream(destination, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var files = new MemoryFiles();
+            files.Files["/remote.txt"] = Encoding.UTF8.GetBytes("replacement");
+            var gateway = CreateDownloadGateway(files, out var handle);
+
+            var response = await gateway.ExecuteAsync(new("files.download", handle, "/remote.txt",
+                LocalPath: destination, Overwrite: true), default);
+
+            Assert.Equal("read_failed", response.ErrorCode);
+            Assert.Equal("original", await File.ReadAllTextAsync(destination));
+            Assert.Empty(Directory.GetFiles(directory, ".surge-*"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task MinimalCheckOmitsHostMetadata()
     {
         var gateway = new AgentGateway();
@@ -235,6 +438,31 @@ public sealed class AgentErgonomicsTests
     }
 
     [Fact]
+    public async Task TerminalExecWaitsForTheSentinelAcrossAQuietGap()
+    {
+        var terminal = new SlowSentinelTerminal(delayMilliseconds: 700);
+        var gateway = new AgentGateway();
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+        var check = await gateway.ExecuteAsync(new("sessions.check", handle), default);
+        var checkData = check.Data!.Value;
+
+        // A command that prints, thinks for a while, then exits. The quiet gap used to end
+        // the wait before the sentinel arrived, so the caller was told the outcome was
+        // unknown even though the shell had reported an exit code.
+        var response = await gateway.ExecuteAsync(new("terminal.exec", handle,
+            Text: "slow", OperationId: "exec-slow", IdleMilliseconds: 50, TimeoutMilliseconds: 5000,
+            ExpectedInputRevision: checkData.GetProperty("screen").GetProperty("inputRevision").GetInt64(),
+            CheckToken: checkData.GetProperty("checkToken").GetString()), default);
+
+        Assert.True(response.Success);
+        var data = response.Data!.Value;
+        Assert.True(data.GetProperty("commandCompletionKnown").GetBoolean(), data.GetRawText());
+        Assert.Equal(0, data.GetProperty("exitCode").GetInt32());
+    }
+
+    [Fact]
     public async Task BriefCheckReturnsOnlyTheScreenTail()
     {
         var terminal = new RichTerminal(string.Join('\n', Enumerable.Range(1, 20).Select(i => $"line-{i}")), 0);
@@ -250,6 +478,47 @@ public sealed class AgentErgonomicsTests
         Assert.DoesNotContain("line-1\n", screen);
         Assert.Contains("line-20", screen);
         Assert.True(response.Data.Value.GetProperty("brief").GetBoolean());
+    }
+
+    private static AgentGateway CreateDownloadGateway(MemoryFiles files, out string handle)
+    {
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var session = new AgentGatewayTests.TestSession { FileSystem = files };
+        handle = gateway.GrantSession("tab", "Demo", session, null, new RichTerminal("", 0), true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+        return gateway;
+    }
+
+    private static void AddAlternateStream(string path, string name, byte[] payload)
+    {
+        using var stream = new FileStream(path + ":" + name, FileMode.Create, FileAccess.Write, FileShare.None);
+        stream.Write(payload);
+    }
+
+    private static byte[] ReadAlternateStream(string path, string name)
+    {
+        using var stream = new FileStream(path + ":" + name, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var buffer = new MemoryStream();
+        stream.CopyTo(buffer);
+        return buffer.ToArray();
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void AddExplicitAclForGuests(string path)
+    {
+        var info = new FileInfo(path);
+        var security = info.GetAccessControl();
+        security.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.BuiltinGuestsSid, null),
+            FileSystemRights.Read, AccessControlType.Allow));
+        info.SetAccessControl(security);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string GetAccessSddl(string path)
+    {
+        var security = new FileInfo(path).GetAccessControl();
+        return security.GetSecurityDescriptorSddlForm(AccessControlSections.Access);
     }
 
     private sealed class RichTerminal(string text, long cursor) : ITerminalAutomation
@@ -296,12 +565,46 @@ public sealed class AgentErgonomicsTests
             SendTextAsync(key, false, expectedRevision, ct);
     }
 
+    /// <summary>Prints, stays quiet, then emits the sentinel a slow command would produce.</summary>
+    private sealed class SlowSentinelTerminal(int delayMilliseconds) : ITerminalAutomation
+    {
+        private readonly StringBuilder _output = new();
+        private readonly System.Diagnostics.Stopwatch _elapsed = new();
+        private long _revision;
+        private bool _sentinel;
+        public TerminalScreenSnapshot ReadScreen() =>
+            new(_output.ToString(), 80, 24, 0, 0, true, false, false, false, _revision, _output.Length, false, false);
+        public TerminalOutputPage ReadOutput(long? cursor)
+        {
+            if (!_sentinel && _elapsed.ElapsedMilliseconds >= delayMilliseconds)
+            {
+                _output.Append("__SURGELINK_EXIT_exec-slow__:0\n");
+                _sentinel = true;
+            }
+            var start = (int)(cursor ?? 0);
+            var text = start < _output.Length ? _output.ToString(start, _output.Length - start) : string.Empty;
+            return new(text, _output.Length, 0, _output.Length, false, false);
+        }
+        public Task<TerminalInputReceipt> SendTextAsync(string text, bool submit, long expectedRevision, CancellationToken ct)
+        {
+            if (_revision != expectedRevision) throw new TerminalInputConflictException();
+            _revision++;
+            _output.Clear();
+            _output.Append("working\n");
+            _elapsed.Restart();
+            return Task.FromResult(new TerminalInputReceipt(_revision, 0, text.Length, submit));
+        }
+        public Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct) =>
+            SendTextAsync(key, false, expectedRevision, ct);
+    }
+
     private sealed class MemoryFiles : IRemoteFileSystem
     {
         private readonly Dictionary<string, MemoryStream> _staging = new(StringComparer.Ordinal);
         public Dictionary<string, byte[]> Files { get; } = new(StringComparer.Ordinal);
         public HashSet<string> FailingReads { get; } = new(StringComparer.Ordinal);
         public HashSet<string> FailingDisposals { get; } = new(StringComparer.Ordinal);
+        public Action? OnFirstRead { get; set; }
         public bool SupportsPermissions => false;
         public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => throw new NotSupportedException();
@@ -316,7 +619,7 @@ public sealed class AgentErgonomicsTests
                 ? new PartialThenFailingStream(Files[path])
                 : FailingDisposals.Contains(path)
                     ? new ThrowOnDisposeStream(Files[path])
-                    : new MemoryStream(Files[path], writable: false));
+                    : new HookedStream(Files[path], OnFirstRead));
         public Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct)
         {
             var stream = new MemoryStream();
@@ -342,6 +645,18 @@ public sealed class AgentErgonomicsTests
         }
         public Task SetPermissionsAsync(string path, int mode, CancellationToken ct) => Task.CompletedTask;
 
+        /// <summary>Runs an action once when the copy starts reading the remote payload.</summary>
+        private sealed class HookedStream(byte[] content, Action? onFirstRead) : MemoryStream(content, writable: false)
+        {
+            private int _reads;
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            {
+                var result = base.ReadAsync(buffer, cancellationToken);
+                if (_reads++ == 0) onFirstRead?.Invoke();
+                return result;
+            }
+        }
+
         /// <summary>Returns a partial payload, then fails as a dropped connection would.</summary>
         private sealed class PartialThenFailingStream(byte[] content) : MemoryStream(content)
         {
@@ -366,5 +681,14 @@ public sealed class AgentErgonomicsTests
                 base.Dispose(disposing);
             }
         }
+    }
+}
+
+public sealed class WindowsFactAttribute : FactAttribute
+{
+    public WindowsFactAttribute()
+    {
+        if (!OperatingSystem.IsWindows())
+            Skip = "Requires Windows NTFS security descriptor and alternate data stream behavior.";
     }
 }

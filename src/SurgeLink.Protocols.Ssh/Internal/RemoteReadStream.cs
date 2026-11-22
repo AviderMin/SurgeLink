@@ -108,6 +108,8 @@ internal sealed class RemoteReadStream : Stream
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
         public override void Write(ReadOnlySpan<byte> buffer)
         {
             lifetime.ThrowIfCancellationRequested();
@@ -116,6 +118,24 @@ internal sealed class RemoteReadStream : Stream
                 lifetime.ThrowIfCancellationRequested();
                 var count = Math.Min(buffer.Length, ChunkSize);
                 writer.WriteAsync(buffer[..count].ToArray(), lifetime).AsTask().GetAwaiter().GetResult();
+                buffer = buffer[count..];
+            }
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (buffer.IsEmpty) return;
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime);
+            var token = linked.Token;
+            token.ThrowIfCancellationRequested();
+            while (!buffer.IsEmpty)
+            {
+                token.ThrowIfCancellationRequested();
+                var count = Math.Min(buffer.Length, ChunkSize);
+                // The channel holds the chunk after WriteAsync returns, while the
+                // caller may immediately reuse its buffer. Own a copy per chunk.
+                var chunk = buffer[..count].Span.ToArray();
+                await writer.WriteAsync(chunk, token).ConfigureAwait(false);
                 buffer = buffer[count..];
             }
         }

@@ -149,6 +149,39 @@ public sealed class SessionCheckTests
         Assert.Equal(0, terminal.Writes);
     }
 
+    [Fact]
+    public async Task ScrollingTheHistoryDoesNotInvalidateACheck()
+    {
+        var gateway = new AgentGateway();
+        var terminal = new TerminalControlTests.TestAutomation();
+        var handle = TerminalControlTests.GrantControl(gateway, terminal);
+        var input = await TerminalControlTests.CheckedInputAsync(gateway, handle);
+
+        // Scrollback movement is presentation: the screen buffer, cursor and input
+        // revision are unchanged, so the checked input is still safe to send.
+        terminal.ViewportOffset = 12;
+
+        var response = await gateway.ExecuteAsync(input, default);
+        Assert.True(response.Success, response.Message);
+        Assert.Equal(1, terminal.Writes);
+    }
+
+    [Fact]
+    public async Task OutputThatLeavesTheScreenUnchangedDoesNotInvalidateACheck()
+    {
+        var gateway = new AgentGateway();
+        var terminal = new TerminalControlTests.TestAutomation();
+        var handle = TerminalControlTests.GrantControl(gateway, terminal);
+        var input = await TerminalControlTests.CheckedInputAsync(gateway, handle);
+
+        // A keepalive or in-place redraw advances the raw output cursor without changing
+        // anything the Agent or the user can see.
+        terminal.OutputCursor += 64;
+
+        Assert.True((await gateway.ExecuteAsync(input, default)).Success);
+        Assert.Equal(1, terminal.Writes);
+    }
+
     private sealed class TestClock : TimeProvider
     {
         public DateTimeOffset Now { get; set; } = new(2026, 10, 24, 0, 0, 0, TimeSpan.Zero);

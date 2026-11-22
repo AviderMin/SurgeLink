@@ -88,6 +88,16 @@ public sealed class AgentTextTests
     }
 
     [Fact]
+    public void EchoStrippingKeepsTheEchoedTextInsideALaterLine()
+    {
+        // A short command name is a substring of real output, including the exec
+        // sentinel. Only a match that ends its own line is the PTY echo.
+        const string sentinel = "__SURGELINK_EXIT_exec-slow__:0";
+        Assert.Equal("working\n" + sentinel, AgentText.StripLeadingEcho("working\n" + sentinel, "slow"));
+        Assert.Equal("working\nslow: done\n", AgentText.StripLeadingEcho("working\nslow: done\n", "slow"));
+    }
+
+    [Fact]
     public async Task FilePageEndsOnACharacterBoundaryAndContinues()
     {
         var bytes = Encoding.UTF8.GetBytes("中A");

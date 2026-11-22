@@ -68,7 +68,8 @@ public interface IRemoteFileSystem
     /// <summary>Deletes a file or, when <paramref name="recursive"/>, a directory tree.</summary>
     Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken);
 
-    /// <summary>Renames or moves an entry.</summary>
+    /// <summary>Renames or moves an entry. Must fail without replacing or moving into
+    /// an existing destination; never emulate a move by deleting the destination first.</summary>
     Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken);
 
     /// <summary>Publishes a staging file on the destination's filesystem. Must fail without replacing an existing

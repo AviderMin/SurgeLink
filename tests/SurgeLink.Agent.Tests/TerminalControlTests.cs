@@ -91,8 +91,10 @@ public sealed class TerminalControlTests
         public int Writes { get; private set; }
         public bool FailWrite { get; init; }
         public string ScreenText { get; set; } = "test";
+        public int ViewportOffset { get; set; }
+        public long OutputCursor { get; set; }
         private long _revision;
-        public TerminalScreenSnapshot ReadScreen() => new(ScreenText, 80, 24, 0, 0, true, false, false, false, _revision, 0, false, false);
+        public TerminalScreenSnapshot ReadScreen() => new(ScreenText, 80, 24, 0, 0, true, false, false, false, _revision, OutputCursor, false, false, ViewportOffset);
         public TerminalOutputPage ReadOutput(long? cursor) => new("output", 6, 0, 6, false, false);
         public Task<TerminalInputReceipt> SendTextAsync(string text, bool submit, long expectedRevision, CancellationToken ct)
         {

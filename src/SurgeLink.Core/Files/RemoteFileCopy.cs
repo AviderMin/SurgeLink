@@ -19,6 +19,19 @@ public static class RemoteFileCopy
             throw new IOException("Cannot copy an item into itself or its own subfolder.");
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
+        var sourceEntry = await fileSystem.StatAsync(source, cancellationToken).ConfigureAwait(false);
+        if (sourceEntry.Kind is not (RemoteEntryKind.File or RemoteEntryKind.Directory))
+            throw new IOException("Copying symbolic links or special files is not supported.");
+        if (await fileSystem.TryStatAsync(destination, cancellationToken).ConfigureAwait(false) is not null)
+            throw new IOException($"Destination already exists: {destination}");
+
+        // Keep an incomplete tree away from the final name, including when mkdir
+        // succeeds remotely but its reply is lost. Only this unique sibling is
+        // eligible for rollback; a concurrent creator of destination is untouched.
+        var copyDestination = sourceEntry.IsDirectory
+            ? destination[..(destination.LastIndexOf('/') + 1)] + ".surge-" + Guid.NewGuid().ToString("N") + ".tmp"
+            : destination;
         // Directories stay owner-writable until the whole tree has been copied.
         // Restoring a child's final mode immediately would make the rollback
         // unable to remove files inside it when a later sibling fails.
@@ -26,7 +39,7 @@ public static class RemoteFileCopy
         var createdDestination = false;
         try
         {
-            await CopyEntryAsync(source, destination, 0, isRoot: true).ConfigureAwait(false);
+            await CopyEntryAsync(source, copyDestination, 0, isRoot: true).ConfigureAwait(false);
             if (fileSystem.SupportsPermissions)
             {
                 foreach (var (path, mode) in createdDirectories.AsEnumerable().Reverse())
@@ -35,9 +48,17 @@ public static class RemoteFileCopy
                         await fileSystem.SetPermissionsAsync(path, value, cancellationToken).ConfigureAwait(false);
                 }
             }
+            if (sourceEntry.IsDirectory)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                // Rename must fail if another operation created the final name.
+                // Never delete that name on failure, even if the rename reply is lost.
+                await fileSystem.RenameAsync(copyDestination, destination, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch
         {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             // A failure part-way through a folder copy would otherwise leave a
             // half-populated destination that permanently blocks every retry.
             if (createdDestination && fileSystem.SupportsPermissions)
@@ -49,13 +70,13 @@ public static class RemoteFileCopy
                 // parent is fixed and would never retry the children.
                 foreach (var (path, _) in createdDirectories)
                 {
-                    try { await fileSystem.SetPermissionsAsync(path, 0x1C0, CancellationToken.None).ConfigureAwait(false); }
+                    try { await fileSystem.SetPermissionsAsync(path, 0x1C0, cleanup.Token).ConfigureAwait(false); }
                     catch (Exception) { /* Best effort; keep the original failure. */ }
                 }
             }
             if (createdDestination)
             {
-                try { await fileSystem.DeleteAsync(destination, recursive: true, CancellationToken.None).ConfigureAwait(false); }
+                try { await fileSystem.DeleteAsync(copyDestination, recursive: true, cleanup.Token).ConfigureAwait(false); }
                 catch (Exception) { /* Best effort; keep the original failure. */ }
             }
 
@@ -79,9 +100,11 @@ public static class RemoteFileCopy
             if (entry.IsDirectory)
             {
                 var children = await fileSystem.ListAsync(from, cancellationToken).ConfigureAwait(false);
-                await fileSystem.CreateDirectoryAsync(to, cancellationToken).ConfigureAwait(false);
+                // Record before awaiting mkdir: a lost reply can leave the path
+                // present even though the call throws. It is under our staging root.
                 if (isRoot) { createdDestination = true; }
                 createdDirectories.Add((to, entry.UnixMode is int directoryMode ? directoryMode & 0x1FF : null));
+                await fileSystem.CreateDirectoryAsync(to, cancellationToken).ConfigureAwait(false);
                 if (fileSystem.SupportsPermissions)
                     await fileSystem.SetPermissionsAsync(to, 0x1C0, cancellationToken).ConfigureAwait(false);
                 foreach (var child in children)

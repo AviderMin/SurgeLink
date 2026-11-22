@@ -73,7 +73,7 @@ public sealed partial class TerminalBridge
             byte[] bytes;
             lock (Emulator.SyncRoot)
             {
-                if (expected is not null && ReadScreen() != expected) throw new TerminalInputConflictException();
+                if (expected is not null && !ReadScreen().MatchesContent(expected)) throw new TerminalInputConflictException();
                 bytes = encode();
                 if (bytes.Length == 0) throw new ArgumentException("Terminal input is empty.");
                 token.ThrowIfCancellationRequested();

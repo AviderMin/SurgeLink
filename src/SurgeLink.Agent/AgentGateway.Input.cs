@@ -45,7 +45,7 @@ public sealed partial class AgentGateway
             // Replaying the same operation never selects a tab or writes again.
             if (grant.Activate is not null) await grant.Activate("terminal", ct).ConfigureAwait(false);
             ThrowIfCancelled(grant, ct);
-            if (_timeProvider.GetUtcNow() >= check.ExpiresUtc || grant.Terminal.ReadScreen() != check.Screen
+            if (_timeProvider.GetUtcNow() >= check.ExpiresUtc || !grant.Terminal.ReadScreen().MatchesContent(check.Screen)
                 || grant.Activate is not null && grant.IsActive is not null && !grant.IsActive())
                 return AgentResponse.Error("session_check_required", "The target changed or the check expired while selecting the terminal. Run Check Sessions again.");
             var receipt = isText
@@ -163,9 +163,9 @@ public sealed partial class AgentGateway
             return AgentResponse.Error("session_check_required",
                 "The terminal input revision changed after the check. Read the current screen and run Check Sessions again.");
 
-        if (current != check.Screen)
+        if (!current.MatchesContent(check.Screen))
             return AgentResponse.Error("session_check_required",
-                "The visible terminal changed after the check (including background output). Read the current screen and run Check Sessions again.");
+                "The visible terminal changed after the check (screen text, cursor or terminal modes). Scrolling alone does not invalidate a check. Read the current screen and run Check Sessions again.");
 
         if ((grant.IsActive?.Invoke() ?? false) != check.IsActive)
             return AgentResponse.Error("session_check_required",

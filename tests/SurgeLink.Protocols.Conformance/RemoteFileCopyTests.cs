@@ -151,7 +151,7 @@ public sealed class RemoteFileCopyTests
         await fs.SetPermissionsAsync("/home/demo/tree/a/b", 0x100, CancellationToken.None);
 
         // The root chmod fails after the deeper directories were made read-only.
-        var failing = new TraversingPermissionFileSystem(fs, failFinalModeAt: "/home/demo/tree-copy");
+        var failing = new TraversingPermissionFileSystem(fs, failRootFinalMode: true);
         await Assert.ThrowsAsync<IOException>(() => RemoteFileCopy.CopyAsync(failing,
             "/home/demo/tree", "/home/demo/tree-copy", CancellationToken.None));
 
@@ -160,6 +160,99 @@ public sealed class RemoteFileCopyTests
         await RemoteFileCopy.CopyAsync(new TraversingPermissionFileSystem(fs),
             "/home/demo/tree", "/home/demo/tree-copy", CancellationToken.None);
         Assert.Equal(0x100, (await fs.StatAsync("/home/demo/tree-copy/a", CancellationToken.None)).UnixMode);
+    }
+
+    [Fact]
+    public async Task LostRootCreateReplyCleansStagingAndAllowsRetry()
+    {
+        var fs = new DemoFileSystem();
+        var failing = new StagingFileSystem(fs) { LoseCreateReply = true };
+        await Assert.ThrowsAsync<IOException>(() => RemoteFileCopy.CopyAsync(failing,
+            "/home/demo/Projects", "/home/demo/copied", default));
+        Assert.NotNull(failing.Root);
+        Assert.Null(await ((IRemoteFileSystem)fs).TryStatAsync(failing.Root!, default));
+        Assert.Null(await ((IRemoteFileSystem)fs).TryStatAsync("/home/demo/copied", default));
+        await RemoteFileCopy.CopyAsync(fs, "/home/demo/Projects", "/home/demo/copied", default);
+        Assert.NotNull(await ((IRemoteFileSystem)fs).TryStatAsync("/home/demo/copied/surgelink/README.md", default));
+    }
+
+    [Fact]
+    public async Task FolderIsPublishedOnlyAfterItsContentsAreComplete()
+    {
+        var fs = new DemoFileSystem();
+        var staged = new StagingFileSystem(fs);
+        await RemoteFileCopy.CopyAsync(staged, "/home/demo/Projects", "/home/demo/copied", default);
+        Assert.True(staged.CheckedBeforePublish);
+        Assert.Null(await ((IRemoteFileSystem)fs).TryStatAsync(staged.Root!, default));
+        Assert.NotNull(await ((IRemoteFileSystem)fs).TryStatAsync("/home/demo/copied/surgelink/README.md", default));
+    }
+
+    [Fact]
+    public async Task ConcurrentDestinationIsPreservedAndOnlyStagingIsRemoved()
+    {
+        var fs = new DemoFileSystem();
+        var staged = new StagingFileSystem(fs) { CreateConcurrentDestination = true };
+        await Assert.ThrowsAsync<IOException>(() => RemoteFileCopy.CopyAsync(staged,
+            "/home/demo/Projects", "/home/demo/copied", default));
+        Assert.Null(await ((IRemoteFileSystem)fs).TryStatAsync(staged.Root!, default));
+        var children = await fs.ListAsync("/home/demo/copied", default);
+        Assert.Equal("other-owner.txt", Assert.Single(children).Name);
+    }
+
+    [Fact]
+    public async Task LostPublishReplyNeverRollsBackTheFinalDirectory()
+    {
+        var fs = new DemoFileSystem();
+        var staged = new StagingFileSystem(fs) { LoseRenameReply = true };
+        await Assert.ThrowsAsync<IOException>(() => RemoteFileCopy.CopyAsync(staged,
+            "/home/demo/Projects", "/home/demo/copied", default));
+        Assert.Null(await ((IRemoteFileSystem)fs).TryStatAsync(staged.Root!, default));
+        Assert.NotNull(await ((IRemoteFileSystem)fs).TryStatAsync("/home/demo/copied/surgelink/README.md", default));
+    }
+
+    // Inject transport uncertainty at the two operations that change ownership.
+    private sealed class StagingFileSystem(IRemoteFileSystem inner) : IRemoteFileSystem
+    {
+        public bool LoseCreateReply { get; init; }
+        public bool LoseRenameReply { get; init; }
+        public bool CreateConcurrentDestination { get; init; }
+        public string? Root { get; private set; }
+        public bool CheckedBeforePublish { get; private set; }
+        public bool SupportsPermissions => inner.SupportsPermissions;
+        public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => inner.GetHomeDirectoryAsync(ct);
+        public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => inner.GetCurrentDirectoryAsync(ct);
+        public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken ct) => inner.ListAsync(path, ct);
+        public Task<RemoteFileEntry> StatAsync(string path, CancellationToken ct) => inner.StatAsync(path, ct);
+        public Task<RemoteFileEntry?> TryStatAsync(string path, CancellationToken ct) => inner.TryStatAsync(path, ct);
+        public Task<Stream> OpenReadAsync(string path, CancellationToken ct) => inner.OpenReadAsync(path, ct);
+        public Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct) =>
+            inner.OpenWriteAsync(path, size, progress, ct);
+        public Task DeleteAsync(string path, bool recursive, CancellationToken ct) => inner.DeleteAsync(path, recursive, ct);
+        public Task SetPermissionsAsync(string path, int mode, CancellationToken ct) => inner.SetPermissionsAsync(path, mode, ct);
+        public Task CommitWriteAsync(string temporary, string destination, bool overwrite, CancellationToken ct) =>
+            inner.CommitWriteAsync(temporary, destination, overwrite, ct);
+
+        public async Task CreateDirectoryAsync(string path, CancellationToken ct)
+        {
+            Root ??= path;
+            await inner.CreateDirectoryAsync(path, ct);
+            if (LoseCreateReply && path == Root) throw new IOException("mkdir reply lost");
+        }
+
+        public async Task RenameAsync(string source, string destination, CancellationToken ct)
+        {
+            Assert.Equal(Root, source);
+            Assert.Null(await inner.TryStatAsync(destination, ct));
+            Assert.NotNull(await inner.TryStatAsync(source + "/surgelink/README.md", ct));
+            CheckedBeforePublish = true;
+            if (CreateConcurrentDestination)
+            {
+                await inner.CreateDirectoryAsync(destination, ct);
+                await using var marker = await inner.OpenWriteAsync(destination + "/other-owner.txt", 0, null, ct);
+            }
+            await inner.RenameAsync(source, destination, ct);
+            if (LoseRenameReply) throw new IOException("rename reply lost");
+        }
     }
 
     private sealed class FailingReadFileSystem(IRemoteFileSystem inner, string failingPath) : IRemoteFileSystem
@@ -219,8 +312,9 @@ public sealed class RemoteFileCopyTests
         public Task SetPermissionsAsync(string path, int mode, CancellationToken ct) => inner.SetPermissionsAsync(path, mode, ct);
     }
 
-    private sealed class TraversingPermissionFileSystem(IRemoteFileSystem inner, string? failFinalModeAt = null) : IRemoteFileSystem
+    private sealed class TraversingPermissionFileSystem(IRemoteFileSystem inner, bool failRootFinalMode = false) : IRemoteFileSystem
     {
+        private string? _copyRoot;
         public bool SupportsPermissions => true;
         public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => inner.GetHomeDirectoryAsync(ct);
         public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => inner.GetCurrentDirectoryAsync(ct);
@@ -230,14 +324,18 @@ public sealed class RemoteFileCopyTests
         public Task<Stream> OpenReadAsync(string path, CancellationToken ct) => inner.OpenReadAsync(path, ct);
         public Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct) =>
             inner.OpenWriteAsync(path, size, progress, ct);
-        public Task CreateDirectoryAsync(string path, CancellationToken ct) => inner.CreateDirectoryAsync(path, ct);
+        public Task CreateDirectoryAsync(string path, CancellationToken ct)
+        {
+            _copyRoot ??= path;
+            return inner.CreateDirectoryAsync(path, ct);
+        }
         public Task RenameAsync(string source, string destination, CancellationToken ct) => inner.RenameAsync(source, destination, ct);
         public Task CommitWriteAsync(string temporary, string destination, bool overwrite, CancellationToken ct) =>
             inner.CommitWriteAsync(temporary, destination, overwrite, ct);
 
         public async Task SetPermissionsAsync(string path, int mode, CancellationToken ct)
         {
-            if (path == failFinalModeAt && mode != 0x1C0)
+            if (failRootFinalMode && path == _copyRoot && mode != 0x1C0)
                 throw new IOException("injected final permission failure");
             await RequireTraversableAsync(path, ct);
             await inner.SetPermissionsAsync(path, mode, ct);

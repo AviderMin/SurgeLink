@@ -41,7 +41,7 @@ if (args is ["--help"] or ["-h"] or [])
         The login user does not prove the effective shell user after su/nested SSH. Reuse exact arguments for retries.
         input_sent acknowledges input only; it does not report command completion or an exit code.
         terminal wait returns when output has been quiet for --idle-ms, which is an observation, not a command boundary.
-        terminal exec appends a POSIX shell sentinel and returns exitCode when the remote shell supports it.
+        terminal exec appends a POSIX shell sentinel and waits for it until --timeout-ms, returning exitCode when the shell supports it.
         SURGELINK_INSTANCE can supply the desktop PID when --instance is omitted.
         Results are always JSON. Exit codes: 0 success, 2 usage, 3 unavailable,
         4 operation declined/failed, 130 cancelled. Execution policy is managed by your Agent application.

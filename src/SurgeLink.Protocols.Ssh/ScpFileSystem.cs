@@ -133,12 +133,23 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 try
                 {
                     token.ThrowIfCancellationRequested();
-                    await RemoteFileAccess.RequireRegularFileAsync(this, fullPath, token).ConfigureAwait(false);
-                    // Re-test and read in one remote command, narrowing the window between
-                    // the type probe and cat. A swap after this test can still block
-                    // cat; CopyToAsync's first-byte/idle timeouts bound that case.
-                    await runner.CopyToAsync(BuildReadCommand(fullPath), target, token).ConfigureAwait(false);
+                    var entry = await StatAsync(fullPath, token).ConfigureAwait(false);
+                    RemoteFileAccess.RequireRegularFile(entry);
+                    // Re-test and read in one command, narrowing the check/read window;
+                    // a swap after the test can still block cat, which the read
+                    // timeouts bound. The metadata size is the strict budget for
+                    // this download: a special file cannot stream forever, and a
+                    // file that grows or shrinks before cat finishes fails instead
+                    // of producing a silently different payload.
+                    await runner.CopyToAsync(BuildReadCommand(fullPath), target, entry.Size, token).ConfigureAwait(false);
                     token.ThrowIfCancellationRequested();
+                }
+                catch (InvalidDataException)
+                {
+                    // The reported-size check is a data-integrity failure, not a
+                    // transport failure; keep its message for the caller.
+                    token.ThrowIfCancellationRequested();
+                    throw;
                 }
                 catch (Exception exception)
                 {
