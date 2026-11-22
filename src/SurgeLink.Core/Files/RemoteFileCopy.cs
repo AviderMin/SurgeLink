@@ -117,7 +117,7 @@ public static class RemoteFileCopy
             else
             {
                 var mode = (entry.UnixMode ?? 0x180) & 0x1FF;
-                await using var input = await fileSystem.OpenReadAsync(from, entry, cancellationToken).ConfigureAwait(false);
+                await using var input = await fileSystem.OpenReadAsync(from, cancellationToken).ConfigureAwait(false);
                 if (isRoot)
                 {
                     // A file copy publishes at the final name, so it keeps the staged

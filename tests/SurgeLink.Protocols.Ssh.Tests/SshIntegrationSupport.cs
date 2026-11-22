@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
+using Renci.SshNet;
 using SurgeLink.Core.Files;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
@@ -54,7 +55,9 @@ internal static class SshIntegration
             Host = SshIntegrationEnvironment.Host!,
             Port = SshIntegrationEnvironment.Port,
             Username = SshIntegrationEnvironment.User!,
-            Authentication = string.IsNullOrWhiteSpace(key) ? AuthenticationMethod.Password : AuthenticationMethod.PublicKey,
+            Authentication = string.IsNullOrWhiteSpace(key)
+                ? SurgeLink.Core.Protocols.AuthenticationMethod.Password
+                : SurgeLink.Core.Protocols.AuthenticationMethod.PublicKey,
             PrivateKeyPath = key,
             PrivateKeyPassphrase = SshIntegrationEnvironment.KeyPassphrase,
             Password = SshIntegrationEnvironment.Password,
@@ -69,6 +72,24 @@ internal static class SshIntegration
             (_, _) => Task.FromResult(HostKeyDecision.TrustAlways));
         return await new SshProtocolPlugin().ConnectAsync(request, context, CancellationToken.None);
     }
+
+    /// <summary>Second connection used only to set up filesystem states SFTP cannot create (links, FIFOs).</summary>
+    public static SshClient CreateSshClient()
+    {
+        var user = SshIntegrationEnvironment.User!;
+        var key = SshIntegrationEnvironment.KeyPath;
+        ConnectionInfo info = string.IsNullOrWhiteSpace(key)
+            ? new ConnectionInfo(SshIntegrationEnvironment.Host!, SshIntegrationEnvironment.Port, user,
+                new PasswordAuthenticationMethod(user, SshIntegrationEnvironment.Password ?? string.Empty))
+            : new ConnectionInfo(SshIntegrationEnvironment.Host!, SshIntegrationEnvironment.Port, user,
+                new PrivateKeyAuthenticationMethod(user, CreateKeyFile()));
+        return new SshClient(info);
+    }
+
+    private static PrivateKeyFile CreateKeyFile() =>
+        SshIntegrationEnvironment.KeyPassphrase is { Length: > 0 } passphrase
+            ? new PrivateKeyFile(SshIntegrationEnvironment.KeyPath!, passphrase)
+            : new PrivateKeyFile(SshIntegrationEnvironment.KeyPath!);
 }
 
 /// <summary>One live connection with a private remote scratch directory.</summary>
@@ -102,6 +123,18 @@ internal sealed class SshIntegrationTarget : IAsyncDisposable
     }
 
     public Task<string> CreateFileAsync(string name, string content) => CreateFileAtAsync(Root + "/" + name, content);
+
+    /// <summary>Runs a POSIX shell command on the test host; used to build symlinks and FIFOs.</summary>
+    public void RunShell(string command)
+    {
+        using var client = SshIntegration.CreateSshClient();
+        client.Connect();
+        var result = client.RunCommand(command);
+        if (result.ExitStatus != 0)
+        {
+            throw new InvalidOperationException($"Remote command failed ({result.ExitStatus}): {result.Error}");
+        }
+    }
 
     public async Task<string> CreateFileAtAsync(string path, string content)
     {

@@ -110,13 +110,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
         try
         {
-            var file = await GetEntryNoFollowAsync(client, fullPath, cancellationToken).ConfigureAwait(false);
-            if (file is null)
-            {
-                throw new ProtocolException($"Remote path not found: '{fullPath}'.", ProtocolFailureKind.Configuration);
-            }
-
-            return MapEntry(file);
+            return await ResolveEntryNoFollowAsync(client, fullPath, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -140,7 +134,11 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
         try
         {
-            RemoteFileAccess.RequireRegularFile(MapEntry(await GetEntryNoFollowAsync(client, fullPath, cancellationToken).ConfigureAwait(false)));
+            // Re-check the current type with a single no-follow LSTAT immediately before
+            // OPEN. A file replaced by a symbolic link or a FIFO after any earlier listing
+            // is refused here instead of being followed or opened (which could block).
+            RemoteFileAccess.RequireRegularFile(
+                await ResolveEntryNoFollowAsync(client, fullPath, cancellationToken).ConfigureAwait(false));
             return await OpenReadCoreAsync(client, fullPath, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -153,29 +151,31 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         }
     }
 
-    /// <inheritdoc />
-    public async Task<Stream> OpenReadAsync(string path, RemoteFileEntry knownEntry, CancellationToken cancellationToken)
+    /// <summary>
+    /// Resolves one path without following its final link. Prefers a single LSTAT request
+    /// and falls back to the parent listing where the transport does not expose LSTAT.
+    /// </summary>
+    private async Task<RemoteFileEntry> ResolveEntryNoFollowAsync(SftpClient client, string path, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(knownEntry);
-        var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        var fullPath = ResolvePath(client, path);
+        var entryPath = path.Length > 1 ? path.TrimEnd('/') : path;
+        if (entryPath.Length == 0)
+        {
+            entryPath = "/";
+        }
 
-        try
+        var name = entryPath[(entryPath.LastIndexOf('/') + 1)..];
+        // A final "." or ".." must be interpreted by the server; keep the listing-based
+        // spelling that delete and rename already rely on for those paths.
+        if (SftpNoFollow.IsAvailable && name is not ("." or ".."))
         {
-            // The entry came from this file system's own listing, so its type is already
-            // authoritative. Reusing it keeps the no-follow refusal for symbolic links
-            // without re-listing the parent directory once per copied file.
-            RemoteFileAccess.RequireRegularFile(knownEntry);
-            return await OpenReadCoreAsync(client, fullPath, cancellationToken).ConfigureAwait(false);
+            var attributes = await SftpNoFollow.TryLStatAsync(client, entryPath, cancellationToken).ConfigureAwait(false);
+            if (attributes is not null)
+            {
+                return MapAttributes(entryPath, name, attributes);
+            }
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            throw SshErrorMapper.MapFileSystem(exception, fullPath, "open for reading");
-        }
+
+        return MapEntry(await GetEntryNoFollowAsync(client, path, cancellationToken).ConfigureAwait(false));
     }
 
     private static async Task<Stream> OpenReadCoreAsync(SftpClient client, string fullPath, CancellationToken cancellationToken) =>
@@ -674,20 +674,40 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         };
     }
 
-    private static int? ResolveUnixMode(ISftpFile file)
+    private static RemoteFileEntry MapAttributes(string fullPath, string name, SftpFileAttributes attributes) =>
+        new()
+        {
+            Name = name,
+            FullPath = PosixPath.Resolve(fullPath),
+            Kind = attributes.IsSymbolicLink
+                ? RemoteEntryKind.SymbolicLink
+                : attributes.IsDirectory
+                    ? RemoteEntryKind.Directory
+                    : attributes.IsRegularFile
+                        ? RemoteEntryKind.File
+                        : RemoteEntryKind.Other,
+            Size = attributes.IsDirectory ? 0 : Math.Max(0, attributes.Size),
+            ModifiedUtc = ToUtcOffset(attributes.LastWriteTimeUtc),
+            UnixMode = ResolveUnixMode(attributes),
+            Owner = FormatId(attributes.UserId),
+            Group = FormatId(attributes.GroupId),
+        };
+
+    private static int? ResolveUnixMode(ISftpFile file) => ResolveUnixMode(file.Attributes);
+
+    private static int? ResolveUnixMode(SftpFileAttributes attributes)
     {
         var mode = 0;
-        if (file.OwnerCanRead) mode |= 0x100;
-        if (file.OwnerCanWrite) mode |= 0x80;
-        if (file.OwnerCanExecute) mode |= 0x40;
-        if (file.GroupCanRead) mode |= 0x20;
-        if (file.GroupCanWrite) mode |= 0x10;
-        if (file.GroupCanExecute) mode |= 0x8;
-        if (file.OthersCanRead) mode |= 0x4;
-        if (file.OthersCanWrite) mode |= 0x2;
-        if (file.OthersCanExecute) mode |= 0x1;
+        if (attributes.OwnerCanRead) mode |= 0x100;
+        if (attributes.OwnerCanWrite) mode |= 0x80;
+        if (attributes.OwnerCanExecute) mode |= 0x40;
+        if (attributes.GroupCanRead) mode |= 0x20;
+        if (attributes.GroupCanWrite) mode |= 0x10;
+        if (attributes.GroupCanExecute) mode |= 0x8;
+        if (attributes.OthersCanRead) mode |= 0x4;
+        if (attributes.OthersCanWrite) mode |= 0x2;
+        if (attributes.OthersCanExecute) mode |= 0x1;
 
-        var attributes = file.Attributes;
         if (attributes.IsUIDBitSet) mode |= 0x800;
         if (attributes.IsGroupIDBitSet) mode |= 0x400;
         if (attributes.IsStickyBitSet) mode |= 0x200;

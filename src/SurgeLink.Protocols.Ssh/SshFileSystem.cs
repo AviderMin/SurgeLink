@@ -65,10 +65,6 @@ internal sealed class SshFileSystem : IRemoteFileSystem, IAsyncDisposable
     public Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken) =>
         ExecuteAsync((fileSystem, token) => fileSystem.OpenReadAsync(path, token), cancellationToken);
 
-    /// <inheritdoc />
-    public Task<Stream> OpenReadAsync(string path, RemoteFileEntry knownEntry, CancellationToken cancellationToken) =>
-        ExecuteAsync((fileSystem, token) => fileSystem.OpenReadAsync(path, knownEntry, token), cancellationToken);
-
     /// <summary>READDIR requests issued by the SFTP transport; tests observe scan cost with it.</summary>
     internal long DirectoryListRequests => _sftp.DirectoryListRequests;
 

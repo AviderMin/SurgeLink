@@ -1,4 +1,5 @@
 using SurgeLink.Core.Files;
+using SurgeLink.Core.Protocols;
 using Xunit;
 
 namespace SurgeLink.Protocols.Ssh.Tests;
@@ -56,10 +57,51 @@ public sealed class SshIntegrationTests
         await RemoteFileCopy.CopyAsync(target.Files, source, target.Root + "/bulk-copy", CancellationToken.None);
         var scans = target.DirectoryListRequests - before;
 
-        // One scan for the source root, one for the final destination probe and one for
-        // the source listing. A per-file parent scan would exceed twenty here.
-        Assert.True(scans <= 5, $"Copying 20 files issued {scans} SFTP directory scans.");
+        // Only the source listing is a directory scan now: every single-path type check
+        // uses LSTAT instead of re-listing the parent.
+        // Two scans regardless of file count: the source listing and the destination
+        // directory probe. Every single-path type check uses LSTAT instead.
+        Assert.True(scans <= 3, $"Copying 20 files issued {scans} SFTP directory scans.");
         Assert.Equal("data-7", await target.ReadTextAsync(target.Root + "/bulk-copy/file7.txt"));
+    }
+
+    [SshIntegrationFact]
+    public async Task ReplacingAListedFileWithASymbolicLinkIsRefusedBeforeOpen()
+    {
+        await using var target = await SshIntegrationTarget.ConnectAsync();
+        var directory = target.Root + "/swap";
+        await target.Files.CreateDirectoryAsync(directory, CancellationToken.None);
+        var secret = await target.CreateFileAtAsync(target.Root + "/secret.txt", "secret");
+        var victim = await target.CreateFileAtAsync(directory + "/victim.txt", "safe");
+        var listed = Assert.Single(await target.Files.ListAsync(directory, CancellationToken.None));
+        Assert.Equal(RemoteEntryKind.File, listed.Kind);
+
+        // The listing is now stale: the file becomes a link to a different file.
+        target.RunShell($"ln -sfn '{secret}' '{victim}'");
+
+        // Opening must re-check the current type and refuse the link instead of reading
+        // the link target through the cached listing entry.
+        var failure = Assert.ThrowsAsync<ProtocolException>(
+            () => target.Files.OpenReadAsync(victim, CancellationToken.None));
+        await failure.WaitAsync(TimeSpan.FromSeconds(15));
+    }
+
+    [SshIntegrationFact]
+    public async Task ReplacingAListedFileWithAFifoIsRefusedInsteadOfBlockingOpen()
+    {
+        await using var target = await SshIntegrationTarget.ConnectAsync();
+        var directory = target.Root + "/swap";
+        await target.Files.CreateDirectoryAsync(directory, CancellationToken.None);
+        var victim = await target.CreateFileAtAsync(directory + "/victim.txt", "safe");
+        _ = Assert.Single(await target.Files.ListAsync(directory, CancellationToken.None));
+
+        target.RunShell($"rm -f '{victim}' && mkfifo '{victim}'");
+
+        // Opening a FIFO for reading blocks until a writer appears. The no-follow type
+        // check must reject it first; the timeout fails the test if OPEN is reached.
+        var failure = Assert.ThrowsAsync<ProtocolException>(
+            () => target.Files.OpenReadAsync(victim, CancellationToken.None));
+        await failure.WaitAsync(TimeSpan.FromSeconds(15));
     }
 
     [SshIntegrationFact]
@@ -132,9 +174,8 @@ public sealed class SshIntegrationTests
         public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken ct) => inner.ListAsync(path, ct);
         public Task<RemoteFileEntry> StatAsync(string path, CancellationToken ct) => inner.StatAsync(path, ct);
         public Task<RemoteFileEntry?> TryStatAsync(string path, CancellationToken ct) => inner.TryStatAsync(path, ct);
-        public Task<Stream> OpenReadAsync(string path, CancellationToken ct) => inner.OpenReadAsync(path, ct);
-        public async Task<Stream> OpenReadAsync(string path, RemoteFileEntry knownEntry, CancellationToken ct) =>
-            new CancelAfterBytesStream(await inner.OpenReadAsync(path, knownEntry, ct), bytesBeforeCancel, cancellation);
+        public async Task<Stream> OpenReadAsync(string path, CancellationToken ct) =>
+            new CancelAfterBytesStream(await inner.OpenReadAsync(path, ct), bytesBeforeCancel, cancellation);
         public Task<Stream> OpenWriteAsync(string path, long? expectedSize, IProgress<TransferProgress>? progress, CancellationToken ct) =>
             inner.OpenWriteAsync(path, expectedSize, progress, ct);
         public Task CreateDirectoryAsync(string path, CancellationToken ct) => inner.CreateDirectoryAsync(path, ct);

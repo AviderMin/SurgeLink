@@ -53,15 +53,6 @@ public interface IRemoteFileSystem
     Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Opens a file whose entry was returned by this file system's listing or stat.
-    /// Protocols that resolve no-follow metadata with a parent directory scan can reuse
-    /// the supplied entry instead of scanning a second time; implementations must still
-    /// refuse symbolic links and special files.
-    /// </summary>
-    Task<Stream> OpenReadAsync(string path, RemoteFileEntry knownEntry, CancellationToken cancellationToken) =>
-        OpenReadAsync(path, cancellationToken);
-
-    /// <summary>
     /// Opens a writable stream. <paramref name="progress"/> receives byte counts
     /// as data flows; the caller disposes the stream to complete the write.
     /// </summary>
