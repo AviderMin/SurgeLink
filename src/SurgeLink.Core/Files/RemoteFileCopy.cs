@@ -39,7 +39,7 @@ public static class RemoteFileCopy
         var createdDestination = false;
         try
         {
-            await CopyEntryAsync(source, copyDestination, 0, isRoot: true).ConfigureAwait(false);
+            await CopyEntryAsync(source, copyDestination, 0, isRoot: true, known: sourceEntry).ConfigureAwait(false);
             if (fileSystem.SupportsPermissions)
             {
                 foreach (var (path, mode) in createdDirectories.AsEnumerable().Reverse())
@@ -83,19 +83,14 @@ public static class RemoteFileCopy
             throw;
         }
 
-        async Task CopyEntryAsync(string from, string to, int depth, bool isRoot = false)
+        async Task CopyEntryAsync(string from, string to, int depth, bool isRoot = false, RemoteFileEntry? known = null)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (depth > 128) { throw new IOException("Directory nesting exceeds the copy limit."); }
-            var entry = await fileSystem.StatAsync(from, cancellationToken).ConfigureAwait(false);
+            if (depth > RemoteFileLimits.MaximumDepth) { throw new IOException("Directory nesting exceeds the copy limit."); }
+            var entry = known ?? await fileSystem.StatAsync(from, cancellationToken).ConfigureAwait(false);
             if (entry.Kind is not (RemoteEntryKind.File or RemoteEntryKind.Directory))
             {
                 throw new IOException("Copying symbolic links or special files is not supported.");
-            }
-            var existing = await fileSystem.TryStatAsync(to, cancellationToken).ConfigureAwait(false);
-            if (existing is not null)
-            {
-                throw new IOException($"Destination already exists: {to}");
             }
             if (entry.IsDirectory)
             {
@@ -113,7 +108,10 @@ public static class RemoteFileCopy
                     {
                         throw new IOException("The server returned an invalid child name.");
                     }
-                    await CopyEntryAsync(from + "/" + child.Name, to + "/" + child.Name, depth + 1).ConfigureAwait(false);
+                    // Reuse the entry the parent listing already returned. A single-path
+                    // stat re-lists the parent on SFTP, which would turn a wide directory
+                    // into one directory scan per child.
+                    await CopyEntryAsync(from + "/" + child.Name, to + "/" + child.Name, depth + 1, known: child).ConfigureAwait(false);
                 }
             }
             else
@@ -121,7 +119,7 @@ public static class RemoteFileCopy
                 await using var input = await fileSystem.OpenReadAsync(from, cancellationToken).ConfigureAwait(false);
                 await RemoteFileWrite.WriteAsync(fileSystem, to, entry.Size, null, false,
                     (output, token) => input.CopyToAsync(output, token), cancellationToken,
-                    unixMode: (entry.UnixMode ?? 0x180) & 0x1FF).ConfigureAwait(false);
+                    unixMode: (entry.UnixMode ?? 0x180) & 0x1FF, destinationKnownAbsent: true).ConfigureAwait(false);
             }
         }
     }

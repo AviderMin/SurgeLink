@@ -394,6 +394,8 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   session_check_required when it invalidates a check, or input_conflict if it races
   with the final PTY write. Human input also pauses the desktop control grant:
   subsequent operations return user_operating until the user resumes Agent control.
+  A file policy decision is re-checked against the pause after it returns, so an
+  approval that lands while the user is typing cannot execute behind them.
   Only explicit Stop revokes the grant.
 - Operation IDs are 1–128 ASCII letters/digits/dots/dashes/underscores. Exact retries
   under the same shared handle replay the acknowledgement; different arguments

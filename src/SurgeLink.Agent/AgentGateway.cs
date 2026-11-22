@@ -213,6 +213,10 @@ public sealed partial class AgentGateway
                         new AgentFileAccess(grant.Info.Label, request.Method, request.Path,
                             request.LocalPath, request.Destination), ct).ConfigureAwait(false);
                     ThrowIfCancelled(grant, ct);
+                    // The host may hold this request while a human decides. If the user takes
+                    // the terminal in that window, the approval must not run behind their back:
+                    // re-check the pause after the await, immediately before any file IO.
+                    if (IsHumanOperating(grant)) return HumanOperatingError();
                     if (!approved)
                         return AgentResponse.Error("denied", "File access was declined by the host policy.");
                     result = await ExecuteFileAsync(grant, request, ct).ConfigureAwait(false);

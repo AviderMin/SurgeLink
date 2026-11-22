@@ -90,6 +90,35 @@ public sealed class RemoteFileCopyTests
 
         Assert.Equal(1, counting.ListCalls);
         Assert.Equal(100, counting.ListedEntries);
+        // Only the source root is resolved by path, and only the final destination is
+        // probed. Every child comes from the parent listing, so a wide directory costs
+        // one scan instead of one parent scan per child.
+        Assert.Equal(2, counting.StatCalls);
+    }
+
+    [Fact]
+    public async Task DeepFolderCopyFailureRollsBackBeyondSixtyFourLevels()
+    {
+        var fs = new DemoFileSystem();
+        var source = "/home/demo/deep";
+        await fs.CreateDirectoryAsync(source, CancellationToken.None);
+        var path = source;
+        for (var level = 0; level < 70; level++)
+        {
+            path += "/d" + level;
+            await fs.CreateDirectoryAsync(path, CancellationToken.None);
+        }
+        await using (var leaf = await fs.OpenWriteAsync(path + "/leaf.txt", 1, null, CancellationToken.None))
+        {
+            await leaf.WriteAsync(new byte[] { 42 });
+        }
+
+        var failing = new FailingReadFileSystem(fs, path + "/leaf.txt");
+        await Assert.ThrowsAsync<IOException>(() => RemoteFileCopy.CopyAsync(failing, source, "/home/demo/deep-copy", CancellationToken.None));
+
+        // The copy depth bound and the recursive delete bound are shared, so a failure
+        // below the old 64-level delete limit still leaves no staging tree behind.
+        Assert.DoesNotContain(await fs.ListAsync("/home/demo", CancellationToken.None), entry => entry.Name == "deep-copy");
     }
 
     [Fact]
@@ -377,6 +406,7 @@ public sealed class RemoteFileCopyTests
     {
         public int ListCalls { get; private set; }
         public int ListedEntries { get; private set; }
+        public int StatCalls { get; private set; }
         public bool SupportsPermissions => inner.SupportsPermissions;
         public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => inner.GetHomeDirectoryAsync(ct);
         public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => inner.GetCurrentDirectoryAsync(ct);
@@ -387,7 +417,8 @@ public sealed class RemoteFileCopyTests
             ListedEntries += entries.Count;
             return entries;
         }
-        public Task<RemoteFileEntry> StatAsync(string path, CancellationToken ct) => inner.StatAsync(path, ct);
+        public Task<RemoteFileEntry> StatAsync(string path, CancellationToken ct) { StatCalls++; return inner.StatAsync(path, ct); }
+        public Task<RemoteFileEntry?> TryStatAsync(string path, CancellationToken ct) { StatCalls++; return inner.TryStatAsync(path, ct); }
         public Task<Stream> OpenReadAsync(string path, CancellationToken ct) => inner.OpenReadAsync(path, ct);
         public Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct) =>
             inner.OpenWriteAsync(path, size, progress, ct);

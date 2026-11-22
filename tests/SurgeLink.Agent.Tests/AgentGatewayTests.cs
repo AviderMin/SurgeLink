@@ -211,6 +211,32 @@ public sealed class AgentGatewayTests
         await gateway.RevokeAsync("tab");
     }
 
+    [Fact]
+    public async Task HumanTakeoverWhileApprovalIsPendingBlocksTheApprovedFileOperation()
+    {
+        var files = new CountingFiles();
+        var localPath = Path.Combine(Path.GetTempPath(), "surge-paused-download-" + Guid.NewGuid().ToString("N"));
+        AgentGateway gateway = null!;
+        gateway = new AgentGateway((_, _) =>
+        {
+            // The host is still waiting for a human decision and the user grabs the
+            // terminal. The approval that arrives afterwards must not be executed.
+            gateway.SuspendForHuman("tab");
+            return Task.FromResult(true);
+        });
+        var session = new TestSession { FileSystem = files };
+        var handle = gateway.GrantSession("tab", "Demo", session, null, new CountingTerminal(), allowControl: true,
+            target: new AgentSessionTarget(session.SessionId, "server.test", 22, "alice"));
+
+        var response = await gateway.ExecuteAsync(
+            new("files.download", handle, "/config", LocalPath: localPath), default);
+
+        Assert.Equal("user_operating", response.ErrorCode);
+        Assert.Equal(0, files.ReadCount);
+        Assert.False(File.Exists(localPath));
+        await gateway.RevokeAsync("tab");
+    }
+
     [Theory]
     [InlineData("files.list")]
     [InlineData("files.read")]

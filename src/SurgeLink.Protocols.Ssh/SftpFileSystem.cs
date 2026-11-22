@@ -20,7 +20,9 @@ namespace SurgeLink.Protocols.Ssh;
 /// </remarks>
 public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 {
-    private const int MaximumDeleteDepth = 64;
+    // Shared with the copy recursion so a tree the copier may create is a tree this
+    // connection is also allowed to remove when the copy fails mid-way.
+    internal const int MaximumDeleteDepth = RemoteFileLimits.MaximumDepth;
     private static readonly TimeSpan SftpOperationTimeout = TimeSpan.FromSeconds(60);
 
     private readonly SshConnectionFactory _factory;
