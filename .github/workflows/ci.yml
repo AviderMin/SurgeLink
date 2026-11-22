@@ -45,3 +45,54 @@ jobs:
         run: dotnet test SurgeLink.slnx -c Release -p:Platform=x64 -m:1 --nologo
       - name: Desktop build
         run: dotnet build src/SurgeLink.App -c Release -p:Platform=x64 --no-restore -warnaserror
+
+  ssh-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Start a controlled OpenSSH server
+        run: |
+          set -euo pipefail
+          if [ ! -x /usr/sbin/sshd ]; then
+            sudo apt-get update
+            sudo apt-get install -y openssh-server
+          fi
+          sudo mkdir -p /run/sshd
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/host_key"
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/client_key"
+          mkdir -p "$HOME/.ssh"
+          cat "$RUNNER_TEMP/client_key.pub" >> "$HOME/.ssh/authorized_keys"
+          chmod 700 "$HOME/.ssh"
+          chmod 600 "$HOME/.ssh/authorized_keys"
+          sudo /usr/sbin/sshd -p 2222 -h "$RUNNER_TEMP/host_key" \
+            -o PidFile=/tmp/surge-sshd.pid \
+            -o PasswordAuthentication=no \
+            -o KbdInteractiveAuthentication=no \
+            -o PubkeyAuthentication=yes \
+            -o StrictModes=no \
+            -o UsePAM=no
+          for _ in $(seq 1 50); do
+            if (echo > /dev/tcp/127.0.0.1/2222) >/dev/null 2>&1; then exit 0; fi
+            sleep 0.2
+          done
+          echo 'sshd did not start' >&2
+          exit 1
+      - name: Export the test target
+        run: |
+          echo "SURGELINK_SSH_TEST_HOST=127.0.0.1" >> "$GITHUB_ENV"
+          echo "SURGELINK_SSH_TEST_PORT=2222" >> "$GITHUB_ENV"
+          echo "SURGELINK_SSH_TEST_USER=$(whoami)" >> "$GITHUB_ENV"
+          echo "SURGELINK_SSH_TEST_KEY=$RUNNER_TEMP/client_key" >> "$GITHUB_ENV"
+      - name: Real-server SSH integration tests
+        run: >
+          dotnet test tests/SurgeLink.Protocols.Ssh.Tests/SurgeLink.Protocols.Ssh.Tests.csproj
+          -c Release --filter "FullyQualifiedName~SshIntegrationTests" --nologo

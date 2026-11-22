@@ -116,10 +116,28 @@ public static class RemoteFileCopy
             }
             else
             {
-                await using var input = await fileSystem.OpenReadAsync(from, cancellationToken).ConfigureAwait(false);
-                await RemoteFileWrite.WriteAsync(fileSystem, to, entry.Size, null, false,
-                    (output, token) => input.CopyToAsync(output, token), cancellationToken,
-                    unixMode: (entry.UnixMode ?? 0x180) & 0x1FF, destinationKnownAbsent: true).ConfigureAwait(false);
+                var mode = (entry.UnixMode ?? 0x180) & 0x1FF;
+                await using var input = await fileSystem.OpenReadAsync(from, entry, cancellationToken).ConfigureAwait(false);
+                if (isRoot)
+                {
+                    // A file copy publishes at the final name, so it keeps the staged
+                    // write and its commit-time no-overwrite guarantee.
+                    await RemoteFileWrite.WriteAsync(fileSystem, to, entry.Size, null, false,
+                        (output, token) => input.CopyToAsync(output, token), cancellationToken,
+                        unixMode: mode, destinationKnownAbsent: true).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Inside the unique staging tree of a directory copy, a partial file
+                    // is removed with the tree. Writing directly avoids one private
+                    // staging directory and its parent scan per file.
+                    await using (var output = await fileSystem.OpenWriteAsync(to, entry.Size, null, cancellationToken).ConfigureAwait(false))
+                    {
+                        await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                    }
+                    if (fileSystem.SupportsPermissions)
+                        await fileSystem.SetPermissionsAsync(to, mode, cancellationToken).ConfigureAwait(false);
+                }
             }
         }
     }

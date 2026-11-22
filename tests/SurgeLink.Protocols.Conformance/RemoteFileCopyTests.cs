@@ -113,12 +113,18 @@ public sealed class RemoteFileCopyTests
             await leaf.WriteAsync(new byte[] { 42 });
         }
 
+        var before = (await fs.ListAsync("/home/demo", CancellationToken.None))
+            .Select(entry => entry.Name).OrderBy(name => name, StringComparer.Ordinal).ToArray();
         var failing = new FailingReadFileSystem(fs, path + "/leaf.txt");
         await Assert.ThrowsAsync<IOException>(() => RemoteFileCopy.CopyAsync(failing, source, "/home/demo/deep-copy", CancellationToken.None));
 
-        // The copy depth bound and the recursive delete bound are shared, so a failure
-        // below the old 64-level delete limit still leaves no staging tree behind.
-        Assert.DoesNotContain(await fs.ListAsync("/home/demo", CancellationToken.None), entry => entry.Name == "deep-copy");
+        // Compare the whole directory, not just the final name: the copy writes into a
+        // .surge-*.tmp staging tree, so a rollback that failed entirely would still pass
+        // a "deep-copy does not exist" assertion while leaving that tree behind.
+        var after = (await fs.ListAsync("/home/demo", CancellationToken.None))
+            .Select(entry => entry.Name).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        Assert.Equal(before, after);
+        Assert.DoesNotContain(after, name => name.StartsWith(".surge-", StringComparison.Ordinal));
     }
 
     [Fact]

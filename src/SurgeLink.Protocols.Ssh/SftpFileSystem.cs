@@ -33,6 +33,10 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
     private SftpClient? _client;
     private string? _homeDirectory;
     private int _disposed;
+    private long _directoryListRequests;
+
+    /// <summary>READDIR requests issued by this connection; lets tests observe scan cost.</summary>
+    internal long DirectoryListRequests => Interlocked.Read(ref _directoryListRequests);
 
     /// <summary>Creates the file system facade; the SFTP connection is opened on first use.</summary>
     internal SftpFileSystem(SshConnectionFactory factory, ILogger logger)
@@ -74,6 +78,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         try
         {
             var entries = new List<RemoteFileEntry>();
+            Interlocked.Increment(ref _directoryListRequests);
             await foreach (var file in client.ListDirectoryAsync(fullPath, cancellationToken).ConfigureAwait(false))
             {
                 if (file.Name is "." or "..")
@@ -136,8 +141,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         try
         {
             RemoteFileAccess.RequireRegularFile(MapEntry(await GetEntryNoFollowAsync(client, fullPath, cancellationToken).ConfigureAwait(false)));
-            var stream = await client.OpenAsync(fullPath, FileMode.Open, FileAccess.Read, cancellationToken).ConfigureAwait(false);
-            return stream;
+            return await OpenReadCoreAsync(client, fullPath, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -148,6 +152,34 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
             throw SshErrorMapper.MapFileSystem(exception, fullPath, "open for reading");
         }
     }
+
+    /// <inheritdoc />
+    public async Task<Stream> OpenReadAsync(string path, RemoteFileEntry knownEntry, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(knownEntry);
+        var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        var fullPath = ResolvePath(client, path);
+
+        try
+        {
+            // The entry came from this file system's own listing, so its type is already
+            // authoritative. Reusing it keeps the no-follow refusal for symbolic links
+            // without re-listing the parent directory once per copied file.
+            RemoteFileAccess.RequireRegularFile(knownEntry);
+            return await OpenReadCoreAsync(client, fullPath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw SshErrorMapper.MapFileSystem(exception, fullPath, "open for reading");
+        }
+    }
+
+    private static async Task<Stream> OpenReadCoreAsync(SftpClient client, string fullPath, CancellationToken cancellationToken) =>
+        await client.OpenAsync(fullPath, FileMode.Open, FileAccess.Read, cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
     public async Task<Stream> OpenWriteAsync(
@@ -562,7 +594,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
     // SSH.NET Get/GetAttributes first REALPATH the complete name, following a
     // final symbolic link before LSTAT. READDIR of the parent preserves its type.
-    private static async Task<ISftpFile> GetEntryNoFollowAsync(SftpClient client, string path, CancellationToken cancellationToken)
+    private async Task<ISftpFile> GetEntryNoFollowAsync(SftpClient client, string path, CancellationToken cancellationToken)
     {
         // Resolve a trailing separator away without normalising dot segments:
         // those must still be interpreted by the server, including through links.
@@ -591,6 +623,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
         try
         {
+            Interlocked.Increment(ref _directoryListRequests);
             await foreach (var entry in client.ListDirectoryAsync(parent, cancellationToken).ConfigureAwait(false))
             {
                 if (string.Equals(entry.Name, name, StringComparison.Ordinal)) { return entry; }

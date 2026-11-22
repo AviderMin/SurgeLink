@@ -88,6 +88,9 @@ internal sealed class SshIntegrationTarget : IAsyncDisposable
 
     public string Root { get; }
 
+    /// <summary>READDIR requests the SFTP transport has issued, used to measure scan cost.</summary>
+    public long DirectoryListRequests => ((SshFileSystem)Files).DirectoryListRequests;
+
     public static async Task<SshIntegrationTarget> ConnectAsync()
     {
         var session = await SshIntegration.ConnectSessionAsync();
@@ -98,9 +101,10 @@ internal sealed class SshIntegrationTarget : IAsyncDisposable
         return new SshIntegrationTarget(session, files, root);
     }
 
-    public async Task<string> CreateFileAsync(string name, string content)
+    public Task<string> CreateFileAsync(string name, string content) => CreateFileAtAsync(Root + "/" + name, content);
+
+    public async Task<string> CreateFileAtAsync(string path, string content)
     {
-        var path = Root + "/" + name;
         var bytes = Encoding.UTF8.GetBytes(content);
         await using var stream = await Files.OpenWriteAsync(path, bytes.Length, null, CancellationToken.None);
         await stream.WriteAsync(bytes);
