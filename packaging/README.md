@@ -112,6 +112,18 @@ Windows 10 21H2（19044）的安装门槛已开放，实机启动和功能验证
 
 ## 统一发布 GitHub Release
 
+### 发布前检查
+
+- 待发布提交必须有最新一次 `Code checks` 绿线；Release 自身也会执行仓库/本地化检查和
+  `-warnaserror` 桌面构建，但不应把这两条门禁当作可以互相替代。
+- 版本号已写入 `Directory.Build.props` 并同步到 README 两处，
+  `python tools/check-version.py` 通过。
+- `dotnet test SurgeLink.slnx -c Release -p:Platform=x64 -m:1` 全绿；UI 改动另跑
+  `tools/verify-app.ps1`，并在真机/真实服务器上补做对应验证。
+- 工作树干净；`git describe --tags --always` 与计划发布的 tag 一致。若 `master`
+  领先最近 Release，先决定版本和发布范围，不要让“同一版本号对应两份代码”。
+- 发布后核对 tag 指向的提交、EXE/APPX 资产和 `SHA256SUMS.txt`。
+
 在 **Actions → Release → Run workflow** 输入版本号，例如 `1.0.2.5`（也支持 `v1.0.2.5`），
 留空读取 `Directory.Build.props`。也可推送对应版本标签触发；裸版本号及 `v` 前缀标签均支持。
 手动运行会在所选分支的当前提交创建相应标签；如果标签已指向其他提交则拒绝发布，请改选该标签运行。

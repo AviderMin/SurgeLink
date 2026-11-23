@@ -36,6 +36,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Repository and localization checks
+        run: |
+          python tools/check-repository.py
+          if ($LASTEXITCODE -ne 0) { throw 'Repository check failed.' }
+          python tools/check-ui-localization.py
+          if ($LASTEXITCODE -ne 0) { throw 'Localization check failed.' }
+      - name: Desktop build with warnings as errors
+        run: dotnet build src/SurgeLink.App -c Release -p:Platform=x64 --nologo -warnaserror
       - name: Test release tooling
         run: |
           python -m unittest discover -s tools/tests -p test_release_notes.py -v
