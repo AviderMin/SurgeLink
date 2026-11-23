@@ -1,6 +1,6 @@
 # SurgeLink privacy policy
 
-Effective date: 2026-10-24
+Effective date: 2026-11-23
 
 SurgeLink is a Windows desktop SSH terminal, file transfer and remote monitoring
 application. The application does not include analytics, advertising or an
@@ -27,9 +27,12 @@ text or key sequences into the same interactive terminal the user sees. Such inp
 can execute commands and modify the remote system with the connected account's
 permissions. Execution policy and command approval belong to the external Agent
 application; SurgeLink does not prompt for individual commands or file reads after
-access is enabled. Typing in a controlled terminal revokes Agent access. Stopping
-access prevents further Agent input; it does not itself terminate remote commands.
-Terminal and file contents may contain secrets. SurgeLink does not select or contact
+access is enabled. Typing in a controlled terminal pauses Agent input for that
+session; use **Stop** in the Agent panel to revoke access. Stopping access prevents
+further Agent input; it does not itself terminate remote commands. Agent upload and
+download of local files requires a separate per-operation confirmation in the desktop
+and is denied when no confirmation UI is available. Terminal and file contents may
+contain secrets. SurgeLink does not select or contact
 an AI model provider; external agents receiving this data may send it to their own
 providers according to their configuration. Desktop privacy masking does not redact
 the CLI payload. Sharing is held only in memory and ends on revocation or connection

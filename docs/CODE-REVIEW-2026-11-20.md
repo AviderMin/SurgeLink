@@ -62,6 +62,10 @@ mode 恢复、OSC 后双 ESC、SCP 根目录词法变体、Agent 本地路径传
 
 以下项目本轮未改动，建议后续单独处理：
 
+> 后续更新（2026-11-23）：第 2 项“重放缓存占用数百 MB”已过时。`95a2b3a` 已把
+> `InputReplayCache` 限制为最多 1024 条且总序列化载荷不超过 16 MiB，并在
+> `AgentTextTests` 中覆盖该上限；当前风险是每 grant 16 MiB 的硬上限，而不是无界增长。
+
 1. **SCP 回退读取的 TOCTOU**：`ScpFileSystem.OpenReadAsync` 先用 `test` 类命令确认普通文件，再另起
    `cat --` 读取；远端可在两次往返之间把文件替换为 FIFO，使 `cat` 阻塞（`SshCommandRunner.CopyToAsync`
    未设命令超时）。修复需要把类型检查与读取合并为单条远端命令，并加首字节/空闲超时。
