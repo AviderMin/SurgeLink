@@ -73,13 +73,15 @@ jobs:
           cat "$RUNNER_TEMP/client_key.pub" >> "$HOME/.ssh/authorized_keys"
           chmod 700 "$HOME/.ssh"
           chmod 600 "$HOME/.ssh/authorized_keys"
+          # The hosted runner account is locked; PAM account checks must stay enabled
+          # for public-key login even though password authentication is disabled.
           sudo /usr/sbin/sshd -p 2222 -h "$RUNNER_TEMP/host_key" \
             -o PidFile=/tmp/surge-sshd.pid \
             -o PasswordAuthentication=no \
             -o KbdInteractiveAuthentication=no \
             -o PubkeyAuthentication=yes \
             -o StrictModes=no \
-            -o UsePAM=no
+            -o UsePAM=yes
           for _ in $(seq 1 50); do
             if (echo > /dev/tcp/127.0.0.1/2222) >/dev/null 2>&1; then exit 0; fi
             sleep 0.2
