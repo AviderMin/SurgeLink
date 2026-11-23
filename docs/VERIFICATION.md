@@ -141,6 +141,13 @@ overrides. Repeat with light and dark terminal palettes; the scrollbar theme fol
 the terminal background independently of the shell theme. Also check the OS's
 "Always show scrollbars" setting and high contrast on a suitable test machine.
 
+## Agent panel
+
+`tools/verify-app.ps1` opens the title-bar Agent panel and asserts the **Allow reading**,
+**Allow files** and **Control terminal** actions, enables **Allow files**, checks the
+"File access enabled" status, then stops and closes the panel. This exercises the
+file-read/file-control split and the Reactor panel without a real Agent client.
+
 ## Terminal search
 
 Search is exercised through the normal UI Automation smoke test once the demo session is open:

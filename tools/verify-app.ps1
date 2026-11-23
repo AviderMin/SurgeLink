@@ -190,6 +190,24 @@ Start-Sleep -Milliseconds 700
 $searchClosed = Dump "02e-search-closed"
 AssertMissing $searchClosed "TerminalSearchBox" "Esc closes the find bar"
 
+Step "Agent panel"
+Invoke-Action "Agent" "Button"
+Start-Sleep -Seconds 2
+$agent = Dump "02f-agent"
+AssertContains $agent "AgentPanel" "Agent panel opens"
+AssertContains $agent "Allow reading" "Agent panel has Allow reading"
+AssertContains $agent "Allow files" "Agent panel has Allow files"
+AssertContains $agent "Control terminal" "Agent panel has Control terminal"
+AssertMissing $agent "Render error" "no render errors in Agent panel"
+Invoke-Action "Allow files" "Button"
+Start-Sleep -Seconds 2
+$agentFiles = Dump "02g-agent-files"
+AssertContains $agentFiles "File access enabled" "Allow files enables file access"
+Invoke-Action "Stop" "Button"
+Start-Sleep -Seconds 1
+Invoke-Action "Close Agent panel" "Button"
+Start-Sleep -Milliseconds 700
+
 Step "Clear session filter"
 & (Join-Path $PSScriptRoot "uia-action.ps1") -AutomationId "SessionFilter" -SetValue -Value "__surge_no_match__" -ProcessId $script:appPid
 Start-Sleep -Milliseconds 700
