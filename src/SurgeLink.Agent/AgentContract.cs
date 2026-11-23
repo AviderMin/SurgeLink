@@ -22,12 +22,13 @@ public sealed record AgentResponse(bool Success, JsonElement? Data = null, strin
 
 public sealed record AgentSessionInfo(string Handle, string Label, string Protocol, RemoteHostInfo Host,
     bool Terminal, bool Files, bool Monitor, bool TerminalControl = false, bool IsActive = false,
-    AgentSessionTarget? Target = null, bool UserOperating = false);
+    AgentSessionTarget? Target = null, bool UserOperating = false, bool FileRead = false);
 
 /// <summary>Connection identity captured when desktop access is granted; username is the configured login, not a probed effective shell user.</summary>
 public sealed record AgentSessionTarget(string SessionId, string Server, int Port, string Username);
 
-public enum AgentAccessMode { None, Observe, Control }
+/// <summary>Desktop grant scope. FileRead includes terminal/monitor reads; Control includes both.</summary>
+public enum AgentAccessMode { None, Observe, FileRead, Control }
 
 /// <summary>Advisory MCP presence, not an authenticated client identity or an access grant.</summary>
 public sealed record AgentMcpPeer(string Id, string Name, DateTimeOffset LastSeenUtc);

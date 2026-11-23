@@ -117,11 +117,13 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
             var mode = agent.GetMode(tab.Id);
             var humanOperating = mode == AgentAccessMode.Control && agent.IsHumanOperating(tab.Id);
             var connected = tab.State == ConnectionState.Connected && !tab.IsClosing;
+            var canReadFiles = tab.Session.FileSystem is not null;
             var status = humanOperating
                 ? Str.T("shell.agent.paused", "You are operating; Agent paused")
                 : mode switch
                 {
                     AgentAccessMode.Control => Str.T("shell.agent.controlling", "Terminal control enabled"),
+                    AgentAccessMode.FileRead => Str.T("shell.agent.filesEnabled", "File access enabled"),
                     AgentAccessMode.Observe => Str.T("shell.agent.observing", "Read access enabled"),
                     _ => Str.T("shell.agent.off", "Not shared"),
                 };
@@ -130,24 +132,32 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
                 : Str.T("shell.agent.control", "Control terminal");
             return Card(VStack(AppTheme.SpacingS,
                 BodyStrong(tab.Title).Private(tab.Title).TextTrimming(TextTrimming.CharacterEllipsis),
-                Caption(status).Foreground(mode == AgentAccessMode.Control ? Theme.Accent : Theme.SecondaryText),
+                Caption(status).Foreground(mode is AgentAccessMode.Control or AgentAccessMode.FileRead ? Theme.Accent : Theme.SecondaryText),
                 humanOperating
                     ? Caption(Str.T("shell.agent.pausedHint", "The Agent receives user_operating and should stop all operations; resume when you finish."))
                         .TextWrapping(TextWrapping.Wrap).Foreground(Theme.SecondaryText)
                     : Empty(),
-                Grid(columns: [GridSize.Star(), GridSize.Star()], rows: [GridSize.Auto, GridSize.Auto],
+                mode == AgentAccessMode.Control
+                    ? Caption(Str.T("shell.agent.controlIdle", "Terminal control expires after 30 minutes without Agent input."))
+                        .TextWrapping(TextWrapping.Wrap).Foreground(Theme.SecondaryText)
+                    : Empty(),
+                Grid(columns: [GridSize.Star(), GridSize.Star()], rows: [GridSize.Auto, GridSize.Auto, GridSize.Auto],
                     Button(Str.T("shell.agent.read", "Allow reading"), () => ChangeAccess(tab, AgentAccessMode.Observe))
-                        .IsEnabled(!working && connected && mode != AgentAccessMode.Observe)
+                        .IsEnabled(!working && connected && mode == AgentAccessMode.None)
                         .AutomationName(Str.T("shell.agent.read", "Allow reading")).AutomationId("AgentRead-" + tab.Id)
                         .HAlign(HorizontalAlignment.Stretch).Margin(0, 0, AppTheme.SpacingXs, 0).Grid(row: 0, column: 0),
+                    Button(Str.T("shell.agent.files", "Allow files"), () => ChangeAccess(tab, AgentAccessMode.FileRead))
+                        .IsEnabled(!working && connected && canReadFiles && mode is AgentAccessMode.None or AgentAccessMode.Observe)
+                        .AutomationName(Str.T("shell.agent.files", "Allow files")).AutomationId("AgentFiles-" + tab.Id)
+                        .HAlign(HorizontalAlignment.Stretch).Grid(row: 0, column: 1),
                     Button(controlLabel, () => ChangeAccess(tab, AgentAccessMode.Control))
                         .IsEnabled(!working && connected && tab.Terminal is { IsClosed: false } && (mode != AgentAccessMode.Control || humanOperating))
                         .AutomationName(controlLabel).AutomationId("AgentControl-" + tab.Id)
-                        .HAlign(HorizontalAlignment.Stretch).Grid(row: 0, column: 1),
+                        .HAlign(HorizontalAlignment.Stretch).Margin(0, AppTheme.SpacingXs, 0, 0).Grid(row: 1, columnSpan: 2),
                     Button(Str.T("shell.agent.stop", "Stop"), () => ChangeAccess(tab, AgentAccessMode.None))
                         .IsEnabled(!working && mode != AgentAccessMode.None)
                         .AutomationName(Str.T("shell.agent.stop", "Stop")).AutomationId("AgentStop-" + tab.Id)
-                        .Margin(0, AppTheme.SpacingXs, 0, 0).Grid(row: 1, columnSpan: 2))))
+                        .Margin(0, AppTheme.SpacingXs, 0, 0).Grid(row: 2, columnSpan: 2))))
                 .WithKey(tab.Id.ToString());
         }
 
@@ -286,6 +296,7 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
     {
         "ok" => Str.T("shell.agent.result.ok", "Completed"),
         "control_enabled" => Str.T("shell.agent.controlling", "Terminal control enabled"),
+        "files_enabled" => Str.T("shell.agent.filesEnabled", "File access enabled"),
         "read_enabled" => Str.T("shell.agent.observing", "Read access enabled"),
         "human_input" or "user_operating" => Str.T("shell.agent.result.takeover", "You are operating; Agent paused"),
         "human_resumed" => Str.T("shell.agent.result.resumed", "Agent control resumed"),

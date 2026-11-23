@@ -50,7 +50,7 @@ public sealed class DesktopConnectionTests
         var finishApproval = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var gateway = new AgentGateway(async (_, ct) => { approvalStarted.SetResult(); using var registration = ct.Register(() => finishApproval.TrySetCanceled(ct)); return await finishApproval.Task; });
         var fileSession = new AgentGatewayTests.TestSession { FileSystem = new TestFiles() };
-        var fileHandle = gateway.GrantSession("files", "Files", fileSession, null);
+        var fileHandle = gateway.GrantSession("files", "Files", fileSession, null, allowFileRead: true);
         var terminalHandle = TerminalControlTests.GrantControl(gateway, new TerminalControlTests.TestAutomation(), connectionKey: "terminal");
         await using var server = new AgentPipeServer(AgentEndpoint.ForProcess(pid), gateway);
         var connection = new DesktopConnection(pid);

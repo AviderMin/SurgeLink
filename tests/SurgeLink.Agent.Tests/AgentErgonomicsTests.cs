@@ -91,7 +91,7 @@ public sealed class AgentErgonomicsTests
         var files = new MemoryFiles();
         files.Files["/tmp/test.txt"] = Encoding.UTF8.GetBytes("0123456789");
         var gateway = new AgentGateway((_, _) => Task.FromResult(true));
-        var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession { FileSystem = files }, null);
+        var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession { FileSystem = files }, null, allowFileRead: true);
 
         var response = await gateway.ExecuteAsync(new("files.read", handle, "/tmp/test.txt", Offset: 2, MaxBytes: 4), default);
 

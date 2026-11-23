@@ -13,11 +13,11 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     private readonly WorkspaceStore _workspace;
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger _logger;
-    // Allow reading includes read-only file access; mutating file operations are
-    // additionally gated by the gateway on the control grant. Per-operation
-    // execution policy belongs to the external Agent app; local upload/download
-    // is the exception because it touches files outside the shared session, so
-    // the injected host policy requires an explicit user confirmation for it.
+    // Terminal/monitor reading and file reading are separate grants. Mutating file
+    // operations are additionally gated by the gateway on the control grant.
+    // Per-operation execution policy belongs to the external Agent app; local
+    // upload/download is the exception because it touches files outside the shared
+    // session, so the injected host policy requires an explicit user confirmation.
     private readonly AgentGateway _gateway;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _accessChanges = new(1, 1);
@@ -90,6 +90,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
             catch (Exception ex) { ReportError(ex); }
             return;
         }
+        if (mode == AgentAccessMode.FileRead && tab.Session.FileSystem is null) return;
         long generation;
         lock (_gate) { if (_disposed) return; generation = _stopGeneration; }
         // Resuming after a human pause only clears the flag: the grant and its handle stay valid.
@@ -127,7 +128,8 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
                     isActive: () => _workspace.Snapshot.ActiveTabId == tab.Id,
                     target: new AgentSessionTarget(tab.Session.SessionId, tab.Profile.Host,
                         tab.Session.Protocol.UsesNetworkAddress ? tab.Profile.ResolvePort(tab.Session.Protocol.DefaultPort) : 0,
-                        tab.Profile.Username));
+                        tab.Profile.Username),
+                    allowFileRead: mode is AgentAccessMode.FileRead or AgentAccessMode.Control);
                 _labels[handle] = tab.Title;
                 _handles[tab.Id] = handle;
                 _error = null;
@@ -149,7 +151,12 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
                 if (_gateway.SuspendForHuman(tab.Id.ToString())) Record(tab.Title, "access", "human_input");
                 return;
             }
-            Record(tab.Title, "access", mode == AgentAccessMode.Control ? "control_enabled" : "read_enabled");
+            Record(tab.Title, "access", mode switch
+            {
+                AgentAccessMode.Control => "control_enabled",
+                AgentAccessMode.FileRead => "files_enabled",
+                _ => "read_enabled",
+            });
         }
         catch (Exception ex) { ReportError(ex); }
         finally { _accessChanges.Release(); }

@@ -17,9 +17,74 @@ public sealed class AgentGatewayTests
     {
         var gateway = new AgentGateway();
         var files = new CountingFiles();
-        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null);
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null, allowFileRead: true);
         Assert.Equal("denied", (await gateway.ExecuteAsync(new(method, handle, "/private/config"), default)).ErrorCode);
         Assert.Equal(0, files.ReadCount);
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Fact]
+    public async Task FileReadRequiresExplicitFileReadGrant()
+    {
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var files = new CountingFiles();
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null);
+
+        var response = await gateway.ExecuteAsync(new("files.read", handle, "/config"), default);
+
+        Assert.Equal("file_access_required", response.ErrorCode);
+        Assert.Equal(0, files.ReadCount);
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Fact]
+    public async Task FileReadGrantWorksWithoutTerminalControl()
+    {
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var files = new CountingFiles();
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null,
+            allowFileRead: true);
+
+        var response = await gateway.ExecuteAsync(new("files.read", handle, "/config"), default);
+
+        Assert.True(response.Success);
+        Assert.Equal("hello", response.Data!.Value.GetProperty("text").GetString());
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Fact]
+    public async Task ControlExpiresAfterIdleTimeoutAndFallsBackToFileRead()
+    {
+        var clock = new TestClock { Now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) };
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true), clock, TimeSpan.FromMinutes(30));
+        var files = new CountingFiles();
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null,
+            new CountingTerminal(), allowControl: true, allowFileRead: true);
+        Assert.Equal(AgentAccessMode.Control, gateway.GetMode("tab"));
+
+        clock.Now = clock.Now.AddMinutes(31);
+        var expired = await gateway.ExecuteAsync(new("sessions.activate", handle, View: "terminal"), default);
+
+        Assert.Equal("control_expired", expired.ErrorCode);
+        Assert.Equal(AgentAccessMode.FileRead, gateway.GetMode("tab"));
+        var read = await gateway.ExecuteAsync(new("files.read", handle, "/config"), default);
+        Assert.True(read.Success);
+        await gateway.RevokeAsync("tab");
+    }
+
+    [Fact]
+    public async Task ControlActivityExtendsTheIdleLease()
+    {
+        var clock = new TestClock { Now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) };
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true), clock, TimeSpan.FromMinutes(30));
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession(), null,
+            new CountingTerminal(), allowControl: true, allowFileRead: true,
+            activate: (_, _) => Task.CompletedTask);
+        clock.Now = clock.Now.AddMinutes(25);
+        Assert.True((await gateway.ExecuteAsync(new("sessions.activate", handle, View: "terminal"), default)).Success);
+
+        clock.Now = clock.Now.AddMinutes(20);
+        Assert.Equal(AgentAccessMode.Control, gateway.GetMode("tab"));
         await gateway.RevokeAsync("tab");
     }
 
@@ -293,7 +358,7 @@ public sealed class AgentGatewayTests
         var approvals = 0;
         var gateway = new AgentGateway((_, _) => Task.FromResult(++approvals == 1));
         var files = new CountingFiles();
-        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null);
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null, allowFileRead: true);
         Assert.True((await gateway.ExecuteAsync(new("files.read", handle, "/config"), default)).Success);
         Assert.Equal("denied", (await gateway.ExecuteAsync(new("files.read", handle, "/config"), default)).ErrorCode);
         Assert.Equal(1, files.ReadCount);
@@ -364,7 +429,7 @@ public sealed class AgentGatewayTests
     {
         var gateway = new AgentGateway((_, _) => Task.FromResult(true));
         var files = new CountingFiles { Content = new string('x', 128 * 1024 + 1) };
-        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null);
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null, allowFileRead: true);
         Assert.Equal("read_failed", (await gateway.ExecuteAsync(new("files.read", handle, "/large"), default)).ErrorCode);
     }
 
@@ -416,7 +481,7 @@ public sealed class AgentGatewayTests
     public async Task NamedPipeRoundTripSurvivesMalformedClientAndReturnsSharedData()
     {
         var gateway = new AgentGateway((_, _) => Task.FromResult(true));
-        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = new CountingFiles() }, () => "screen");
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = new CountingFiles() }, () => "screen", allowFileRead: true);
         var name = $"SurgeLink.Tests.{Guid.NewGuid():N}";
         await using var server = new AgentPipeServer(name, gateway);
         await using (var malformed = new System.IO.Pipes.NamedPipeClientStream(".", name, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous))
@@ -489,6 +554,12 @@ public sealed class AgentGatewayTests
         { Calls++; return Task.FromResult(new TerminalInputReceipt(expectedRevision + 1, 0, 1, submit)); }
         public Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct)
         { Calls++; return Task.FromResult(new TerminalInputReceipt(expectedRevision + 1, 0, 1, true)); }
+    }
+
+    private sealed class TestClock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 
     private sealed class BlockingMonitor : IRemoteSystemMonitor

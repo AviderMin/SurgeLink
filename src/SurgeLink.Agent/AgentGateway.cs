@@ -18,19 +18,28 @@ public sealed partial class AgentGateway
     private readonly Dictionary<string, TaskCompletionSource> _revocations = new(StringComparer.Ordinal);
     private readonly Func<AgentFileAccess, CancellationToken, Task<bool>> _confirmFile;
     private readonly TimeProvider _timeProvider;
+    private readonly TimeSpan _controlIdleTimeout;
+
+    /// <summary>Default control lease: idle control grants fall back to read-only access.</summary>
+    public static readonly TimeSpan DefaultControlIdleTimeout = TimeSpan.FromMinutes(30);
 
     /// <summary>File access is denied unless the host explicitly supplies an authorization policy.</summary>
-    public AgentGateway(Func<AgentFileAccess, CancellationToken, Task<bool>>? confirmFile = null, TimeProvider? timeProvider = null)
+    public AgentGateway(Func<AgentFileAccess, CancellationToken, Task<bool>>? confirmFile = null,
+        TimeProvider? timeProvider = null, TimeSpan? controlIdleTimeout = null)
     {
         _confirmFile = confirmFile ?? ((_, _) => Task.FromResult(false));
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _controlIdleTimeout = controlIdleTimeout ?? DefaultControlIdleTimeout;
+        if (_controlIdleTimeout < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(controlIdleTimeout), "The control idle timeout cannot be negative.");
     }
 
     public event Action<string, string?, string>? OperationCompleted;
 
     public string GrantSession(string connectionKey, string label, IProtocolSession session, Func<string>? readScreen,
         ITerminalAutomation? terminal = null, bool allowControl = false,
-        Func<string, CancellationToken, Task>? activate = null, Func<bool>? isActive = null, AgentSessionTarget? target = null)
+        Func<string, CancellationToken, Task>? activate = null, Func<bool>? isActive = null, AgentSessionTarget? target = null,
+        bool allowFileRead = false)
     {
         lock (_gate)
         {
@@ -43,8 +52,10 @@ public sealed partial class AgentGateway
             if (existing is not null) return existing.Info.Handle;
             var info = new AgentSessionInfo(Convert.ToHexString(RandomNumberGenerator.GetBytes(24)), label,
                 session.Protocol.Id, session.HostInfo, readScreen is not null || terminal is not null,
-                session.FileSystem is not null, session.Monitor is not null, allowControl && terminal is not null, Target: target);
-            _grants.Add(info.Handle, new Grant(connectionKey, info, session, readScreen, terminal, activate, isActive));
+                session.FileSystem is not null, session.Monitor is not null, allowControl && terminal is not null,
+                Target: target, FileRead: allowFileRead && session.FileSystem is not null);
+            _grants.Add(info.Handle, new Grant(connectionKey, info, session, readScreen, terminal, activate, isActive,
+                _timeProvider.GetUtcNow()));
             return info.Handle;
         }
     }
@@ -59,7 +70,11 @@ public sealed partial class AgentGateway
         lock (_gate)
         {
             var grant = _grants.Values.FirstOrDefault(g => g.ConnectionKey == connectionKey);
-            return grant is null ? AgentAccessMode.None : grant.Info.TerminalControl ? AgentAccessMode.Control : AgentAccessMode.Observe;
+            if (grant is null) return AgentAccessMode.None;
+            ExpireControlIfIdle(grant);
+            return grant.Info.TerminalControl ? AgentAccessMode.Control
+                : grant.Info.FileRead ? AgentAccessMode.FileRead
+                : AgentAccessMode.Observe;
         }
     }
 
@@ -157,15 +172,26 @@ public sealed partial class AgentGateway
         if (request.Method is "client.heartbeat" or "client.disconnect") return UpdateMcpPresence(request);
         if (request.Method == "sessions.list")
         {
-            lock (_gate) return AgentResponse.Ok(_grants.Values
-                .Where(g => g.Session.State == ConnectionState.Connected)
-                .Select(g => g.Info with { IsActive = g.IsActive?.Invoke() ?? false, UserOperating = g.HumanOperating }).ToArray());
+            lock (_gate)
+            {
+                foreach (var shared in _grants.Values) ExpireControlIfIdle(shared);
+                return AgentResponse.Ok(_grants.Values
+                    .Where(g => g.Session.State == ConnectionState.Connected)
+                    .Select(g => g.Info with { IsActive = g.IsActive?.Invoke() ?? false, UserOperating = g.HumanOperating }).ToArray());
+            }
         }
         if (!IsKnownMethod(request.Method))
             return AgentResponse.Error("unknown_method", "Unknown Agent operation.");
         Grant? grant;
-        lock (_gate) _grants.TryGetValue(request.Session ?? "", out grant);
+        bool controlExpired;
+        lock (_gate)
+        {
+            _grants.TryGetValue(request.Session ?? "", out grant);
+            controlExpired = grant is not null && ExpireControlIfIdle(grant);
+        }
         if (grant is null) return AgentResponse.Error("session_unavailable", "The session is not shared or its handle has expired.");
+        if (controlExpired && IsControlOperation(request.Method))
+            return AgentResponse.Error("control_expired", "Terminal control expired after inactivity. Allow control again in the desktop Agent panel.");
         // A human owns the terminal now: fail fast before any IO or queueing behind Agent work.
         if (IsHumanOperating(grant)) return HumanOperatingError();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, grant.Lifetime.Token);
@@ -178,6 +204,10 @@ public sealed partial class AgentGateway
             ThrowIfCancelled(grant, ct);
             if (grant.Session.State != ConnectionState.Connected)
                 return AgentResponse.Error("session_unavailable", "The session is disconnected.");
+            if (IsControlOperation(request.Method) && grant.Info.TerminalControl)
+            {
+                lock (_gate) grant.LastControlActivityUtc = _timeProvider.GetUtcNow();
+            }
             if (request.Method is "terminal.text" or "terminal.key" or "terminal.exec")
                 return await ExecuteInputAsync(grant, request, ct).ConfigureAwait(false);
             AgentResponse result;
@@ -395,8 +425,11 @@ public sealed partial class AgentGateway
 
     private async Task<AgentResponse> ExecuteFileAsync(Grant grant, AgentRequest request, CancellationToken ct)
     {
-        // Reading access is read-only. Mutating files requires the stronger
-        // terminal-control grant, even when the host file policy would allow it.
+        // File reads are a separate grant from terminal/monitor reading. Mutating
+        // files requires the stronger terminal-control grant, even when the host
+        // file policy would allow it.
+        if ((request.Method is "files.list" or "files.read" or "files.stat") && !grant.Info.FileRead)
+            return AgentResponse.Error("file_access_required", "Allow file access in the desktop Agent panel first.");
         if (!grant.Info.TerminalControl && request.Method is ("files.write" or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download"))
             return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel before changing remote files.");
         var files = grant.Session.FileSystem ?? throw new NotSupportedException();
@@ -608,11 +641,28 @@ public sealed partial class AgentGateway
         or "monitor.snapshot" or "files.list" or "files.read" or "files.stat" or "files.write"
         or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download";
 
+    private static bool IsControlOperation(string method) => method is "terminal.text" or "terminal.key" or "terminal.exec"
+        or "sessions.activate" or "files.write" or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download";
+
+    private bool ExpireControlIfIdle(Grant grant)
+    {
+        if (!grant.Info.TerminalControl) return false;
+        if (_controlIdleTimeout == TimeSpan.Zero
+            || _timeProvider.GetUtcNow() - grant.LastControlActivityUtc >= _controlIdleTimeout)
+        {
+            grant.Info = grant.Info with { TerminalControl = false };
+            grant.HumanOperating = false;
+            return true;
+        }
+        return false;
+    }
+
     private sealed class Grant(string connectionKey, AgentSessionInfo info, IProtocolSession session, Func<string>? readScreen,
-        ITerminalAutomation? terminal, Func<string, CancellationToken, Task>? activate, Func<bool>? isActive)
+        ITerminalAutomation? terminal, Func<string, CancellationToken, Task>? activate, Func<bool>? isActive,
+        DateTimeOffset grantedAt)
     {
         public string ConnectionKey { get; } = connectionKey;
-        public AgentSessionInfo Info { get; } = info;
+        public AgentSessionInfo Info { get; set; } = info;
         public IProtocolSession Session { get; } = session;
         public Func<string>? ReadScreen { get; } = readScreen;
         public ITerminalAutomation? Terminal { get; } = terminal;
@@ -620,6 +670,7 @@ public sealed partial class AgentGateway
         public Func<bool>? IsActive { get; } = isActive;
         public bool HumanOperating { get; set; }
         public string? LastInputText { get; set; }
+        public DateTimeOffset LastControlActivityUtc { get; set; } = grantedAt;
         public InputReplayCache Inputs { get; } = new();
         public SessionCheck? Check { get; set; }
         public bool InputOutcomeUnknown { get; set; }
@@ -644,8 +695,8 @@ public sealed partial class AgentGateway
             ? new
             {
                 handle = grant.Info.Handle, label = grant.Info.Label, target = grant.Info.Target,
-                terminalControl = grant.Info.TerminalControl, isActive = active,
-                userOperating = IsHumanOperating(grant),
+                terminalControl = grant.Info.TerminalControl, fileRead = grant.Info.FileRead,
+                isActive = active, userOperating = IsHumanOperating(grant),
             }
             : grant.Info with { IsActive = active };
         object screenResult = screen;

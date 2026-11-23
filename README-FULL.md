@@ -8,13 +8,19 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.8**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.9**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.9** 拆分 Agent 文件读取授权并限制 Control 空闲时间：
+
+- Agent 面板新增“允许文件”，与“允许读取”（终端/监控）分开授权；`sessions.list`、`sessions.check` 返回 `fileRead` 能力，文件读取需要 Allow files 或 Control。
+- Control 授权在 30 分钟没有 Agent 控制操作后自动降为文件/终端只读；读操作不延长控制窗口，重新开启 Control 才能继续写入。
+- 更新 Agent、隐私和验证文档，并补充文件读取授权与空闲降级的回归测试。
 
 **1.0.3.8** 强化远程文件操作与发布前验证：
 
@@ -306,9 +312,10 @@ UI 使用 C# 元素树与 Reactor hooks 描述，底层仍是原生 WinUI 控件
 
 ## AI Agent 与 CLI（共享终端预览）
 
-点击顶栏四个操作按钮左侧的机器人图标，在 Agent 面板内为已打开会话选择“允许读取”或“控制终端”。
-读取包括主机信息、终端屏幕与增量输出、监控、目录和文本文件；终端控制可以输入文本、发送 Enter／Tab／Ctrl+C 等按键，
-并切换已授权会话的终端／文件／监控视图。Agent 操作使用用户正在看的同一个交互终端，输入与输出直接可见。
+点击顶栏四个操作按钮左侧的机器人图标，在 Agent 面板内为已打开会话选择“允许读取”“允许文件”或“控制终端”。
+“允许读取”包括主机信息、终端屏幕与增量输出、监控；“允许文件”额外开放只读目录与文本文件；
+终端控制可以输入文本、发送 Enter／Tab／Ctrl+C 等按键，并切换已授权会话的终端／文件／监控视图。
+Agent 操作使用用户正在看的同一个交互终端，输入与输出直接可见。
 手动输入终端会暂停 Agent 操作（Agent 收到 user_operating，必须停止并等待），面板提供恢复 Agent、逐会话停止、全部停止、MCP／CLI 接入配置和最近活动。
 已允许终端控制的会话在标签标题右侧显示机器人图标，悬停提示“Agent 已接管此会话”；显式停止或连接断开后自动移除，手动输入暂停时仍保留。
 只有显式停止（Stop）、关闭或重连会使旧句柄失效；手动输入只暂停，恢复后同一句柄继续可用。授权范围为同一 Windows 用户，当前不区分具体 Agent 应用。

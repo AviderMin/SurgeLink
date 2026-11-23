@@ -17,7 +17,7 @@ public sealed class AgentPipeServerTests
             using var registration = ct.Register(() => finishApproval.TrySetCanceled(ct));
             return await finishApproval.Task;
         });
-        var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession { FileSystem = new EmptyFiles() }, null);
+        var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession { FileSystem = new EmptyFiles() }, null, allowFileRead: true);
         var name = $"SurgeLink.Tests.{Guid.NewGuid():N}";
         await using var server = new AgentPipeServer(name, gateway);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -93,7 +93,7 @@ public sealed class AgentPipeServerTests
             try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); return true; }
             finally { cleaned.SetResult(); }
         });
-        var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession { FileSystem = new EmptyFiles() }, null);
+        var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession { FileSystem = new EmptyFiles() }, null, allowFileRead: true);
         var name = $"SurgeLink.Tests.{Guid.NewGuid():N}";
         var server = new AgentPipeServer(name, gateway);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));

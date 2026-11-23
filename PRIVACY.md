@@ -19,11 +19,12 @@ Windows user. Private key files remain at the location selected by the user.
 SurgeLink does not copy them into saved profiles.
 
 Optional Agent/CLI access is disabled for every connection until the user enables
-reading or terminal control in the title-bar Agent panel. Reading allows programs
-running as the same Windows user to read that connection's label, host information,
-visible screen, retained incremental output, metrics, directory listings and text
-files. Terminal control additionally allows selecting the shared tab/view and writing
-text or key sequences into the same interactive terminal the user sees. Such input
+reading, file access or terminal control in the title-bar Agent panel. Reading allows
+programs running as the same Windows user to read that connection's label, host
+information, visible screen, retained incremental output and metrics. File access
+additionally allows directory listings and text-file reads. Terminal control allows
+selecting the shared tab/view and writing text or key sequences into the same
+interactive terminal the user sees; it also includes file access. Such input
 can execute commands and modify the remote system with the connected account's
 permissions. Execution policy and command approval belong to the external Agent
 application; SurgeLink does not prompt for individual commands or file reads after

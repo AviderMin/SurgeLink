@@ -96,9 +96,10 @@ public sealed class AgentWorkspaceTests
     }
 
     [Theory]
-    [InlineData(AgentAccessMode.Observe)]
-    [InlineData(AgentAccessMode.Control)]
-    public async Task DesktopGrantExplicitlyIncludesFileReadingUntilRevoked(AgentAccessMode mode)
+    [InlineData(AgentAccessMode.Observe, false)]
+    [InlineData(AgentAccessMode.FileRead, true)]
+    [InlineData(AgentAccessMode.Control, true)]
+    public async Task DesktopGrantIncludesFileReadingOnlyWhenGranted(AgentAccessMode mode, bool canReadFiles)
     {
         using var temp = new TempDirectory();
         var catalog = new ProtocolCatalog(); catalog.Register(new SurgeLink.Protocols.Demo.DemoProtocolPlugin());
@@ -115,10 +116,18 @@ public sealed class AgentWorkspaceTests
         var client = new AgentClient(pipeName);
         var sessions = await client.SendAsync(new("sessions.list"));
         var handle = Assert.Single(sessions.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
-        Assert.True((await client.SendAsync(new("files.list", handle, "/home/demo"))).Success);
-        var read = await client.SendAsync(new("files.read", handle, "/home/demo/demo.txt"));
-        Assert.True(read.Success);
-        Assert.Contains("Hello from", read.Data!.Value.GetProperty("text").GetString());
+        if (canReadFiles)
+        {
+            Assert.True((await client.SendAsync(new("files.list", handle, "/home/demo"))).Success);
+            var read = await client.SendAsync(new("files.read", handle, "/home/demo/demo.txt"));
+            Assert.True(read.Success);
+            Assert.Contains("Hello from", read.Data!.Value.GetProperty("text").GetString());
+        }
+        else
+        {
+            Assert.Equal("file_access_required", (await client.SendAsync(new("files.list", handle, "/home/demo"))).ErrorCode);
+            Assert.Equal("file_access_required", (await client.SendAsync(new("files.read", handle, "/home/demo/demo.txt"))).ErrorCode);
+        }
         await service.StopAllAsync();
         Assert.Equal("session_unavailable", (await client.SendAsync(new("files.list", handle, "/home/demo"))).ErrorCode);
         Assert.Equal("session_unavailable", (await client.SendAsync(new("files.read", handle, "/home/demo/demo.txt"))).ErrorCode);

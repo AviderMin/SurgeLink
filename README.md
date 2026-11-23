@@ -4,7 +4,7 @@
 
 **把远程终端、文件管理和系统监控放进同一个 Windows 工作区。**
 
-SurgeLink 是一款开源的 Windows 桌面 SSH／Telnet／串口客户端，使用 C#、WinUI 3 与 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建，采用 MIT 许可证。当前版本：**1.0.3.8**。版本更新、构建与打包说明见 [README-FULL.md](README-FULL.md)。
+SurgeLink 是一款开源的 Windows 桌面 SSH／Telnet／串口客户端，使用 C#、WinUI 3 与 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建，采用 MIT 许可证。当前版本：**1.0.3.9**。版本更新、构建与打包说明见 [README-FULL.md](README-FULL.md)。
 
 ## 这是什么？
 
@@ -72,7 +72,7 @@ SurgeLink 想做的事很简单：**把这些事情放进同一个窗口。**
 ### Agent 与 CLI（预览功能）
 
 - 可以让支持 MCP（Model Context Protocol，一种让 AI 工具接入本地应用的通用协议）的 AI Agent（如 Codex、Claude Code、Cursor）或 `surgelink-cli` 连接 SurgeLink，读取或操作你授权的会话。
-- 授权按会话单独进行：每个连接都需要你手动授权，选择“允许读取”或“控制终端”；不授权时 Agent 看不到该会话。
+- 授权按会话单独进行：每个连接都需要你手动授权，可分别选择“允许读取”（终端与监控）、“允许文件”（只读文件）或“控制终端”；不授权时 Agent 看不到该会话。
 - 你在终端里手动输入时，Agent 只会暂停（恢复后同一句柄可继续使用）；显式停止、关闭会话或重新连接才会撤销控制。
 - 外部 Agent 可能把读取到的终端／文件内容发送给其模型服务商；SurgeLink 本身不连接 AI 服务商。
 - 该功能仍在预览阶段，适合愿意尝鲜的用户。
@@ -178,7 +178,7 @@ SurgeLink 本身不包含广告、分析或自动上传服务；连接资料和�
 
 ## 项目现状与获取方式
 
-- 当前源码版本：**1.0.3.8**。
+- 当前源码版本：**1.0.3.9**。
 - 许可证：[MIT](LICENSE)，可自由使用、修改和分发。
 - 开发语言与框架：C#、WinUI 3、Microsoft.UI.Reactor。
 

@@ -21,7 +21,7 @@ public sealed class AgentExperienceTests
             Name = new string('界', 900), FullPath = "/日志/" + new string('界', 900),
         }).ToArray();
         var session = new AgentGatewayTests.TestSession { FileSystem = new LargeDirectory(entries) };
-        var handle = gateway.GrantSession("tab", "大目录", session, null);
+        var handle = gateway.GrantSession("tab", "大目录", session, null, allowFileRead: true);
         var name = $"SurgeLink.Tests.{Guid.NewGuid():N}";
         await using var server = new AgentPipeServer(name, gateway);
 

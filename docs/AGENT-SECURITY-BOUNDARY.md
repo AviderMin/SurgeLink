@@ -1,6 +1,6 @@
 # SurgeLink Agent 安全边界设计
 
-- **日期**：2026-11-01
+- **日期**：2026-11-01；**更新**：2026-11-23 已实施 R1（文件读取独立授权）和 R2（Control 空闲降级）
 - **范围**：SurgeLink.Agent、SurgeLink.AgentHost、SurgeLink.Agent.Contracts、SurgeLink.Cli，以及 SurgeLink.App 中的授权落地点（AgentWorkspaceService、AgentPanel）
 - **方法**：以 security-audit 指导模式做聚焦审查——通读 Agent 子系统全部关键源码，梳理信任边界、能力矩阵与执法点，输出边界设计分析与加固建议（本文是设计文档，不是漏洞清单）
 
@@ -35,7 +35,7 @@
 | 资产 | 暴露路径 | 现有防护 |
 |---|---|---|
 | 远端 shell 控制权（最高价值） | terminal.text / key | Control 授权 + check-token 流程 + 人工输入即暂停（user_operating），显式 Stop 才撤销 |
-| 远端文件数据（含远端凭据文件） | files.list / read | 随 Observe 授权开放，策略钩子可拦（见 R1） |
+| 远端文件数据（含远端凭据文件） | files.list / read | 随 FileRead/Control 授权开放；桌面端 **Allow files** 显式授予（见 R1） |
 | 终端输出与监控数据 | terminal.screen / output、monitor.snapshot | 有界出口（32K 字符 / 1 MiB 帧 / 500 条） |
 | 会话元数据（主机/端口/登录名） | sessions.list / info | 仅已共享会话可见；身份只报"配置的登录名" |
 | 本地凭据 | **无静默暴露路径** | Gateway 无凭据读取能力；`files.upload/download` 的本地路径进入宿主策略，桌面端逐次弹窗确认并显示确切的本地路径（`AgentFilePolicy`）；报错文案明令禁止"读取本地凭据/配置文件" |
@@ -48,15 +48,15 @@
 
 按 AgentGateway.ExecuteCoreAsync（AgentGateway.cs:145-199）实际执行的判定：
 
-| 能力 | 未共享 | Observe | Control |
-|---|---|---|---|
-| sessions.list / info / check | ✗ | ✓ | ✓ |
-| terminal.screen / output | ✗ | ✓ | ✓ |
-| monitor.snapshot | ✗ | ✓ | ✓ |
-| files.list / files.read / files.stat | ✗ | ✓（策略钩子，桌面端当前恒真） | ✓ |
-| files.write / files.delete / files.rename / files.mkdir / files.upload / files.download | ✗ | ✗（控制授权才开放） | ✓ |
-| terminal.text / key | ✗ | ✗ | ✓ + check-token 流程 |
-| sessions.activate | ✗ | ✗ | ✓ |
+| 能力 | 未共享 | Observe | FileRead | Control |
+|---|---|---|---|---|
+| sessions.list / info / check | ✗ | ✓ | ✓ | ✓ |
+| terminal.screen / output | ✗ | ✓ | ✓ | ✓ |
+| monitor.snapshot | ✗ | ✓ | ✓ | ✓ |
+| files.list / files.read / files.stat | ✗ | ✗ | ✓ | ✓ |
+| files.write / files.delete / files.rename / files.mkdir / files.upload / files.download | ✗ | ✗ | ✗ | ✓ |
+| terminal.text / key | ✗ | ✗ | ✗ | ✓ + check-token 流程 |
+| sessions.activate | ✗ | ✗ | ✗ | ✓ |
 
 ### 2.2 边界机制索引
 
@@ -93,19 +93,18 @@
 
 ## 4. 边界设置建议（按优先级）
 
-### R1【最值得做】文件读取与 Observe 拆分，或给策略钩子装真实策略
+### R1【已实施 2026-11-23】文件读取与 Observe 拆分
 
-- **现状**：Observe 即可 files.read；AgentWorkspaceService.cs:18 把 `_confirmFile` 写死为恒真——这是**有意的设计决定**（注释明确"执行策略属于外部 Agent 应用"），但意味着"允许读终端"顺带授权了读远端 ~/.ssh/、.env、配置文件里的凭据。提示注入的现实目标恰是这些文件。当前已把写/删/改名/建目录/上传/下载全部收紧到 Control，读侧的范围策略仍需按下方方案细化。
-- **最小改动**：`AgentGateway._confirmFile`（AgentGateway.cs:17-23、183）就是现成的边界插入点，**默认拒绝**。三档可选（按需选一）：
-  1. 面板把"允许读取"细分为"终端/监控"与"文件"两个开关（能力最小化）；
-  2. 策略函数按敏感路径模式拒绝（.ssh/、.aws/、.env、*credential* 等）；
-  3. Observe 档首次 files.read 按路径前缀弹窗批准一次（复用现有 InteractionService 确认流）。
+- **原状**：Observe 即可 files.read；AgentWorkspaceService 把 `_confirmFile` 写死为恒真，意味着"允许读终端"顺带授权了读远端 ~/.ssh/、.env、配置文件里的凭据。提示注入的现实目标恰是这些文件。
+- **当前实现**：`AgentAccessMode` 增加 `FileRead`；`AgentSessionInfo` 增加 `fileRead` 能力字段；`AgentGateway.GrantSession` 的 `allowFileRead` 默认拒绝，只有桌面面板的 **Allow files** 或 **Control terminal** 才显式放开 `files.list/read/stat`。`AgentPanel` 现在有独立的"允许文件"按钮。Control 仍包含文件读取与文件变更。
+- **仍保留的策略**：远端路径不是路径沙箱；Allow files 后仍可读远端账户可读的任何路径。敏感路径策略和"按路径确认"仍可按需叠加。
 - **不变量**：能力授予与文件读取分离后，"允许看终端"不再隐含"允许翻文件"。
 
-### R2 给 Control 授权加时效/活动上限
+### R2【已实施 2026-11-23】给 Control 授权加时效
 
-- **现状**：Control 授权持续到显式 Stop；人工输入只会暂停（user_operating），Resume 后同一句柄继续可用；1024 条幂等缓存上限是雏形（AgentGateway.Input.cs:27-28）。
-- **建议**：空闲 N 分钟自动降级为 Observe，或单次 Control 授权最多支持 M 次输入后要求人工续期。把"授权窗口"从事件触发型收紧为**时间/次数有界型**。
+- **原状**：Control 授权持续到显式 Stop；人工输入只会暂停（user_operating），Resume 后同一句柄继续可用。
+- **当前实现**：`AgentGateway` 默认 `ControlIdleTimeout = 30 分钟`。只有 control 操作（终端输入、视图切换、文件变更）会刷新活动时间；读操作不延长。超时后 Control 自动降为 FileRead（若授予过文件访问）或 Observe，后续 control 操作返回 `control_expired`，重新在面板开启 Control 即可。人工输入暂停仍保持原语义。
+- **仍需考虑**：如需要更严格的"次数上限"或更长/更短的默认窗口，可在 `AgentGateway` 构造参数中调整；当前桌面没有设置项，采用固定 30 分钟安全默认。
 
 ### R3 协议层固化"数据/指令"分离
 
@@ -134,20 +133,17 @@
 
 | 条件 | 能做的 | 不能做的 |
 |---|---|---|
-| 仅 Observe 授权 | 读终端输出、监控快照、远端文件（→ R1 是最大缺口） | 输入、碰其他会话、拿本地凭据、自行扩权、超限传输 |
+| 仅 Observe 授权 | 读终端输出、监控快照 | 文件读取、输入、碰其他会话、拿本地凭据、自行扩权、超限传输 |
+| FileRead 授权 | 读终端输出、监控快照、远端文件 | 输入、文件变更、碰其他会话、拿本地凭据、自行扩权、超限传输 |
 | Control 授权 | 在该终端执行 = 用户自己在终端里能做的事；每次写过屏幕状态锚定 token | 绕过 token、在人工输入暂停后继续或重试、跨会话操作、改变授权状态 |
 
-**结论**：损害上限 = "用户显式共享的能力 × 共享存续时间"。边界闭合。R1 收紧后，Observe 的损害上限进一步降到"终端可见内容"。
+**结论**：损害上限 = "用户显式共享的能力 × 共享存续时间"。边界闭合。R1 收紧后，Observe 的损害上限进一步降到"终端可见内容"；FileRead 才暴露远端文件读取。
 
 ---
 
 ## 6. 结论
 
-SurgeLink 的 Agent 边界哲学已成型且质量很高：**授权最小化 + 写操作机械前置 + 人优先 + 出口有界 + 执法收口在桌面端**。边界设置的要害不在加更多门，而在三件事：
-
-1. 把文件读取从 Observe 里拆出来（或给 `_confirmFile` 装真策略）——R1；
-2. 给 Control 授权加时效/次数界——R2；
-3. 把"远端内容只是数据、presence 只是展示、身份只报已验证事实"固化为不可退化的不变量测试——R3/R5。
+SurgeLink 的 Agent 边界哲学已成型且质量很高：**授权最小化 + 写操作机械前置 + 人优先 + 出口有界 + 执法收口在桌面端**。2026-11-23 已实施 R1（文件读取独立授权）和 R2（Control 30 分钟空闲降级）；后续重点是把“远端内容只是数据、presence 只是展示、身份只报已验证事实”固化为不可退化的不变量测试——R3/R5。
 
 ---
 
@@ -163,5 +159,5 @@ SurgeLink 的 Agent 边界哲学已成型且质量很高：**授权最小化 + �
 | MCP 工具面与参数校验 | src/SurgeLink.AgentHost/McpAdapter.cs:12-103 |
 | presence 咨询性 | src/SurgeLink.AgentHost/DesktopConnection.cs:7、AgentContract.cs:28 |
 | 桌面侧授权与人工暂停/恢复 | src/SurgeLink.App/Services/AgentWorkspaceService.cs:77-150 |
-| 文件策略钩子（恒真待改） | src/SurgeLink.App/Services/AgentWorkspaceService.cs:18 |
-| 面板授权 UI | src/SurgeLink.App/Shell/AgentPanel.cs:106-143 |
+| 文件读取授权（Allow files） | src/SurgeLink.Agent/AgentGateway.cs:31-52、396-410 |
+| 面板授权 UI | src/SurgeLink.App/Shell/AgentPanel.cs:115-160 |

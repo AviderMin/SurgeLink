@@ -18,19 +18,20 @@ controlled terminal pauses the Agent but keeps the indicator.
 3. In **Connect with MCP**, choose your client and copy its user setup command
    or configuration. Register once in the client's user configuration so it is
    available across workspaces, then reconnect MCP in that client.
-4. Choose **Allow reading** or **Control terminal** for the desired connection.
-   Ask the Agent to use SurgeLink for your task. The panel shows MCP client presence
-   separately from session access; connecting a client never grants a session.
+4. Choose **Allow reading**, **Allow files**, or **Control terminal** for the desired
+   connection. Ask the Agent to use SurgeLink for your task. The panel shows MCP client
+   presence separately from session access; connecting a client never grants a session.
 5. Use the panel's per-session Stop or Stop all actions to revoke access. Typing in a
    controlled terminal only pauses the Agent; use **Resume Agent** to continue.
 
-Reading exposes host facts, the visible screen, retained incremental terminal
-output, metrics, directory listings and text files. Control additionally exposes
-PTY text/key input, selecting that tab's terminal/files/monitor view, and
-mutating file operations (write, delete, rename, mkdir). Agent input selects the
-target terminal and returns its viewport to the live position, so commands and
-output appear in the same terminal the user sees. No second SSH shell, saved
-credentials or background exec channel is created.
+**Allow reading** exposes host facts, the visible screen, retained incremental
+terminal output and metrics. **Allow files** adds read-only directory listings and
+text-file reads. **Control terminal** adds PTY text/key input, selecting that tab's
+terminal/files/monitor view, and mutating file operations (write, delete, rename,
+mkdir, upload, download); it also includes file reads. Agent input selects the target
+terminal and returns its viewport to the live position, so commands and output appear
+in the same terminal the user sees. No second SSH shell, saved credentials or
+background exec channel is created.
 
 Execution policy belongs to the external Agent application. After desktop access
 is enabled, SurgeLink does not classify commands or prompt for individual commands
@@ -42,8 +43,13 @@ This grant is not a remote path sandbox: file listing and bounded text reading c
 access any path allowed by the remote account, including paths outside a project.
 The standalone `AgentGateway` denies file access by default. The desktop explicitly
 supplies the policy that permits reads for a connection after the user enables
-Allow reading or Control terminal; revocation invalidates its handle. An injected
+**Allow files** or Control terminal; revocation invalidates its handle. An injected
 host policy is evaluated for every file operation and need not display a dialog.
+
+A Control grant expires after 30 minutes without Agent control activity (terminal
+input, view selection or a file mutation). It then falls back to **Allow files** when
+that was part of the grant, otherwise to read-only terminal/monitor access. Reads
+do not extend the control lease; re-enable Control in the panel to write again.
 
 Human typing or sending a terminal key pauses that terminal's Agent operations
 before queuing the human input. The control grant and its handle remain valid,
@@ -309,8 +315,9 @@ The tools are list_desktops, select_desktop, list_sessions, get_session_info,
 check_sessions, read_terminal, read_terminal_output, wait_terminal_output,
 run_terminal_command, send_terminal_text, send_terminal_key, select_session, get_system_snapshot,
 list_directory, read_text_file, stat_path, write_text_file, delete_path,
-rename_path, create_directory, upload_file and download_file. The write tools
-and select_session require a control grant. Read-only tool annotations are hints;
+rename_path, create_directory, upload_file and download_file. The file read tools
+(list_directory, read_text_file, stat_path) require a file-read grant; the write
+tools and select_session require a control grant. Read-only tool annotations are hints;
 gateway enforcement decides which capabilities the shared handle permits.
 
 Example send_terminal_text arguments:
@@ -381,7 +388,7 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   effort for POSIX bash/sh; non-POSIX shells time out without an exit code,
   in which case `commandCompletionKnown=false`.
 - sessions.check supports `brief=true` (compact screen) and `minimal=true`
-  (compact screen plus only handle, label, target and control state instead of
+  (compact screen plus only handle, label, target, control state and fileRead instead of
   the full host/session metadata). Both are opt-in; the full check remains the
   default.
 - terminal.screen supports `tailRows` and `stripAnsi` for a compact view. These
