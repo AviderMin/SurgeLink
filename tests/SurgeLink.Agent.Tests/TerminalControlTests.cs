@@ -54,6 +54,29 @@ public sealed class TerminalControlTests
     }
 
     [Fact]
+    public async Task InputRateLimitRejectsBurstWithoutConsumingTheCheckToken()
+    {
+        var clock = new TestClock { Now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) };
+        var terminal = new TestAutomation();
+        var gateway = new AgentGateway(timeProvider: clock, inputPermitsPerMinute: 1);
+        var handle = GrantControl(gateway, terminal);
+        var first = await CheckedInputAsync(gateway, handle);
+        Assert.True((await gateway.ExecuteAsync(first, default)).Success);
+        Assert.Equal(1, terminal.Writes);
+
+        var second = (await CheckedInputAsync(gateway, handle)) with { OperationId = "command-2" };
+        var limited = await gateway.ExecuteAsync(second, default);
+        Assert.Equal("input_rate_limited", limited.ErrorCode);
+        Assert.Equal(1, terminal.Writes);
+
+        // The throttled request did not consume the check token, so it can be
+        // retried after the bucket refills without running Check Sessions again.
+        clock.Now = clock.Now.AddMinutes(1);
+        Assert.True((await gateway.ExecuteAsync(second, default)).Success);
+        Assert.Equal(2, terminal.Writes);
+    }
+
+    [Fact]
     public async Task InputMustHaveRevisionAndOperationId()
     {
         var terminal = new TestAutomation();
@@ -84,6 +107,12 @@ public sealed class TerminalControlTests
             CheckToken = check.Data!.Value.GetProperty("checkToken").GetString(),
             ExpectedInputRevision = check.Data.Value.GetProperty("screen").GetProperty("inputRevision").GetInt64(),
         };
+    }
+
+    private sealed class TestClock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 
     internal sealed class TestAutomation : ITerminalAutomation

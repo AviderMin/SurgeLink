@@ -404,6 +404,10 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   A file policy decision is re-checked against the pause after it returns, so an
   approval that lands while the user is typing cannot execute behind them.
   Only explicit Stop revokes the grant.
+- New terminal inputs are rate-limited to 60 operations per minute per grant
+  (one-minute token bucket). A throttled request returns input_rate_limited before
+  the check token is consumed, so wait and retry the same check rather than running
+  Check Sessions again. Exact operation-ID replays do not consume a new permit.
 - Operation IDs are 1–128 ASCII letters/digits/dots/dashes/underscores. Exact retries
   under the same shared handle replay the acknowledgement; different arguments
   with the same ID return operation_conflict. The gateway retains at most 1,024
@@ -448,9 +452,9 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   require terminal-control access; read-only sharing cannot write or delete.
 
 Error codes additionally include user_operating, session_check_required, session_context_unavailable,
-control_required, invalid_arguments, input_conflict,
-operation_conflict, operation_limit, input_outcome_unknown, terminal_unavailable,
-invalid_cursor, write_failed, local_file_not_found, local_file_exists,
+control_required, file_access_required, control_expired, input_rate_limited,
+invalid_arguments, input_conflict, operation_conflict, operation_limit, input_outcome_unknown,
+terminal_unavailable, invalid_cursor, write_failed, local_file_not_found, local_file_exists,
 desktop_not_running, desktop_ambiguous, desktop_ipc_unavailable,
 desktop_ipc_timeout and desktop_instance_expired, alongside existing session_unavailable, unsupported, cancelled,
 read_failed, version_mismatch, unknown_method, output_limit and operation_failed.

@@ -35,6 +35,12 @@ public sealed partial class AgentGateway
         var isText = request.Method is "terminal.text" or "terminal.exec";
         var sendText = isText ? request.Method == "terminal.exec" ? BuildExecText(request.Text!, operationId) : request.Text : null;
 
+        // Consume a rate permit before consuming the one-time check token. A
+        // throttled request must remain replayable without another Check Sessions.
+        if (!grant.InputRate.TryAcquire())
+            return AgentResponse.Error("input_rate_limited",
+                "Too many terminal inputs in a short period. Wait, then retry; the check token was not consumed.");
+
         if (ValidateCheck(grant, request) is { } checkFailure) return checkFailure;
         var check = grant.Check!;
         grant.Check = null;

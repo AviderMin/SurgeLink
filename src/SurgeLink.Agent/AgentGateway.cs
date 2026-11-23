@@ -19,19 +19,27 @@ public sealed partial class AgentGateway
     private readonly Func<AgentFileAccess, CancellationToken, Task<bool>> _confirmFile;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _controlIdleTimeout;
+    private readonly int _inputPermitsPerMinute;
 
     /// <summary>Default control lease: idle control grants fall back to read-only access.</summary>
     public static readonly TimeSpan DefaultControlIdleTimeout = TimeSpan.FromMinutes(30);
 
+    /// <summary>Default sustained terminal-input rate per grant.</summary>
+    public const int DefaultInputPermitsPerMinute = 60;
+
     /// <summary>File access is denied unless the host explicitly supplies an authorization policy.</summary>
     public AgentGateway(Func<AgentFileAccess, CancellationToken, Task<bool>>? confirmFile = null,
-        TimeProvider? timeProvider = null, TimeSpan? controlIdleTimeout = null)
+        TimeProvider? timeProvider = null, TimeSpan? controlIdleTimeout = null,
+        int inputPermitsPerMinute = DefaultInputPermitsPerMinute)
     {
         _confirmFile = confirmFile ?? ((_, _) => Task.FromResult(false));
         _timeProvider = timeProvider ?? TimeProvider.System;
         _controlIdleTimeout = controlIdleTimeout ?? DefaultControlIdleTimeout;
         if (_controlIdleTimeout < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(controlIdleTimeout), "The control idle timeout cannot be negative.");
+        if (inputPermitsPerMinute < 1)
+            throw new ArgumentOutOfRangeException(nameof(inputPermitsPerMinute), "At least one input permit per minute is required.");
+        _inputPermitsPerMinute = inputPermitsPerMinute;
     }
 
     public event Action<string, string?, string>? OperationCompleted;
@@ -55,7 +63,7 @@ public sealed partial class AgentGateway
                 session.FileSystem is not null, session.Monitor is not null, allowControl && terminal is not null,
                 Target: target, FileRead: allowFileRead && session.FileSystem is not null);
             _grants.Add(info.Handle, new Grant(connectionKey, info, session, readScreen, terminal, activate, isActive,
-                _timeProvider.GetUtcNow()));
+                _timeProvider.GetUtcNow(), new InputRateLimiter(_inputPermitsPerMinute, _timeProvider)));
             return info.Handle;
         }
     }
@@ -659,7 +667,7 @@ public sealed partial class AgentGateway
 
     private sealed class Grant(string connectionKey, AgentSessionInfo info, IProtocolSession session, Func<string>? readScreen,
         ITerminalAutomation? terminal, Func<string, CancellationToken, Task>? activate, Func<bool>? isActive,
-        DateTimeOffset grantedAt)
+        DateTimeOffset grantedAt, InputRateLimiter inputRate)
     {
         public string ConnectionKey { get; } = connectionKey;
         public AgentSessionInfo Info { get; set; } = info;
@@ -671,6 +679,7 @@ public sealed partial class AgentGateway
         public bool HumanOperating { get; set; }
         public string? LastInputText { get; set; }
         public DateTimeOffset LastControlActivityUtc { get; set; } = grantedAt;
+        public InputRateLimiter InputRate { get; } = inputRate;
         public InputReplayCache Inputs { get; } = new();
         public SessionCheck? Check { get; set; }
         public bool InputOutcomeUnknown { get; set; }

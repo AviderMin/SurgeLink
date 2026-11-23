@@ -8,13 +8,19 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.9**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.10**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.10** 增加 Agent 输入速率上限与边界不变量测试：
+
+- 每个 Agent 控制会话默认每分钟最多 60 次新的终端输入；同一 operationId 的精确重放不消耗新令牌。
+- 限流请求返回 `input_rate_limited`，且不消耗 check token；等待后可继续用同一 check 重试。
+- 补充 presence/ClientId 不授权、远端输出不改变授权/能力、多桌面不静默选择的回归测试。
 
 **1.0.3.9** 拆分 Agent 文件读取授权并限制 Control 空闲时间：
 
