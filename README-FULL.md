@@ -8,13 +8,21 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.7**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.8**（尚未发布安装包；最新 Release 为 1.0.3.7）。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.8** 强化远程文件操作与发布前验证（源码版本，尚未发布安装包）：
+
+- 远程复制统一 128 层嵌套上限，失败时回滚本次创建的 staging 树；批量复制复用父目录列举结果，减少逐文件目录扫描。
+- SFTP 读取在打开前用单路径 no-follow LSTAT 复核类型；父目录不可列举时回退到 REALPATH 校验。符号链接、FIFO 等特殊文件不再被跟随打开。
+- Agent 文件操作在宿主确认返回后再次检查人工暂停，用户接管终端后不会继续执行文件 IO。
+- 新增真实 OpenSSH 集成测试与 CI job，覆盖覆盖保护、取消、深层目录和符号链接/FIFO 替换等场景。
+- Release 工作流增加仓库/本地化检查与 `-warnaserror` 桌面构建门禁。
 
 **1.0.3.7** 加固远程文件下载与本地发布：
 
