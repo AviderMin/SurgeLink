@@ -103,7 +103,7 @@
 ### R2【已实施 2026-11-23】给 Control 授权加时效
 
 - **原状**：Control 授权持续到显式 Stop；人工输入只会暂停（user_operating），Resume 后同一句柄继续可用。
-- **当前实现**：`AgentGateway` 默认 `ControlIdleTimeout = 30 分钟`。只有 control 操作（终端输入、视图切换、文件变更）会刷新活动时间；读操作不延长。超时后 Control 自动降为 FileRead（若授予过文件访问）或 Observe，后续 control 操作返回 `control_expired`，重新在面板开启 Control 即可。人工输入暂停仍保持原语义。
+- **当前实现**：`AgentGateway` 默认 `ControlIdleTimeout = 30 分钟`。只有 control 操作（终端输入、视图切换、文件变更）在通过授权检查/完成后才刷新活动时间；读操作不延长。超时后 Control 自动降为 FileRead（若授予过文件访问）或 Observe，后续 control 操作返回 `control_expired`，重新在面板开启 Control 即可。人工输入暂停独立于 Control 授权：控制过期不会清除暂停，读取在用户 **Resume Agent** 前保持阻塞。排队请求在取得执行锁后、确认弹窗返回后都会复查控制是否过期。
 - **仍需考虑**：如需要更严格的"次数上限"或更长/更短的默认窗口，可在 `AgentGateway` 构造参数中调整；当前桌面没有设置项，采用固定 30 分钟安全默认。
 
 ### R3【已加不变量测试 2026-11-23】协议层固化"数据/指令"分离

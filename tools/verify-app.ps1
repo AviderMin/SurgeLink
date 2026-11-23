@@ -203,6 +203,10 @@ Invoke-Action "Allow files" "Button"
 Start-Sleep -Seconds 2
 $agentFiles = Dump "02g-agent-files"
 AssertContains $agentFiles "File access enabled" "Allow files enables file access"
+Invoke-Action "Allow reading" "Button"
+Start-Sleep -Seconds 2
+$agentRead = Dump "02h-agent-read"
+AssertContains $agentRead "Read access enabled" "Allow reading downgrades from file access"
 Invoke-Action "Stop" "Button"
 Start-Sleep -Seconds 1
 Invoke-Action "Close Agent panel" "Button"

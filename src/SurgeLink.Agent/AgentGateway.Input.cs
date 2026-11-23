@@ -57,6 +57,7 @@ public sealed partial class AgentGateway
             var receipt = isText
                 ? await grant.Terminal.SendCheckedTextAsync(sendText!, request.Method == "terminal.exec" || request.Submit, check.Screen, ct).ConfigureAwait(false)
                 : await grant.Terminal.SendCheckedKeyAsync(request.Key!, check.Screen, ct).ConfigureAwait(false);
+            TouchControl(grant);
             if (request.Method == "terminal.exec")
             {
                 grant.LastInputText = request.Text;

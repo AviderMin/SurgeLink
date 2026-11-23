@@ -135,6 +135,36 @@ public sealed class AgentWorkspaceTests
     }
 
     [Fact]
+    public async Task DowngradingAccessRevokesTheOldHandle()
+    {
+        using var temp = new TempDirectory();
+        var catalog = new ProtocolCatalog(); catalog.Register(new SurgeLink.Protocols.Demo.DemoProtocolPlugin());
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new JsonSessionStore(temp.File("sessions.json")), credentials,
+            new AutomationDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var tab = await workspace.OpenAsync(SessionProfile.New("demo", "demo", 0, "demo"), null, default);
+        var pipeName = $"SurgeLink.Tests.{Guid.NewGuid():N}";
+        await using var service = new AgentWorkspaceService(workspace, new AutomationDispatcher(), NullLogger.Instance, pipeName);
+        var client = new AgentClient(pipeName);
+
+        await service.SetAccessAsync(tab, AgentAccessMode.FileRead);
+        var first = await client.SendAsync(new("sessions.list"));
+        var oldHandle = Assert.Single(first.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
+        Assert.Equal(AgentAccessMode.FileRead, service.GetMode(tab.Id));
+
+        await service.SetAccessAsync(tab, AgentAccessMode.Observe);
+        Assert.Equal(AgentAccessMode.Observe, service.GetMode(tab.Id));
+        Assert.Equal("session_unavailable",
+            (await client.SendAsync(new("files.list", oldHandle, "/home/demo"))).ErrorCode);
+        var second = await client.SendAsync(new("sessions.list"));
+        var newHandle = Assert.Single(second.Data!.Value.EnumerateArray()).GetProperty("handle").GetString()!;
+        Assert.NotEqual(oldHandle, newHandle);
+        await workspace.CloseAsync(tab.Id);
+    }
+
+    [Fact]
     public async Task StopAllInvalidatesAccessChangeWaitingForAnInFlightWrite()
     {
         using var temp = new TempDirectory();

@@ -8,13 +8,21 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.10**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.11**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.11** 修复 Agent 人工暂停与控制过期的授权竞态：
+
+- 人工暂停不再随 Control 超时被清除；用户接管终端后，读取保持暂停，直到面板中明确恢复 Agent。
+- 排队中的控制请求在取得执行锁后、确认弹窗返回后再次检查授权；控制租约只在操作通过检查/完成后续期。
+- 无控制权限的文件上传/下载在弹窗前直接拒绝，不再先让用户确认再报错。
+- 面板恢复直接降级：FileRead/Control 可直接切回“允许读取”，Control 可直接切回“允许文件”；旧句柄随重新授权失效。
+- 补充人工暂停跨超时、排队控制跨超时、审批返回后超时和面板降级的回归测试。
 
 **1.0.3.10** 增加 Agent 输入速率上限与边界不变量测试：
 

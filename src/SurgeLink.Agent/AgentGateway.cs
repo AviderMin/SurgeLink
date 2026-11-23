@@ -212,10 +212,7 @@ public sealed partial class AgentGateway
             ThrowIfCancelled(grant, ct);
             if (grant.Session.State != ConnectionState.Connected)
                 return AgentResponse.Error("session_unavailable", "The session is disconnected.");
-            if (IsControlOperation(request.Method) && grant.Info.TerminalControl)
-            {
-                lock (_gate) grant.LastControlActivityUtc = _timeProvider.GetUtcNow();
-            }
+            if (CheckControlAfterQueue(grant, request) is { } expiredAfterQueue) return expiredAfterQueue;
             if (request.Method is "terminal.text" or "terminal.key" or "terminal.exec")
                 return await ExecuteInputAsync(grant, request, ct).ConfigureAwait(false);
             AgentResponse result;
@@ -243,6 +240,10 @@ public sealed partial class AgentGateway
                     if (request.Method == "files.rename"
                         && (string.IsNullOrWhiteSpace(request.Destination) || request.Destination.Length > 4096 || request.Destination.Any(char.IsControl)))
                         return AgentResponse.Error("invalid_path", "Supply a destination path without control characters (maximum 4096 characters).");
+                    // Check the grant before showing a host confirmation. A user must
+                    // never approve an upload/download that the gateway will reject.
+                    if (CheckFilePermission(grant, request.Method) is { } permissionFailure)
+                        return permissionFailure;
                     // Evaluate the host policy for every exact path and operation. The desktop
                     // explicitly allows reads within a shared connection; this is not a path sandbox
                     // or a per-read prompt. Local upload/download paths are included so the host
@@ -253,14 +254,20 @@ public sealed partial class AgentGateway
                     ThrowIfCancelled(grant, ct);
                     // The host may hold this request while a human decides. If the user takes
                     // the terminal in that window, the approval must not run behind their back:
-                    // re-check the pause after the await, immediately before any file IO.
+                    // re-check the pause, control expiry and permission immediately before IO.
                     if (IsHumanOperating(grant)) return HumanOperatingError();
+                    if (CheckControlAfterQueue(grant, request) is { } expiredAfterApproval) return expiredAfterApproval;
+                    if (CheckFilePermission(grant, request.Method) is { } postApprovalFailure)
+                        return postApprovalFailure;
                     if (!approved)
                         return AgentResponse.Error("denied", "File access was declined by the host policy.");
                     result = await ExecuteFileAsync(grant, request, ct).ConfigureAwait(false);
                     break;
             }
             ThrowIfCancelled(grant, ct);
+            // A control operation renews the lease only after it was authorized and
+            // completed; a denied, expired or failed request must not keep control alive.
+            if (result.Success && IsControlOperation(request.Method)) TouchControl(grant);
             return result;
         }
         finally { grant.Serial.Release(); }
@@ -433,13 +440,8 @@ public sealed partial class AgentGateway
 
     private async Task<AgentResponse> ExecuteFileAsync(Grant grant, AgentRequest request, CancellationToken ct)
     {
-        // File reads are a separate grant from terminal/monitor reading. Mutating
-        // files requires the stronger terminal-control grant, even when the host
-        // file policy would allow it.
-        if ((request.Method is "files.list" or "files.read" or "files.stat") && !grant.Info.FileRead)
-            return AgentResponse.Error("file_access_required", "Allow file access in the desktop Agent panel first.");
-        if (!grant.Info.TerminalControl && request.Method is ("files.write" or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download"))
-            return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel before changing remote files.");
+        if (CheckControlAfterQueue(grant, request) is { } expired) return expired;
+        if (CheckFilePermission(grant, request.Method) is { } permissionFailure) return permissionFailure;
         var files = grant.Session.FileSystem ?? throw new NotSupportedException();
         switch (request.Method)
         {
@@ -659,10 +661,39 @@ public sealed partial class AgentGateway
             || _timeProvider.GetUtcNow() - grant.LastControlActivityUtc >= _controlIdleTimeout)
         {
             grant.Info = grant.Info with { TerminalControl = false };
-            grant.HumanOperating = false;
+            // Human pause is independent of the control grant. Clearing it here
+            // would silently resume reads even though the user is still operating.
             return true;
         }
         return false;
+    }
+
+    private AgentResponse? CheckControlAfterQueue(Grant grant, AgentRequest request)
+    {
+        bool expired;
+        lock (_gate) expired = ExpireControlIfIdle(grant);
+        return expired && IsControlOperation(request.Method)
+            ? AgentResponse.Error("control_expired",
+                "Terminal control expired after inactivity. Allow control again in the desktop Agent panel.")
+            : null;
+    }
+
+    private static AgentResponse? CheckFilePermission(Grant grant, string method)
+    {
+        if ((method is "files.list" or "files.read" or "files.stat") && !grant.Info.FileRead)
+            return AgentResponse.Error("file_access_required", "Allow file access in the desktop Agent panel first.");
+        if (!grant.Info.TerminalControl && method is ("files.write" or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download"))
+            return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel before changing remote files.");
+        return null;
+    }
+
+    private void TouchControl(Grant grant)
+    {
+        lock (_gate)
+        {
+            if (grant.Info.TerminalControl)
+                grant.LastControlActivityUtc = _timeProvider.GetUtcNow();
+        }
     }
 
     private sealed class Grant(string connectionKey, AgentSessionInfo info, IProtocolSession session, Func<string>? readScreen,

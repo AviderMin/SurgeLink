@@ -24,6 +24,96 @@ public sealed class AgentGatewayTests
     }
 
     [Fact]
+    public async Task HumanPauseSurvivesControlExpiryUntilExplicitResume()
+    {
+        var clock = new TestClock { Now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) };
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true), clock, TimeSpan.FromMinutes(30));
+        var files = new CountingFiles();
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null,
+            new CountingTerminal(), allowControl: true, allowFileRead: true);
+        Assert.True(gateway.SuspendForHuman("tab"));
+
+        clock.Now = clock.Now.AddMinutes(31);
+
+        Assert.Equal(AgentAccessMode.FileRead, gateway.GetMode("tab"));
+        Assert.True(gateway.IsHumanOperating("tab"));
+        Assert.Equal("user_operating", (await gateway.ExecuteAsync(new("files.read", handle, "/config"), default)).ErrorCode);
+        Assert.Equal(0, files.ReadCount);
+
+        Assert.True(gateway.ResumeFromHuman("tab"));
+        Assert.True((await gateway.ExecuteAsync(new("files.read", handle, "/config"), default)).Success);
+    }
+
+    [Fact]
+    public async Task QueuedControlRequestCannotRunAfterControlExpiry()
+    {
+        var clock = new TestClock { Now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) };
+        var monitor = new BlockingMonitor();
+        var activated = 0;
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true), clock, TimeSpan.FromMinutes(30));
+        var session = new TestSession { Monitor = monitor };
+        var handle = gateway.GrantSession("tab", "Demo", session, null, new CountingTerminal(),
+            allowControl: true, allowFileRead: true,
+            activate: (_, _) => { activated++; return Task.CompletedTask; });
+
+        var reading = gateway.ExecuteAsync(new("monitor.snapshot", handle), default);
+        await monitor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var queued = gateway.ExecuteAsync(new("sessions.activate", handle, View: "terminal"), default);
+        await Task.Delay(100);
+        clock.Now = clock.Now.AddMinutes(31);
+        monitor.Finish.SetResult(new SystemSnapshot());
+
+        Assert.True((await reading.WaitAsync(TimeSpan.FromSeconds(5))).Success);
+        var response = await queued.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("control_expired", response.ErrorCode);
+        Assert.Equal(0, activated);
+    }
+
+    [Fact]
+    public async Task ControlExpiryWhileApprovalIsPendingBlocksTheOperation()
+    {
+        var clock = new TestClock { Now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) };
+        var approvalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var answer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new AgentGateway(async (_, _) =>
+        {
+            approvalStarted.SetResult();
+            return await answer.Task;
+        }, clock, TimeSpan.FromMinutes(30));
+        var files = new CountingFiles();
+        var session = new TestSession { FileSystem = files };
+        var handle = gateway.GrantSession("tab", "Demo", session, null, new CountingTerminal(),
+            allowControl: true, target: new AgentSessionTarget(session.SessionId, "server.test", 22, "alice"));
+
+        var pending = gateway.ExecuteAsync(new("files.upload", handle, "/config", LocalPath: @"C:\temp\payload"), default);
+        await approvalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Now = clock.Now.AddMinutes(31);
+        answer.SetResult(true);
+
+        Assert.Equal("control_expired", (await pending.WaitAsync(TimeSpan.FromSeconds(5))).ErrorCode);
+    }
+
+    [Fact]
+    public async Task FilePermissionIsCheckedBeforeHostConfirmation()
+    {
+        var approvals = 0;
+        var gateway = new AgentGateway((_, _) => { approvals++; return Task.FromResult(true); });
+        var files = new CountingFiles();
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null);
+        var local = Path.GetTempFileName();
+        try
+        {
+            Assert.Equal("file_access_required",
+                (await gateway.ExecuteAsync(new("files.read", handle, "/config"), default)).ErrorCode);
+            Assert.Equal("control_required",
+                (await gateway.ExecuteAsync(new("files.upload", handle,
+                    Path: "/config", LocalPath: local), default)).ErrorCode);
+            Assert.Equal(0, approvals);
+        }
+        finally { File.Delete(local); }
+    }
+
+    [Fact]
     public async Task FileReadRequiresExplicitFileReadGrant()
     {
         var gateway = new AgentGateway((_, _) => Task.FromResult(true));
@@ -98,7 +188,7 @@ public sealed class AgentGatewayTests
         var files = new CountingFiles();
         var monitor = new BlockingMonitor();
         var gateway = new AgentGateway((_, _) => { started.TrySetResult(); return answer.Task; });
-        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files, Monitor = monitor }, null);
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files, Monitor = monitor }, null, allowFileRead: true);
         var pending = gateway.ExecuteAsync(new(monitoring ? "monitor.snapshot" : "files.read", handle, "/config"), default);
         await (monitoring ? monitor.Started.Task : started.Task).WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -310,7 +400,7 @@ public sealed class AgentGatewayTests
         AgentFileAccess? requested = null;
         var gateway = new AgentGateway((access, _) => { requested = access; return Task.FromResult(false); });
         var files = new CountingFiles();
-        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null);
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null, allowFileRead: true);
         Assert.Equal("denied", (await gateway.ExecuteAsync(new(method, handle, "/private/config"), default)).ErrorCode);
         Assert.Equal("/private/config", requested!.Path);
         Assert.Equal(method, requested.Operation);
@@ -372,7 +462,7 @@ public sealed class AgentGatewayTests
         var answer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var files = new CountingFiles();
         var gateway = new AgentGateway((_, _) => { started.SetResult(); return answer.Task; });
-        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null);
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = files }, null, allowFileRead: true);
         var pending = gateway.ExecuteAsync(new("files.read", handle, "/config"), default);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var revoking = gateway.RevokeAsync("tab");

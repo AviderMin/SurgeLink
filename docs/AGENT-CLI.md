@@ -50,6 +50,10 @@ A Control grant expires after 30 minutes without Agent control activity (termina
 input, view selection or a file mutation). It then falls back to **Allow files** when
 that was part of the grant, otherwise to read-only terminal/monitor access. Reads
 do not extend the control lease; re-enable Control in the panel to write again.
+Control expiry does not clear a human pause: if the user has taken the terminal,
+reads stay paused until **Resume Agent** is used. Control activity is renewed only
+after the operation passes its authorization checks; a queued or approval-pending
+request that outlives the lease returns `control_expired` instead of executing.
 
 Human typing or sending a terminal key pauses that terminal's Agent operations
 before queuing the human input. The control grant and its handle remain valid,
@@ -403,6 +407,8 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   subsequent operations return user_operating until the user resumes Agent control.
   A file policy decision is re-checked against the pause after it returns, so an
   approval that lands while the user is typing cannot execute behind them.
+  The same rule applies to control expiry: approval is re-checked after it returns,
+  and a permission-denied file operation is rejected before the confirmation dialog.
   Only explicit Stop revokes the grant.
 - New terminal inputs are rate-limited to 60 operations per minute per grant
   (one-minute token bucket). A throttled request returns input_rate_limited before

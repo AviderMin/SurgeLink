@@ -57,6 +57,16 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
             finally { busy.Current = false; setWorking(false); }
         }
 
+        async void Resume(WorkspaceTab tab)
+        {
+            if (busy.Current) return;
+            busy.Current = true;
+            setWorking(true);
+            try { await agent.ResumeFromHumanAsync(tab); }
+            catch (Exception ex) { CrashLog.Write("AgentResume", ex); }
+            finally { busy.Current = false; setWorking(false); }
+        }
+
         async void StopAll()
         {
             try { await agent.StopAllAsync(); }
@@ -115,7 +125,9 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
         Element SessionCard(WorkspaceTab tab)
         {
             var mode = agent.GetMode(tab.Id);
-            var humanOperating = mode == AgentAccessMode.Control && agent.IsHumanOperating(tab.Id);
+            // Human pause outlives the control grant; it stays visible until the
+            // user explicitly resumes, even after control expiry downgraded the mode.
+            var humanOperating = agent.IsHumanOperating(tab.Id);
             var connected = tab.State == ConnectionState.Connected && !tab.IsClosing;
             var canReadFiles = tab.Session.FileSystem is not null;
             var status = humanOperating
@@ -137,21 +149,21 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
                     ? Caption(Str.T("shell.agent.pausedHint", "The Agent receives user_operating and should stop all operations; resume when you finish."))
                         .TextWrapping(TextWrapping.Wrap).Foreground(Theme.SecondaryText)
                     : Empty(),
-                mode == AgentAccessMode.Control
+                mode == AgentAccessMode.Control && !humanOperating
                     ? Caption(Str.T("shell.agent.controlIdle", "Terminal control expires after 30 minutes without Agent input."))
                         .TextWrapping(TextWrapping.Wrap).Foreground(Theme.SecondaryText)
                     : Empty(),
                 Grid(columns: [GridSize.Star(), GridSize.Star()], rows: [GridSize.Auto, GridSize.Auto, GridSize.Auto],
                     Button(Str.T("shell.agent.read", "Allow reading"), () => ChangeAccess(tab, AgentAccessMode.Observe))
-                        .IsEnabled(!working && connected && mode == AgentAccessMode.None)
+                        .IsEnabled(!working && connected && mode != AgentAccessMode.Observe)
                         .AutomationName(Str.T("shell.agent.read", "Allow reading")).AutomationId("AgentRead-" + tab.Id)
                         .HAlign(HorizontalAlignment.Stretch).Margin(0, 0, AppTheme.SpacingXs, 0).Grid(row: 0, column: 0),
                     Button(Str.T("shell.agent.files", "Allow files"), () => ChangeAccess(tab, AgentAccessMode.FileRead))
-                        .IsEnabled(!working && connected && canReadFiles && mode is AgentAccessMode.None or AgentAccessMode.Observe)
+                        .IsEnabled(!working && connected && canReadFiles && mode != AgentAccessMode.FileRead)
                         .AutomationName(Str.T("shell.agent.files", "Allow files")).AutomationId("AgentFiles-" + tab.Id)
                         .HAlign(HorizontalAlignment.Stretch).Grid(row: 0, column: 1),
-                    Button(controlLabel, () => ChangeAccess(tab, AgentAccessMode.Control))
-                        .IsEnabled(!working && connected && tab.Terminal is { IsClosed: false } && (mode != AgentAccessMode.Control || humanOperating))
+                    Button(controlLabel, () => { if (humanOperating) Resume(tab); else ChangeAccess(tab, AgentAccessMode.Control); })
+                        .IsEnabled(!working && connected && (humanOperating || (tab.Terminal is { IsClosed: false } && mode != AgentAccessMode.Control)))
                         .AutomationName(controlLabel).AutomationId("AgentControl-" + tab.Id)
                         .HAlign(HorizontalAlignment.Stretch).Margin(0, AppTheme.SpacingXs, 0, 0).Grid(row: 1, columnSpan: 2),
                     Button(Str.T("shell.agent.stop", "Stop"), () => ChangeAccess(tab, AgentAccessMode.None))

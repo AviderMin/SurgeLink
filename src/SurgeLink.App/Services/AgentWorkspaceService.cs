@@ -162,6 +162,23 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         finally { _accessChanges.Release(); }
     }
 
+    /// <summary>Clears a human pause without changing the grant or its handle.</summary>
+    public async Task ResumeFromHumanAsync(WorkspaceTab tab)
+    {
+        await _accessChanges.WaitAsync();
+        try
+        {
+            lock (_gate)
+            {
+                if (_disposed || !_workspace.Snapshot.Tabs.Contains(tab) || tab.State != ConnectionState.Connected
+                    || tab.IsClosing || tab.IsReopeningTerminal) return;
+            }
+            if (_gateway.ResumeFromHuman(tab.Id.ToString()))
+                Record(tab.Title, "access", "human_resumed");
+        }
+        finally { _accessChanges.Release(); }
+    }
+
     public async Task StopAllAsync()
     {
         lock (_gate) _stopGeneration++;

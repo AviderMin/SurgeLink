@@ -77,7 +77,7 @@ public sealed class DesktopConnectionTests
         var approvalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var gateway = new AgentGateway(async (_, ct) => { approvalStarted.SetResult(); await Task.Delay(Timeout.InfiniteTimeSpan, ct); return true; });
         var session = new AgentGatewayTests.TestSession { FileSystem = new TestFiles() };
-        var handle = gateway.GrantSession("files", "Files", session, null);
+        var handle = gateway.GrantSession("files", "Files", session, null, allowFileRead: true);
         await using var server = new AgentPipeServer(AgentEndpoint.ForProcess(pid), gateway);
         var connection = new DesktopConnection(pid, discoverDesktops: () => [new(pid, null)]);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
