@@ -79,7 +79,7 @@ internal static class MonitorCards
                 ColumnSpacing = AppTheme.SpacingL,
             },
             Component<LineChart, LineChartProps>(new LineChartProps(
-                    [new ChartSeries(Str.T("monitor.chart.seriesCpu", "CPU"), history.CpuHistory)],
+                    new[] { new ChartSeries(Str.T("monitor.chart.seriesCpu", "CPU"), history.CpuHistory) },
                     Height: 64,
                     MaxValue: 100))
                 .AutomationName(Str.T("monitor.card.cpu.history", "CPU history")));
@@ -177,10 +177,11 @@ internal static class MonitorCards
                 ColumnSpacing = AppTheme.SpacingL,
             },
             Component<LineChart, LineChartProps>(new LineChartProps(
-                    [
+                    new[]
+                    {
                         new ChartSeries(Str.T("monitor.chart.seriesDownload", "Download"), history.ReceiveHistory),
                         new ChartSeries(Str.T("monitor.chart.seriesUpload", "Upload"), history.SendHistory),
-                    ],
+                    },
                     Height: 88))
                 .AutomationName(Str.T("monitor.card.network.history", "Network throughput history")),
             Caption(Str.F("monitor.card.network.interfaces", "Interfaces: {0}", interfaces))

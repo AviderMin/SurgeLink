@@ -22,7 +22,7 @@ internal sealed class WindowStoragePicker(Window owner)
         try
         {
             var picker = new FileOpenPicker();
-            foreach (var type in fileTypes ?? ["*"])
+            foreach (var type in fileTypes ?? new[] { "*" })
             {
                 picker.FileTypeFilter.Add(type);
             }

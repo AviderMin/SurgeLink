@@ -22,6 +22,7 @@ SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github
 - SFTP 读取在打开前用单路径 no-follow LSTAT 复核类型；父目录不可列举时回退到 REALPATH 校验。符号链接、FIFO 等特殊文件不再被跟随打开。
 - Agent 文件操作在宿主确认返回后再次检查人工暂停，用户接管终端后不会继续执行文件 IO。
 - 新增真实 OpenSSH 集成测试与 CI job，覆盖覆盖保护、取消、深层目录和符号链接/FIFO 替换等场景。
+- 修复 WinUI 发布构建中的 CsWinRT 集合表达式诊断，使 `-warnaserror` 冷构建保持 0 警告、0 错误。
 - Release 工作流增加仓库/本地化检查与 `-warnaserror` 桌面构建门禁。
 
 **1.0.3.7** 加固远程文件下载与本地发布：

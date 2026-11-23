@@ -113,14 +113,15 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
     }
 
     private static IReadOnlyList<string> Headers() =>
-    [
+    new[]
+    {
         Str.T("monitor.process.pid", "PID"),
         Str.T("monitor.process.user", "User"),
         Str.T("monitor.process.cpu", "CPU"),
         Str.T("monitor.process.mem", "MEM"),
         Str.T("monitor.process.rss", "RSS"),
         Str.T("monitor.process.command", "Command"),
-    ];
+    };
 
     private static Element Row(RemoteProcessInfo process) =>
         (Grid(

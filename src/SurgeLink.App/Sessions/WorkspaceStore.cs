@@ -232,7 +232,7 @@ public sealed class WorkspaceStore
             Update(s => s with
             {
                 Profiles = LoadProfilesFromDisk(),
-                Tabs = [.. s.Tabs, tab],
+                Tabs = s.Tabs.Append(tab).ToArray(),
                 ActiveTabId = tab.Id,
             });
 

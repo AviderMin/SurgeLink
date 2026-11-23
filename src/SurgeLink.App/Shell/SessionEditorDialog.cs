@@ -408,7 +408,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         }
 
         Task<StorageFile?> PickKeyFileAsync() => pickers.PickFileAsync(
-            [".pem", ".key", ".ppk", "*"],
+            new[] { ".pem", ".key", ".ppk", "*" },
             Str.T("shell.editor.useKey", "Use key"));
 
         async void BrowseKey()
