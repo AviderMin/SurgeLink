@@ -160,4 +160,28 @@ public sealed class FileSafetyTests
         using var stream = new MemoryStream(bytes);
         await Assert.ThrowsAsync<DecoderFallbackException>(() => BoundedTextFile.ReadDocumentAsync(stream, 32, CancellationToken.None));
     }
+
+    [Fact]
+    public async Task OpenExistingFileForReadNormalizesUnnormalizedAndExtendedPaths()
+    {
+        using var temp = new TempDirectory();
+        var sub = Path.Combine(temp.Root, "sub");
+        Directory.CreateDirectory(sub);
+        var target = temp.File("payload.txt");
+        await File.WriteAllTextAsync(target, "hello");
+
+        var dotted = Path.Combine(sub, "..", "payload.txt");
+        await using (var s1 = LocalDownloadPath.OpenExistingFileForRead(dotted))
+        using (var r1 = new StreamReader(s1))
+        {
+            Assert.Equal("hello", await r1.ReadToEndAsync());
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            await using var s2 = LocalDownloadPath.OpenExistingFileForRead(@"\\?\" + target);
+            using var r2 = new StreamReader(s2);
+            Assert.Equal("hello", await r2.ReadToEndAsync());
+        }
+    }
 }

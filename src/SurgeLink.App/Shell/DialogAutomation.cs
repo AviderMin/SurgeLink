@@ -39,16 +39,20 @@ internal static class DialogAutomation
 
         Wired.Add(dialog, prefix);
         // Pooled dialogs can recreate their command template after Opened and
-        // its queued callback. Reapply identities when that layout is realized.
-        dialog.LayoutUpdated += (_, _) => TagButtons(dialog, dialog.Tag as string ?? prefix);
+        // its queued callback. Only watch LayoutUpdated while the dialog is open
+        // so closed pooled dialogs do not walk visual trees on every layout pass.
+        EventHandler<object> onLayoutUpdated = (_, _) => TagButtons(dialog, dialog.Tag as string ?? prefix);
         dialog.Opened += (sender, _) =>
         {
+            sender.LayoutUpdated -= onLayoutUpdated;
+            sender.LayoutUpdated += onLayoutUpdated;
             // The command-space buttons can still be absent during the first
             // Opened callback (the template is finishing realization). Tag once
             // immediately and once on the next dispatcher turn, idempotently.
             TagButtons(sender, sender.Tag as string ?? prefix);
             sender.DispatcherQueue?.TryEnqueue(() => TagButtons(sender, sender.Tag as string ?? prefix));
         };
+        dialog.Closed += (sender, _) => sender.LayoutUpdated -= onLayoutUpdated;
     };
 
     private static void TagButtons(ContentDialog dialog, string prefix)

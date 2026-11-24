@@ -12,6 +12,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
+    <SatelliteResourceLanguages>en;en-US;zh-Hans;zh-CN</SatelliteResourceLanguages>
     <ApplicationIcon>Assets\\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 

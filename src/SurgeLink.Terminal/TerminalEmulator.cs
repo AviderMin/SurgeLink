@@ -581,8 +581,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         if (rune.Value is >= 0x1F3FB and <= 0x1F3FF
             || Rune.GetUnicodeCategory(rune) == System.Globalization.UnicodeCategory.SpacingCombiningMark)
         {
-            _screen.AppendCombining(rune.ToString());
-            return;
+            if (_screen.AppendCombining(rune.ToString(), requireSameGrapheme: true)) return;
         }
 
         int width = CharacterWidth.GetWidth(rune);
@@ -901,13 +900,10 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
 
     CellLine IScreenHost.OnLineScrolledOff(CellLine line)
     {
-        if (_screen.IsAlternate)
-        {
-            return line;
-        }
-
+        // Only _primaryScreen invokes OnLineScrolledOff; still record lines pushed off
+        // during a primary-screen resize even when the alternate screen is active.
         CellLine? evicted = _scrollback.Add(line);
-        if (_viewportOffset > 0)
+        if (!_screen.IsAlternate && _viewportOffset > 0)
         {
             // One more line now sits above the live screen, so the absolute
             // position of the viewport start advances by one. Raising the offset
@@ -1373,6 +1369,12 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         _mouseModeMask = 0;
         _sgr.Reset();
         _savedCursor = default;
+        _lastGraphicText = null;
+        _lastGraphicWidth = 0;
+        _g0LineDrawing = false;
+        _g1LineDrawing = false;
+        _shiftOut = false;
+        _joinNextRune = false;
         _screen.ResetScrollRegion();
         _screen.MoveCursorAbsolute(0, 0, false);
         MarkDirty();

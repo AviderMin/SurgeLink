@@ -7,8 +7,10 @@ namespace SurgeLink.App.Services;
 /// <summary>Minimal rolling text logger so users can attach diagnostics to bug reports.</summary>
 public sealed class FileLoggerProvider : ILoggerProvider
 {
+    private const int MaxRetainedDays = 14;
     private readonly string _directory;
     private readonly object _gate = new();
+    private DateOnly _lastPruneDate;
 
     /// <summary>Creates a provider writing one file per day under <paramref name="directory"/>.</summary>
     public FileLoggerProvider(string directory) => _directory = directory;
@@ -26,9 +28,16 @@ public sealed class FileLoggerProvider : ILoggerProvider
         try
         {
             Directory.CreateDirectory(_directory);
-            var path = Path.Combine(_directory, $"surge-{DateTime.Now:yyyyMMdd}.log");
+            var now = DateTime.Now;
+            var today = DateOnly.FromDateTime(now);
+            var path = Path.Combine(_directory, $"surge-{now:yyyyMMdd}.log");
             lock (_gate)
             {
+                if (_lastPruneDate != today)
+                {
+                    _lastPruneDate = today;
+                    PruneOldLogs(today);
+                }
                 File.AppendAllText(path, DiagnosticText.Escape(line) + Environment.NewLine, Encoding.UTF8);
             }
         }
@@ -38,6 +47,20 @@ public sealed class FileLoggerProvider : ILoggerProvider
         }
         catch (UnauthorizedAccessException)
         {
+        }
+    }
+
+    private void PruneOldLogs(DateOnly today)
+    {
+        var cutoff = today.AddDays(-MaxRetainedDays);
+        foreach (var file in Directory.EnumerateFiles(_directory, "surge-*.log"))
+        {
+            var name = Path.GetFileNameWithoutExtension(file);
+            if (name.Length != 14 || !DateOnly.TryParseExact(name.AsSpan(6), "yyyyMMdd", out var fileDate))
+                continue;
+            if (fileDate >= cutoff) continue;
+            try { File.Delete(file); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
     }
 

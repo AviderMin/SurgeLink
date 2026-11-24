@@ -127,7 +127,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
             var shift = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift)
                 & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
-            if (control && args.Key == Windows.System.VirtualKey.F) { OpenSearch(false); }
+            if (control && args.Key == Windows.System.VirtualKey.S) { _ = SaveAsync(); }
+            else if (control && args.Key == Windows.System.VirtualKey.F) { OpenSearch(false); }
             else if (control && args.Key == Windows.System.VirtualKey.H) { OpenSearch(true); }
             else if (args.Key == Windows.System.VirtualKey.F3) { FindMatch(shift); }
             else if (args.Key == Windows.System.VirtualKey.Escape && searchOpen)

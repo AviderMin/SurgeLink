@@ -20,7 +20,8 @@ internal sealed record SidebarProps(
     Action<SessionProfile> Edit,
     Action<SessionProfile> Duplicate,
     Action<SessionProfile> Delete,
-    Action OpenDemo);
+    Action OpenDemo,
+    bool IsVisible = true);
 
 /// <summary>
 /// Saved-session list shown in the navigation pane: debounced search, profiles
@@ -103,7 +104,7 @@ internal sealed class SidebarView : Component<SidebarProps>
                     demoButton.Grid(column: 1)) with { ColumnSpacing = AppTheme.SpacingS }).Grid(row: 1),
                 body.Grid(row: 2),
                 Component<SidebarMonitor, SidebarMonitorProps>(new SidebarMonitorProps(
-                        props.Snapshot.ActiveTab is { State: SurgeLink.Core.Sessions.ConnectionState.Connected } activeTab ? activeTab.Session.Monitor : null,
+                        props.IsVisible && props.Snapshot.ActiveTab is { State: SurgeLink.Core.Sessions.ConnectionState.Connected } activeTab ? activeTab.Session.Monitor : null,
                         props.Snapshot.ActiveTab is not null,
                         props.Snapshot.ActiveTab is { State: SurgeLink.Core.Sessions.ConnectionState.Connected },
                         services.Settings))

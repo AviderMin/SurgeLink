@@ -48,12 +48,17 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
 
     internal static FileStream OpenExistingFileForRead(string path)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
         const int bufferSize = 81920;
+        var fullPath = Path.GetFullPath(path);
         if (!OperatingSystem.IsWindows())
-            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.Asynchronous);
+            return new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.Asynchronous);
 
-        using var parents = Open(Path.GetDirectoryName(path)!, create: false);
-        var handle = CreateFile(@"\\?\" + path, GenericRead, FileShare.Read, 0, FileMode.Open, OpenReparsePoint | Overlapped, 0);
+        var parent = Path.GetDirectoryName(fullPath)
+            ?? throw new IOException("The local upload path must name a file inside a directory.");
+        using var parents = Open(parent, create: false);
+        var nativePath = ToExtendedPath(fullPath);
+        var handle = CreateFile(nativePath, GenericRead, FileShare.Read, 0, FileMode.Open, OpenReparsePoint | Overlapped, 0);
         try
         {
             if (handle.IsInvalid || !GetFileInformationByHandleEx(handle, 9, out var info, 8))
@@ -64,6 +69,11 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
         }
         catch { handle.Dispose(); throw; }
     }
+
+    private static string ToExtendedPath(string path) =>
+        path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path
+        : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..]
+        : @"\\?\" + path;
 
     public void Dispose()
     {

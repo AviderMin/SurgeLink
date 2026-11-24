@@ -166,6 +166,35 @@ public sealed class RemoteMonitorSamplerTests
         await monitor.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task SameIntervalSubscribersWakeImmediatelyAndLockIntoPhase()
+    {
+        var monitor = new ImmediateMonitor();
+        var sampler = RemoteMonitorSampler.For(monitor);
+        var sidebarFirst = new TaskCompletionSource<MonitorSample>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sidebarSecond = new TaskCompletionSource<MonitorSample>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var dashboardFirst = new TaskCompletionSource<MonitorSample>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sidebarCount = 0;
+
+        using var sidebar = sampler.Subscribe(TimeSpan.FromSeconds(2), false, sample =>
+        {
+            if (Interlocked.Increment(ref sidebarCount) == 1) sidebarFirst.TrySetResult(sample);
+            else sidebarSecond.TrySetResult(sample);
+        });
+        await sidebarFirst.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(250);
+
+        var started = Stopwatch.GetTimestamp();
+        using var dashboard = sampler.Subscribe(TimeSpan.FromSeconds(2), true, sample => dashboardFirst.TrySetResult(sample));
+        var dashSample = await dashboardFirst.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var sideSample = await sidebarSecond.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        // New subscriber wakes the sampler immediately instead of waiting up to 1s,
+        // and the existing same-cadence subscriber locks into phase on the same sample.
+        Assert.True(Stopwatch.GetElapsedTime(started) < TimeSpan.FromMilliseconds(900));
+        Assert.Same(dashSample.Snapshot, sideSample.Snapshot);
+    }
+
     private sealed class FakeMonitor : IRemoteSystemMonitor
     {
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

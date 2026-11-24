@@ -7,7 +7,7 @@ namespace SurgeLink.Terminal.Tests;
 /// graphics, SGR underline styles, private-CSI guarding, invalid UTF-8 inside a
 /// CSI and CRLF normalisation on paste.
 /// </summary>
-public sealed class P0TerminalRegressionTests
+public sealed class TerminalRegressionTests
 {
     [Fact]
     public void RepeatPrecedingCharacterRepeatsTheLastGraphic()
@@ -244,5 +244,51 @@ public sealed class P0TerminalRegressionTests
         terminal.Emulator.Resize(10, 3);
         Assert.Equal(3, terminal.Rows);
         Assert.Equal(0, terminal.Emulator.ScrollbackLength);
+    }
+
+    [Fact]
+    public void ShrinkingWhileInAlternateScreenPreservesPrimaryScrollback()
+    {
+        var terminal = new TestTerminal(10, 6);
+        terminal.Feed("ROW1\r\nROW2\r\nROW3\r\nROW4\r\nROW5\r\nROW6");
+        terminal.Feed("\u001b[?1049hALT");
+
+        terminal.Emulator.Resize(10, 3);
+        terminal.Feed("\u001b[?1049l");
+
+        Assert.Equal(3, terminal.Emulator.ScrollbackLength);
+        Assert.Equal("ROW4", terminal.Line(0));
+        Assert.Equal("ROW5", terminal.Line(1));
+        Assert.Equal("ROW6", terminal.Line(2));
+        terminal.Emulator.ScrollViewport(3);
+        Assert.Equal("ROW1", terminal.Line(0));
+        Assert.Equal("ROW2", terminal.Line(1));
+        Assert.Equal("ROW3", terminal.Line(2));
+    }
+
+    [Fact]
+    public void SoftResetClearsLineDrawingAndRepeatState()
+    {
+        var terminal = new TestTerminal(20, 3);
+        terminal.Feed("\u001b(0\u001b)0\u000Eq");
+        Assert.Equal("─", terminal.Line(0));
+
+        // CSI ! p (DECSTR) must reset G0/G1 line drawing, SO/SI, and REP state.
+        terminal.Feed("\u001b[!p\u001b[2J\u001b[3bq");
+        Assert.Equal("q", terminal.Line(0));
+    }
+
+    [Fact]
+    public void SkinToneModifierCombinesWithEmojiAndNeverDropsAtColumnZero()
+    {
+        var emoji = new TestTerminal(10, 2);
+        emoji.Feed("👍\U0001F3FD");
+        Assert.Equal("👍\U0001F3FD", emoji.Cell(0, 0).Text);
+        Assert.Equal(2, emoji.Cursor.Column);
+
+        var atStart = new TestTerminal(10, 2);
+        atStart.Feed("\U0001F3FD");
+        Assert.Equal("\U0001F3FD", atStart.Cell(0, 0).Text);
+        Assert.True(atStart.Cursor.Column > 0);
     }
 }

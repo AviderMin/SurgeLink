@@ -332,7 +332,8 @@ internal sealed class MainShell : Component
             profile => OpenEditor(SessionEditorMode.Edit, profile),
             profile => OpenEditor(SessionEditorMode.Duplicate, profile),
             DeleteProfile,
-            OpenDemo));
+            OpenDemo,
+            paneOpen));
 
         // Content -------------------------------------------------------------
         var workspaceSurface = WorkspaceView.Render(new WorkspaceProps(
