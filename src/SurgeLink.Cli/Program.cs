@@ -135,6 +135,10 @@ static int? EnvironmentInstance() =>
 
 static string? FindMcpHost()
 {
+    // Installers place the MCP host beside the CLI so both share the desktop's
+    // single .NET runtime. Older layouts kept it in a sibling "agent" folder.
+    var merged = Path.Combine(AppContext.BaseDirectory, "surgelink-agent-host.exe");
+    if (File.Exists(merged)) return merged;
     var installed = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "agent", "surgelink-agent-host.exe"));
     if (File.Exists(installed)) return installed;
     for (var root = new DirectoryInfo(AppContext.BaseDirectory); root is not null; root = root.Parent)

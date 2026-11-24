@@ -57,7 +57,7 @@ public static class ZhShell
         ["shell.agent.instructions.send"] = "4. 在共享终端执行命令时，使用 terminal send，携带 --text、--submit、--revision（data.screen.inputRevision）、--check-token（data.checkToken）及全新的 --operation-id。将下面所有占位符替换为真实值；PowerShell 单引号参数中的单引号需要写成两个单引号。每个核对令牌有效期为两分钟且只能使用一次。单独发送按键时，使用 terminal key 和 --key，替代 --text/--submit。其他读取及视图操作请遵循 CLI 帮助：",
         ["shell.agent.instructions.observe"] = "5. input_sent 仅表示输入已发送，不代表命令完成或成功。保留输入前核对结果中的 data.screen.outputCursor，使用以下命令从该位置读取增量输出。data.hasMore=true 时使用返回的 data.cursor 继续读取；data.gap=true 时检查当前屏幕，并考虑输出缺失。观察并验证实际结果后才能报告完成。任何后续输入前都要重新执行第 3 步：",
         ["shell.agent.instructions.wait"] = "如果命令会产生一段时间的输出，可在发送后使用 terminal wait（从输入前的 outputCursor 开始）。它在输出安静达到指定时间后返回；这只是一种观察，不代表命令已完成，也不提供退出码：",
-        ["shell.agent.instructions.failures"] = "6. 传输请求结果不确定时，只能使用完全相同的操作 ID 和参数重试。出现 input_outcome_unknown 时，先观察终端再决定下一步，不要换新 ID 重发。人工终端输入会暂停 Agent 操作并返回 user_operating；收到 user_operating 后立即停止所有操作，不要重试、不要重新获取会话，等待我交还控制权。如果你没有本地命令执行工具、本地访问限制阻止调用可执行文件，或连接失败，请说明实际阻碍，不要声称已连接或已完成。SurgeLink 必须保持运行；重启后需请我重新复制接入指令（桌面进程可能已有新的 PID）。",
+        ["shell.agent.instructions.failures"] = "6. 传输请求结果不确定时，只能使用完全相同的操作 ID 和参数重试。出现 input_outcome_unknown 时，先观察终端再决定下一步，不要换新 ID 重发。人工终端输入会暂停 Agent 操作并返回 user_operating；收到 user_operating 后立即停止所有操作，不要重试、不要重新获取会话，等待我交还控制权。如果你没有本地命令执行工具、本地访问限制阻止调用可执行文件，或连接失败，请说明实际阻碍，不要声称已连接或已完成。SurgeLink 必须保持运行；重启后需请我重新复制接入指令（桌面进程可能已有新的 PID），并请我重新授权会话，因为原有句柄已失效。",
         ["shell.agent.instructions.task"] = "我的需求：",
         ["shell.agent.copied"] = "已复制",
         ["shell.agent.copyFailed"] = "无法访问剪贴板。",

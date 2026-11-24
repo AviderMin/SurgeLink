@@ -39,11 +39,65 @@ public sealed class CliProcessTests
         Assert.Equal(1, terminal.Writes);
     }
 
+    [Fact]
+    public async Task DoctorFindsTheMcpHostBesideTheCli()
+    {
+        // Installers merge the CLI and the MCP host into one folder so they share the
+        // desktop's single .NET runtime. Resolving only the legacy sibling "agent"
+        // folder made doctor report mcpHostExists=false on every real install.
+        var directory = Path.Combine(Path.GetTempPath(), "surge-doctor-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            // Copy the whole CLI build output and start it through the shared host:
+            // the apphost executable needs native host DLLs that are not copied.
+            var assembly = typeof(CliArguments).Assembly.Location;
+            var source = Path.GetDirectoryName(assembly)!;
+            foreach (var file in Directory.GetFiles(source))
+            {
+                File.Copy(file, Path.Combine(directory, Path.GetFileName(file)));
+            }
+            var host = Path.Combine(directory, "surgelink-agent-host.exe");
+            File.WriteAllBytes(host, Array.Empty<byte>());
+
+            var result = await RunAsyncFrom(directory, Path.GetFileName(assembly), "doctor", "--json");
+            Assert.Equal(0, result.ExitCode);
+            using var output = JsonDocument.Parse(result.Output);
+            var data = output.RootElement.GetProperty("data");
+            Assert.True(data.GetProperty("mcpHostExists").GetBoolean());
+            Assert.Equal(host, data.GetProperty("mcpHostPath").GetString());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static async Task<(int ExitCode, string Output)> RunAsync(params string[] arguments)
     {
         var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         start.ArgumentList.Add(typeof(CliArguments).Assembly.Location);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        return await RunProcessAsync(start);
+    }
+
+    /// <summary>Runs a CLI assembly copied elsewhere, resolving it through the shared host.</summary>
+    private static Task<(int ExitCode, string Output)> RunAsyncFrom(string workingDirectory, string assemblyName, params string[] arguments)
+    {
+        var start = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = workingDirectory,
+        };
+        start.ArgumentList.Add(assemblyName);
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        return RunProcessAsync(start);
+    }
+
+    private static async Task<(int ExitCode, string Output)> RunProcessAsync(ProcessStartInfo start)
+    {
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync();
         var errors = process.StandardError.ReadToEndAsync();

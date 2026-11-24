@@ -594,8 +594,8 @@ public sealed partial class AgentGateway
         if (!File.Exists(localPath)) return AgentResponse.Error("local_file_not_found", "The local upload file does not exist.");
         try
         {
-            await using var source = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous);
-            if ((File.GetAttributes(localPath) & FileAttributes.ReparsePoint) != 0)
+            await using var source = LocalDownloadPath.OpenExistingFileForRead(localPath);
+            if (!OperatingSystem.IsWindows() && (File.GetAttributes(localPath) & FileAttributes.ReparsePoint) != 0)
                 return AgentResponse.Error("invalid_path", "Symbolic links and junctions are not allowed for local Agent uploads.");
             var length = source.Length;
             await RemoteFileWrite.WriteAsync(files, request.Path, length, null, request.Overwrite,

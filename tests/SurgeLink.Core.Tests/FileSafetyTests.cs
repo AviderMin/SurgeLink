@@ -21,6 +21,55 @@ public sealed class FileSafetyTests
         Assert.Equal("download", File.ReadAllText(temp.PathOf("moved", "child", "payload.txt")));
     }
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UploadSourceOpensExistingFilesWithoutCreatingDirectories(bool exists)
+    {
+        using var temp = new TempDirectory();
+        var directory = temp.PathOf("source");
+        var source = Path.Combine(directory, "payload.txt");
+        if (!exists)
+        {
+            Assert.ThrowsAny<IOException>(() => LocalDownloadPath.OpenExistingFileForRead(source));
+            Assert.False(Directory.Exists(directory));
+            return;
+        }
+
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(source, "upload");
+        await using var stream = LocalDownloadPath.OpenExistingFileForRead(source);
+        Assert.True(stream.IsAsync);
+        using var reader = new StreamReader(stream);
+        Assert.Equal("upload", await reader.ReadToEndAsync());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WindowsUploadSourceRejectsReparsePoints(bool linkToDirectory)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var temp = new TempDirectory();
+        var realDirectory = temp.PathOf("real");
+        var link = temp.PathOf("link");
+        Directory.CreateDirectory(realDirectory);
+        var realFile = Path.Combine(realDirectory, "payload.txt");
+        File.WriteAllText(realFile, "upload");
+        try
+        {
+            if (linkToDirectory) Directory.CreateSymbolicLink(link, realDirectory);
+            else File.CreateSymbolicLink(link, realFile);
+        }
+        catch (IOException ex) when ((ex.HResult & 0xFFFF) == 1314)
+        {
+            return; // This Windows account cannot create symbolic links.
+        }
+
+        var source = linkToDirectory ? Path.Combine(link, "payload.txt") : link;
+        Assert.Throws<IOException>(() => LocalDownloadPath.OpenExistingFileForRead(source));
+    }
+
+    [Theory]
     [InlineData("..\\outside.txt")]
     [InlineData("C:\\outside.txt")]
     [InlineData("/etc/file")]

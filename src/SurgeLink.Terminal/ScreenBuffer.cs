@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace SurgeLink.Terminal;
 
 /// <summary>Services a <see cref="ScreenBuffer"/> needs from its owner.</summary>
@@ -388,14 +390,14 @@ internal sealed class ScreenBuffer
     }
 
     /// <summary>Appends a zero width combining mark to the preceding cell.</summary>
-    public void AppendCombining(string mark)
+    public bool AppendCombining(string mark, bool requireSameGrapheme = false)
     {
         int column = _cursorColumn;
         if (!_pendingWrap)
         {
             if (column == 0)
             {
-                return;
+                return false;
             }
 
             column--;
@@ -410,9 +412,12 @@ internal sealed class ScreenBuffer
 
         ref TerminalCell cell = ref cells[column];
         string text = string.IsNullOrEmpty(cell.Text) ? " " : cell.Text;
-        if (text.Length > MaximumCellTextLength - mark.Length) return;
-        cell = cell.WithText(string.Concat(text, mark));
+        if (text.Length > MaximumCellTextLength - mark.Length) return false;
+        string combined = string.Concat(text, mark);
+        if (requireSameGrapheme && StringInfo.GetNextTextElementLength(combined) != combined.Length) return false;
+        cell = cell.WithText(combined);
         _host.OnScreenChanged();
+        return true;
     }
 
     /// <summary>Erase in display: 0 to end, 1 to start, 2/3 whole screen.</summary>
@@ -679,7 +684,7 @@ internal sealed class ScreenBuffer
                     break;
                 }
             }
-            scrollOff = Math.Clamp(lastNonBlank - (rows - 1), 0, _rows - rows);
+            scrollOff = Math.Clamp(lastNonBlank - (rows - 1), 0, Math.Min(_rows - rows, _cursorRow));
             for (int i = 0; i < scrollOff; i++)
             {
                 CellLine scrolled = _lines[i];

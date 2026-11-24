@@ -10,12 +10,31 @@ $ErrorActionPreference = 'Stop'
 $parsedVersion = [version]$Version
 $packageVersion = if ($parsedVersion.Revision -lt 0) { "$Version.0" } else { $Version }
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$outputRoot = Join-Path $repoRoot 'artifacts/appx'
-if ($Architecture -ne 'x64') { $outputRoot = Join-Path $outputRoot $Architecture }
+$appxRoot = Join-Path $repoRoot 'artifacts/appx'
+$outputRoot = if ($Architecture -eq 'x64') { $appxRoot } else { Join-Path $appxRoot $Architecture }
 $payload = Join-Path $outputRoot 'payload'
-$null = New-Item -ItemType Directory -Force -Path $outputRoot
 
 if (!$SkipPublish) {
+    # Reusing a merged payload makes an old companion DLL look like a current publish conflict.
+    $publishRoot = [IO.Path]::GetFullPath($outputRoot)
+    foreach ($directory in @((Join-Path $repoRoot 'artifacts'), $appxRoot, $outputRoot) | Select-Object -Unique) {
+        $item = Get-Item -LiteralPath $directory -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "APPX output directory must not be a reparse point: $directory"
+        }
+    }
+    $null = New-Item -ItemType Directory -Force -Path $outputRoot
+    foreach ($name in @('payload', 'staging-CLI', 'staging-MCP-host')) {
+        $previous = [IO.Path]::GetFullPath((Join-Path $publishRoot $name))
+        if ((Split-Path -Parent $previous) -ne $publishRoot) { throw "Unexpected APPX publish directory: $previous" }
+        $item = Get-Item -LiteralPath $previous -Force -ErrorAction SilentlyContinue
+        if (!$item) { continue }
+        if (!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Invalid APPX publish directory: $previous"
+        }
+        Remove-Item -LiteralPath $previous -Recurse -Force
+    }
+
     & (Join-Path $PSScriptRoot 'make-icon.ps1')
     & dotnet publish (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') `
         -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `

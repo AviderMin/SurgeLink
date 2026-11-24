@@ -4,12 +4,15 @@ using Microsoft.Win32.SafeHandles;
 
 namespace SurgeLink.Core.Files;
 
-/// <summary>Pins Windows destination ancestors without following reparse points while a download is written and published.</summary>
+/// <summary>Pins Windows directory ancestors without following reparse points.</summary>
 internal sealed partial class LocalDownloadDirectory : IDisposable
 {
+    private const uint OpenReparsePoint = 0x00200000;
+    private const uint Overlapped = 0x40000000;
+    private const uint GenericRead = 0x80000000;
     private readonly List<SafeFileHandle> _directories = [];
 
-    internal static IDisposable Open(string path)
+    internal static IDisposable Open(string path, bool create = true)
     {
         var lease = new LocalDownloadDirectory();
         try
@@ -20,7 +23,7 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
             while (chain.TryPop(out var directory))
             {
                 // Each parent is already pinned before creating or opening its child.
-                Directory.CreateDirectory(directory);
+                if (create) Directory.CreateDirectory(directory);
                 if (!OperatingSystem.IsWindows())
                 {
                     if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
@@ -41,6 +44,25 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
             return lease;
         }
         catch { lease.Dispose(); throw; }
+    }
+
+    internal static FileStream OpenExistingFileForRead(string path)
+    {
+        const int bufferSize = 81920;
+        if (!OperatingSystem.IsWindows())
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.Asynchronous);
+
+        using var parents = Open(Path.GetDirectoryName(path)!, create: false);
+        var handle = CreateFile(@"\\?\" + path, GenericRead, FileShare.Read, 0, FileMode.Open, OpenReparsePoint | Overlapped, 0);
+        try
+        {
+            if (handle.IsInvalid || !GetFileInformationByHandleEx(handle, 9, out var info, 8))
+                throw new IOException("Cannot open the local upload file.", new Win32Exception(Marshal.GetLastPInvokeError()));
+            if (((FileAttributes)info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                throw new IOException("The local upload source must be a regular file.");
+            return new FileStream(handle, FileAccess.Read, bufferSize, isAsync: true);
+        }
+        catch { handle.Dispose(); throw; }
     }
 
     public void Dispose()

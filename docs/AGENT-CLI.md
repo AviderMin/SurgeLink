@@ -249,7 +249,7 @@ desktop discovery, with no PID or workspace-specific working directory:
 {
   "mcpServers": {
     "surgelink": {
-      "command": "C:\\Users\\<user>\\AppData\\Local\\Programs\\SurgeLink\\agent\\surgelink-agent-host.exe",
+      "command": "C:\\Users\\<user>\\AppData\\Local\\Programs\\SurgeLink\\surgelink-agent-host.exe",
       "args": []
     }
   }
@@ -262,6 +262,10 @@ path stays the same. Reconnect MCP after restarting the desktop so the client
 launches a fresh Host. The Host resolves the running desktop again on each operation.
 Session grants and handles still expire on restart: share the desired sessions
 again and call `list_sessions` to obtain current handles.
+
+Starting with 1.0.3.12, the bundled MCP Host lives next to `SurgeLink.exe`.
+After upgrading from a version with an `agent` subfolder, copy the current
+configuration from the Agent panel and update the existing `surgelink` entry.
 
 The bundled helpers follow desktop lifetime. A Host bound with `--instance` or
 `select_desktop` exits when that exact desktop process exits, including when the

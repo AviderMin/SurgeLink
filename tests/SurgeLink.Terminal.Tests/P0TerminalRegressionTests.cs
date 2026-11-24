@@ -196,6 +196,45 @@ public sealed class P0TerminalRegressionTests
     }
 
     [Fact]
+    public void ShrinkingRowsKeepsTheCursorOnItsOriginalContent()
+    {
+        var terminal = new TestTerminal(10, 4);
+        terminal.Feed("TOP\r\nROW2\r\nROW3\r\nBOTTOM\u001b[1;1H");
+
+        terminal.Emulator.Resize(10, 2);
+        terminal.Feed("X");
+
+        Assert.Equal("XOP", terminal.Line(0));
+        Assert.Equal("ROW2", terminal.Line(1));
+    }
+
+    [Theory]
+    [InlineData("\u200D", "中", 2)]
+    [InlineData("A\u200D", "中", 3)]
+    [InlineData("👩\u200D", "💻", 2)]
+    public void JoinerOnlyCombinesRunesWithinTheSameGrapheme(string prefix, string next, int column)
+    {
+        var terminal = new TestTerminal(10, 2);
+        terminal.Feed(prefix);
+        terminal.Feed(next);
+
+        Assert.Equal(column, terminal.Cursor.Column);
+        Assert.Equal(prefix == "\u200D" ? next : prefix + next, terminal.Line(0));
+    }
+
+    [Theory]
+    [InlineData("?", 0x3F)]
+    [InlineData("_", 0x5F)]
+    [InlineData("Ctrl+?", 0x7F)]
+    [InlineData("Ctrl+/", 0x1F)]
+    public void NamedPunctuationEncodesTheRequestedKey(string key, byte expected)
+    {
+        var chord = TerminalKeyChord.Parse(key);
+        Assert.Equal(new byte[] { expected }, TerminalInputEncoder.EncodeKey(
+            chord.VirtualKey, chord.Control, chord.Alt, chord.Shift, TerminalModes.Default));
+    }
+
+    [Fact]
     public void AlternateScreenShrinkDoesNotPushRowsIntoScrollback()
     {
         var terminal = new TestTerminal(10, 6);

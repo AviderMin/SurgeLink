@@ -24,6 +24,7 @@ public sealed record TerminalKeyChord(int VirtualKey, bool Control, bool Alt, bo
             _ when name.StartsWith('F') && int.TryParse(name.AsSpan(1), out var f) && f is >= 1 and <= 12 => 0x6F + f,
             _ => throw new ArgumentException("Unknown terminal key.", nameof(key)),
         };
-        return new(code, modifiers.Contains("CTRL"), modifiers.Contains("ALT"), modifiers.Contains("SHIFT"));
+        return new(code, modifiers.Contains("CTRL"), modifiers.Contains("ALT"),
+            modifiers.Contains("SHIFT") || name is "_" or "?");
     }
 }

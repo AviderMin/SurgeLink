@@ -568,16 +568,14 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
 
         if (rune.Value == 0x200D)
         {
-            _screen.AppendCombining(rune.ToString());
-            _joinNextRune = true;
+            _joinNextRune = _screen.AppendCombining(rune.ToString());
             return;
         }
 
         if (_joinNextRune)
         {
             _joinNextRune = false;
-            _screen.AppendCombining(rune.ToString());
-            return;
+            if (_screen.AppendCombining(rune.ToString(), requireSameGrapheme: true)) return;
         }
 
         if (rune.Value is >= 0x1F3FB and <= 0x1F3FF
