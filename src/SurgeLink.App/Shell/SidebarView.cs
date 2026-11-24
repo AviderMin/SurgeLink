@@ -84,17 +84,6 @@ internal sealed class SidebarView : Component<SidebarProps>
             .AccessKey("D")
             .AutomationId("OpenDemoButton");
 
-        var importLabel = Str.T("shell.sidebar.importSshConfig", "Import SSH config");
-        var importButton = Button(Icon(FontIcon("\uE8B5", fontSize: 14)), () =>
-            {
-                try { services.Workspace.ImportSshConfig(); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-            })
-            .SubtleButton()
-            .ToolTip(Str.T("shell.sidebar.importSshConfigTooltip", "Import sessions from ~/.ssh/config"))
-            .AutomationName(importLabel)
-            .AutomationId("ImportSshConfigButton");
-
         var filtered = props.Snapshot.FilteredProfiles;
         Element body = filtered.Count > 0
             ? ScrollView(VStack(AppTheme.SpacingXs, BuildGroups(props, filtered).ToArray()))
@@ -109,11 +98,10 @@ internal sealed class SidebarView : Component<SidebarProps>
                 rows: [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto],
                 searchBox.Grid(row: 0),
                 (Grid(
-                    columns: [GridSize.Star(), GridSize.Auto, GridSize.Auto],
+                    columns: [GridSize.Star(), GridSize.Auto],
                     rows: [GridSize.Auto],
                     newSessionButton.Grid(column: 0),
-                    importButton.Grid(column: 1),
-                    demoButton.Grid(column: 2)) with { ColumnSpacing = AppTheme.SpacingS }).Grid(row: 1),
+                    demoButton.Grid(column: 1)) with { ColumnSpacing = AppTheme.SpacingS }).Grid(row: 1),
                 body.Grid(row: 2),
                 Component<SidebarMonitor, SidebarMonitorProps>(new SidebarMonitorProps(
                         props.IsVisible && props.Snapshot.ActiveTab is { State: SurgeLink.Core.Sessions.ConnectionState.Connected } activeTab ? activeTab.Session.Monitor : null,

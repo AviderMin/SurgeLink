@@ -350,6 +350,10 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             }
             fields.Add(connection.WithKey("connection"));
             if (devicePicker is not null) fields.Add(devicePicker.WithKey("devices"));
+            if (!localDevice) fields.Add(SessionEditorLayout.Section(
+                Str.T("shell.editor.section.authentication", "Authentication"),
+                Str.T("shell.editor.section.authenticationHint", "Choose how to sign in to this server."),
+                authentication.ToArray()).WithKey("authentication"));
             if (protocol is { ConnectionOptions.Count: > 0 })
             {
                 fields.Add(SessionEditorLayout.Section(
@@ -362,10 +366,6 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                             setProtocolOptions(next);
                         }))).WithKey("options"));
             }
-            if (!localDevice) fields.Add(SessionEditorLayout.Section(
-                Str.T("shell.editor.section.authentication", "Authentication"),
-                Str.T("shell.editor.section.authenticationHint", "Choose how to sign in to this server."),
-                authentication.ToArray()).WithKey("authentication"));
             fields.Add(organization.WithKey("organization"));
 
             return fields.ToArray();

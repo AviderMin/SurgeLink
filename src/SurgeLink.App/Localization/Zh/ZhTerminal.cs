@@ -22,6 +22,7 @@ public static class ZhTerminal
         ["terminal.find.positionCapped"] = "第 {0} 个，前 {1} 个匹配",
         ["terminal.copy"] = "复制",
         ["terminal.paste"] = "粘贴",
+        ["terminal.remoteClipboard"] = "允许此 Shell 写入剪贴板",
         ["terminal.selectAll"] = "全选",
         ["terminal.clear"] = "清屏",
         ["terminal.zoomIn"] = "放大字号",

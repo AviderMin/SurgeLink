@@ -40,6 +40,9 @@ public sealed class SshProtocolOptions
     /// <summary>Option key specifying an SSH bastion / jump host (<c>[user@]host[:port]</c>).</summary>
     public const string ProxyJumpKey = "proxyJump";
 
+    /// <summary>Option key for the jump host's independent private key path.</summary>
+    public const string ProxyJumpPrivateKeyKey = "proxyJumpPrivateKey";
+
     /// <summary>Option key specifying semicolon-delimited port forwards (<c>L:</c>, <c>R:</c>, <c>D:</c>).</summary>
     public const string PortForwardsKey = "portForwards";
 

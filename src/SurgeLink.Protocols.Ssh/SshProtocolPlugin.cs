@@ -3,6 +3,7 @@ using Renci.SshNet;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Sessions;
 using SurgeLink.Protocols.Ssh.Internal;
+using CoreAuthenticationMethod = SurgeLink.Core.Protocols.AuthenticationMethod;
 
 namespace SurgeLink.Protocols.Ssh;
 
@@ -40,6 +41,7 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
             Maximum = 300,
         },
         new(SshProtocolOptions.ProxyJumpKey, "Jump host (user@host:port)", string.Empty),
+        new(SshProtocolOptions.ProxyJumpPrivateKeyKey, "Jump host private key (optional)", string.Empty),
         new(SshProtocolOptions.PortForwardsKey, "Port forwards (L/R/D, semicolon separated)", string.Empty),
     ];
 
@@ -194,13 +196,14 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
         SshConnectBudget timeout,
         CancellationToken cancellationToken)
     {
-        var jump = SshJumpTarget.Parse(targetOptions.ProxyJump!, targetRequest.Username);
-        var jumpRequest = targetRequest with
+        ConnectionRequest jumpRequest;
+        timeout.Pause();
+        try
         {
-            Host = jump.Host,
-            Port = jump.Port,
-            Username = jump.Username,
-        };
+            jumpRequest = await CreateJumpRequestAsync(targetRequest, targetOptions.ProxyJump!, context.InteractivePrompt,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally { timeout.Resume(); }
         var jumpFactory = new SshConnectionFactory(jumpRequest, targetOptions, context, logger);
         var jumpInfo = jumpFactory.CreateConnectionInfo(timeout.Token, timeout);
         var jumpVerifier = jumpFactory.CreateVerifier(timeout.Token, timeout);
@@ -236,6 +239,44 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
             if (ex is ProtocolException) throw;
             throw SshErrorMapper.Map(ex, $"connect to jump host {jumpFactory.Endpoint}");
         }
+    }
+
+    internal static async Task<ConnectionRequest> CreateJumpRequestAsync(
+        ConnectionRequest target, string proxyJump,
+        Func<InteractivePrompt, CancellationToken, Task<string?>>? prompt, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var jump = SshJumpTarget.Parse(proxyJump, target.Username);
+        var keyPath = target.GetOption(SshProtocolOptions.ProxyJumpPrivateKeyKey, string.Empty).Trim();
+        var useKey = keyPath.Length > 0;
+        if (prompt is null && !useKey)
+            throw new ProtocolException("ProxyJump requires an interactive prompt for the jump host password.", ProtocolFailureKind.Configuration);
+
+        string? secret = null;
+        if (prompt is not null)
+        {
+            var endpoint = $"{jump.Username}@{jump.Host}:{jump.Port}";
+            var question = useKey
+                ? $"Private key passphrase for SSH jump host {endpoint} (leave blank if unencrypted)."
+                : $"Password for SSH jump host {endpoint}.";
+            secret = await prompt(new InteractivePrompt(string.Empty, question, true, 0, 1), cancellationToken)
+                .WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (secret is null)
+                throw new ProtocolException("Jump host authentication was cancelled.", ProtocolFailureKind.Cancelled);
+        }
+
+        return new ConnectionRequest
+        {
+            Host = jump.Host,
+            Port = jump.Port,
+            Username = jump.Username,
+            Authentication = useKey ? CoreAuthenticationMethod.PublicKey : CoreAuthenticationMethod.Password,
+            Password = useKey ? null : secret,
+            PrivateKeyPath = useKey ? keyPath : null,
+            PrivateKeyPassphrase = useKey ? secret : null,
+            ConnectTimeout = target.ConnectTimeout,
+            KeepAliveInterval = target.KeepAliveInterval,
+        };
     }
 
     private static void DisposeJump(ForwardedPortLocal? tunnel, SshClient? client)

@@ -41,6 +41,7 @@ internal sealed class AnsiParser
     private int _intermediateCount;
     private int _oscLength;
     private bool _oscEscape;
+    private bool _oscOverflow;
     private bool _stringEscape;
 
     public AnsiParser(TerminalEmulator terminal) => _terminal = terminal;
@@ -53,6 +54,7 @@ internal sealed class AnsiParser
         ResetSequence();
         _oscLength = 0;
         _oscEscape = false;
+        _oscOverflow = false;
         _stringEscape = false;
     }
 
@@ -169,6 +171,7 @@ internal sealed class AnsiParser
                     ResetSequence();
                     _oscLength = 0;
                     _oscEscape = false;
+                    _oscOverflow = false;
                     _state = ParserState.Osc;
                     return;
                 case (byte)'P':
@@ -296,7 +299,7 @@ internal sealed class AnsiParser
             // and hand the byte to the normal escape handling: an OSC followed by
             // ESC [ is a new CSI, not more title text. Otherwise the following
             // control sequence and plain text would be swallowed until a BEL/ST.
-            FinishOsc();
+            FinishOsc(terminated: false);
             FeedEscape(value);
             return;
         }
@@ -325,17 +328,23 @@ internal sealed class AnsiParser
         {
             _oscBytes[_oscLength++] = value;
         }
+        else
+        {
+            _oscOverflow = true;
+        }
     }
 
-    private void FinishOsc()
+    private void FinishOsc(bool terminated = true)
     {
         int length = _oscLength;
+        bool complete = terminated && !_oscOverflow;
         _state = ParserState.Ground;
         _oscLength = 0;
         _oscEscape = false;
+        _oscOverflow = false;
         if (length > 0)
         {
-            _terminal.HandleOsc(_oscBytes.AsSpan(0, length));
+            _terminal.HandleOsc(_oscBytes.AsSpan(0, length), complete);
         }
     }
 

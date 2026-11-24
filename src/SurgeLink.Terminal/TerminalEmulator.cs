@@ -224,30 +224,51 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             BeginBatch();
             try
             {
-                _parser.Reset();
                 _primaryScreen.Reset();
                 _alternateScreen.Reset();
-                _screen = _primaryScreen;
-                _sgr.Reset();
-                _savedCursor = default;
-                _alternateSavedCursor = default;
-                _mouseModeMask = 0;
-                _modes = TerminalModes.Default;
-                _viewportOffset = 0;
-                _lastGraphicText = null;
-                _lastGraphicWidth = 0;
-                _g0LineDrawing = false;
-                _g1LineDrawing = false;
-                _shiftOut = false;
-                _joinNextRune = false;
-                _activeHyperlink = null;
-                MarkDirty();
+                ResetSessionState();
             }
             finally
             {
                 EndBatch();
             }
         }
+    }
+
+    /// <summary>Starts a clean shell while retaining primary-screen content and scrollback.</summary>
+    public void ResetForNewShell()
+    {
+        lock (_sync)
+        {
+            BeginBatch();
+            try
+            {
+                _primaryScreen.ResetShellState();
+                _alternateScreen.Reset();
+                ResetSessionState();
+            }
+            finally { EndBatch(); }
+        }
+    }
+
+    private void ResetSessionState()
+    {
+        _parser.Reset();
+        _screen = _primaryScreen;
+        _sgr.Reset();
+        _savedCursor = default;
+        _alternateSavedCursor = default;
+        _mouseModeMask = 0;
+        _modes = TerminalModes.Default;
+        _viewportOffset = 0;
+        _lastGraphicText = null;
+        _lastGraphicWidth = 0;
+        _g0LineDrawing = false;
+        _g1LineDrawing = false;
+        _shiftOut = false;
+        _joinNextRune = false;
+        _activeHyperlink = null;
+        MarkDirty();
     }
 
     /// <summary>
@@ -910,7 +931,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     }
 
     /// <summary>Handles an OSC string (already terminated by BEL or ST).</summary>
-    internal void HandleOsc(ReadOnlySpan<byte> payload)
+    internal void HandleOsc(ReadOnlySpan<byte> payload, bool complete)
     {
         int separator = payload.IndexOf((byte)';');
         ReadOnlySpan<byte> commandPart = separator < 0 ? payload : payload[..separator];
@@ -929,7 +950,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             case 8:
                 HandleOsc8Hyperlink(rest);
                 break;
-            case 52:
+            case 52 when complete:
                 HandleOsc52Clipboard(rest);
                 break;
         }
@@ -970,7 +991,6 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
 
     private void HandleOsc52Clipboard(ReadOnlySpan<byte> rest)
     {
-        const int maxDecodedBytes = 64 * 1024;
         int dataSeparator = rest.IndexOf((byte)';');
         if (dataSeparator < 0) return;
         ReadOnlySpan<byte> dataBytes = rest[(dataSeparator + 1)..];
@@ -979,13 +999,11 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             // Never expose local clipboard contents to a remote host.
             return;
         }
-        if (dataBytes.Length > ((maxDecodedBytes + 2) / 3) * 4 + 4) return;
         string base64 = Encoding.ASCII.GetString(dataBytes).Trim();
         if (base64.Length == 0) return;
         try
         {
             byte[] decoded = Convert.FromBase64String(base64);
-            if (decoded.Length > maxDecodedBytes) return;
             ClipboardCopyRequested?.Invoke(Encoding.UTF8.GetString(decoded));
         }
         catch (FormatException)

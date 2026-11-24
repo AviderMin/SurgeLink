@@ -26,9 +26,15 @@ public sealed class WorkspaceRegressionTests
         Assert.Equal(5000, tab.Terminal!.Emulator.ScrollbackLimit);
         settings.Update(s => s with { TerminalScrollbackLines = 1000 });
         Assert.Equal(1000, tab.Terminal.Emulator.ScrollbackLimit);
+        tab.Terminal.Emulator.Feed("\u001b[?2004h\u001b[?25l"u8);
+        Assert.False(tab.Terminal.AllowRemoteClipboard);
+        tab.Terminal.AllowRemoteClipboard = true;
         await workspace.ReconnectAsync(tab.Id);
         var reconnected = Assert.Single(workspace.Snapshot.Tabs);
         Assert.Equal(1000, reconnected.Terminal!.Emulator.ScrollbackLimit);
+        Assert.False(reconnected.Terminal.Emulator.Modes.BracketedPaste);
+        Assert.True(reconnected.Terminal.Emulator.Cursor.Visible);
+        Assert.False(reconnected.Terminal.AllowRemoteClipboard);
         await workspace.CloseAsync(reconnected.Id);
     }
 

@@ -139,6 +139,9 @@ public sealed class SshProtocolOptionsTests
                 SshProtocolOptions.UseLegacyAlgorithmsKey,
                 SshProtocolOptions.PreferredKeyExchangeKey,
                 SshProtocolOptions.CommandTimeoutSecondsKey,
+                SshProtocolOptions.ProxyJumpKey,
+                SshProtocolOptions.ProxyJumpPrivateKeyKey,
+                SshProtocolOptions.PortForwardsKey,
             },
             fields.Select(field => field.Key));
     }
@@ -148,12 +151,15 @@ public sealed class SshProtocolOptionsTests
     {
         var fields = SshProtocolPlugin.DefaultDescriptor.ConnectionOptions.ToDictionary(field => field.Key, StringComparer.Ordinal);
 
-        Assert.Equal(5, fields.Count);
+        Assert.Equal(8, fields.Count);
         Assert.Equal("utf-8", fields[SshProtocolOptions.EncodingKey].DefaultValue);
         Assert.Equal(SshProtocolOptions.DefaultTerminalType, fields[SshProtocolOptions.TerminalTypeKey].DefaultValue);
         Assert.Equal("false", fields[SshProtocolOptions.UseLegacyAlgorithmsKey].DefaultValue);
         Assert.Equal(string.Empty, fields[SshProtocolOptions.PreferredKeyExchangeKey].DefaultValue);
         Assert.Equal("20", fields[SshProtocolOptions.CommandTimeoutSecondsKey].DefaultValue);
+        Assert.Empty(fields[SshProtocolOptions.ProxyJumpKey].DefaultValue);
+        Assert.Empty(fields[SshProtocolOptions.ProxyJumpPrivateKeyKey].DefaultValue);
+        Assert.Empty(fields[SshProtocolOptions.PortForwardsKey].DefaultValue);
         Assert.All(fields.Values, field => Assert.True(field.IsValid(field.DefaultValue), $"Default value of {field.Key} must be valid."));
     }
 

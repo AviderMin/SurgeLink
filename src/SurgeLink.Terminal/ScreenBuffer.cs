@@ -640,6 +640,12 @@ internal sealed class ScreenBuffer
 
         _cursorRow = 0;
         _cursorColumn = 0;
+        ResetShellState();
+    }
+
+    /// <summary>Restores margins and tab stops without clearing content or moving the cursor.</summary>
+    public void ResetShellState()
+    {
         _pendingWrap = false;
         _scrollTop = 0;
         _scrollBottom = _rows - 1;
@@ -888,7 +894,7 @@ internal sealed class ScreenBuffer
         }
 
         // Split reflowed lines between scrollback and the visible primary screen.
-        int overflow = Math.Max(0, reflowed.Count - rows);
+        int overflow = Math.Clamp(reflowed.Count - rows, 0, newCursorAbsRow);
         scrollback.Clear();
         int scrollStart = Math.Max(0, overflow - scrollback.Limit);
         for (int s = scrollStart; s < overflow; s++)

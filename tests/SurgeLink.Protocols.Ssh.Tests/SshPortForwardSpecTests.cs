@@ -5,6 +5,50 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 
 public sealed class SshPortForwardSpecTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("bastion.key")]
+    public async Task JumpHostUsesOnlyItsOwnCredentials(string? keyPath)
+    {
+        var target = new ConnectionRequest
+        {
+            Host = "target.test",
+            Username = "target-user",
+            Password = "target-password",
+            PrivateKeyPath = "target.key",
+            PrivateKeyPassphrase = "target-passphrase",
+            ProfileId = "target-profile",
+            Options = keyPath is null ? new Dictionary<string, string>() : new Dictionary<string, string>
+            {
+                [SshProtocolOptions.ProxyJumpPrivateKeyKey] = keyPath,
+            },
+        };
+        var jump = await SshProtocolPlugin.CreateJumpRequestAsync(target, "jump-user@bastion.test:2222", (prompt, _) =>
+        {
+            Assert.True(prompt.IsSecret);
+            Assert.Contains("jump-user@bastion.test:2222", prompt.Question);
+            return Task.FromResult<string?>("jump-secret");
+        }, CancellationToken.None);
+
+        Assert.Equal("bastion.test", jump.Host);
+        Assert.Equal(2222, jump.Port);
+        Assert.Equal("jump-user", jump.Username);
+        Assert.Equal(keyPath is null ? AuthenticationMethod.Password : AuthenticationMethod.PublicKey, jump.Authentication);
+        Assert.Equal(keyPath is null ? "jump-secret" : null, jump.Password);
+        Assert.Equal(keyPath, jump.PrivateKeyPath);
+        Assert.Equal(keyPath is null ? null : "jump-secret", jump.PrivateKeyPassphrase);
+        Assert.Null(jump.ProfileId);
+    }
+
+    [Fact]
+    public async Task JumpHostCannotFallBackToTheTargetPasswordWhenNoPromptIsAvailable()
+    {
+        var target = new ConnectionRequest { Host = "target.test", Username = "user", Password = "target-password" };
+        var error = await Assert.ThrowsAsync<ProtocolException>(() =>
+            SshProtocolPlugin.CreateJumpRequestAsync(target, "bastion.test", null, CancellationToken.None));
+        Assert.Equal(ProtocolFailureKind.Configuration, error.Kind);
+    }
+
     [Fact]
     public void ParsesLocalRemoteAndDynamicForwards()
     {

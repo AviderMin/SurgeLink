@@ -8,13 +8,22 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.12**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.13**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.13** 升级终端渲染引擎与 SSH 高级连接能力：
+
+- 终端渲染层由逐行 XAML `Canvas` + `TextBlock` 升级为 Win2D Direct2D/DirectWrite GPU 自绘，消除高频刷屏时的 XAML 可视树开销；同步修正宽字符光标宽度。
+- 主屏新增横向缩窗行重排（Reflow），按 `Wrapped` 边界重折逻辑行并无损还原宽字符，同时保持备用屏不重排。
+- 终端新增 `OSC 8` 超链接（仅允许 `http`/`https`，`Ctrl+左键` 打开）。`OSC 52` 写入剪贴板默认关闭，可在终端右键菜单为当前 Shell 开启。完整 OSC 内容上限为 4 KiB（含 Base64 和选择器），远端无法读取剪贴板。
+- 断线重连与重建 Shell 改为原地无损模式，保留标签页位置与完整终端回滚历史。
+- 新增 SSH `ProxyJump` 跳板机与本地/远程/动态端口转发（`L`/`R`/`D`），SFTP/SCP/监控自动复用跳板隧道。连接时单独输入跳板机密码，或在高级连接选项中指定跳板机私钥。新建/编辑会话界面将身份验证置于高级连接参数之前。
+- 新增 `AgentAuditLog` 结构化审计日志（支持快照与 JSONL 导出，不记录终端明文输入），并清理全部 `CA2027` 定时器警告。
 
 **1.0.3.12** 修复 Agent 本地路径边界、终端兼容性与安装包体积：
 

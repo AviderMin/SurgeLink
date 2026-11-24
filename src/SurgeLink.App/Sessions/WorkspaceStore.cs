@@ -184,29 +184,6 @@ public sealed class WorkspaceStore
     public Task<WorkspaceTab> OpenAsync(SessionProfile profile, ConnectOptions? options, CancellationToken cancellationToken) =>
         OpenCoreAsync(profile, options, cancellationToken);
 
-    /// <summary>Imports non-duplicate SSH sessions from <c>~/.ssh/config</c> (or <paramref name="path"/>).</summary>
-    public SshConfigImportResult ImportSshConfig(string? path = null)
-    {
-        var sourcePath = string.IsNullOrWhiteSpace(path) ? SshConfigImporter.DefaultConfigPath : path;
-        SshConfigImportResult result;
-        lock (_gate)
-        {
-            var existing = _profiles.Load();
-            result = SshConfigImporter.ImportFromFile(sourcePath, existing);
-            foreach (var profile in result.Imported)
-            {
-                _profiles.Upsert(profile);
-            }
-        }
-
-        if (result.Imported.Count > 0)
-        {
-            Update(s => s with { Profiles = LoadProfilesFromDisk() });
-            _logger.LogInformation("Imported {Count} SSH profile(s) from {Path}", result.Imported.Count, result.SourcePath);
-        }
-        return result;
-    }
-
     private async Task<WorkspaceTab> OpenCoreAsync(
         SessionProfile profile,
         ConnectOptions? options,

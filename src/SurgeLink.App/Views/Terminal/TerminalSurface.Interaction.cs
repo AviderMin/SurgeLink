@@ -394,6 +394,14 @@ internal sealed partial class TerminalSurface
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.find", "Find…"), "\uE721", () => OpenSearch(), true));
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.copy", "Copy"), "\uE8C8", () => CopySelection(), HasSelection));
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.paste", "Paste"), "\uE77F", PasteFromClipboard, true));
+        var remoteClipboard = new ToggleMenuFlyoutItem
+        {
+            Text = Str.T("terminal.remoteClipboard", "Allow this shell to write to the clipboard"),
+            IsChecked = _bridge.AllowRemoteClipboard,
+            IsEnabled = !_bridge.IsClosed,
+        };
+        remoteClipboard.Click += (_, _) => _bridge.AllowRemoteClipboard = remoteClipboard.IsChecked;
+        flyout.Items.Add(remoteClipboard);
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.selectAll", "Select all"), "\uE8B3", SelectAll, true));
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.clear", "Clear"), "\uE894", ClearScreen, true));
         flyout.ShowAt(this, new FlyoutShowOptions { Position = position });

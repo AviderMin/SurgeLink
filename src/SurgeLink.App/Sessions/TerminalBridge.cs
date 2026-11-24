@@ -28,6 +28,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     private int _repaintScheduled;
     private int _activityScheduled;
     private int _closed;
+    private volatile bool _allowRemoteClipboard;
 
     /// <summary>Wraps a remote terminal; call <see cref="StartAsync"/> to open the shell channel.</summary>
     public TerminalBridge(IRemoteTerminal remote, IUiDispatcher dispatcher, ILogger logger, int columns = 120, int rows = 32,
@@ -45,10 +46,10 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
             lock (Emulator.SyncRoot)
             {
                 _remoteSize = (Emulator.Columns, Emulator.Rows);
+                Emulator.ResetForNewShell();
                 if (!string.IsNullOrEmpty(banner))
                 {
-                    // Exit any leftover alternate screen and reset SGR before printing the divider.
-                    var text = $"\u001b[0m\u001b[?1049l\r\n\u001b[2m{banner}\u001b[0m\r\n";
+                    var text = $"\r\n\u001b[2m{banner}\u001b[0m\r\n";
                     Emulator.Feed(System.Text.Encoding.UTF8.GetBytes(text));
                 }
             }
@@ -69,6 +70,12 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
 
     /// <summary>The screen buffer the view renders.</summary>
     public TerminalEmulator Emulator { get; }
+
+    internal bool AllowRemoteClipboard
+    {
+        get => _allowRemoteClipboard;
+        set => _allowRemoteClipboard = value;
+    }
 
     private void OnSettingsChanged(object? sender, EventArgs args)
     {

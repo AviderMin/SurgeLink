@@ -117,7 +117,6 @@ internal sealed partial class TerminalSurface : ContentControl
             IsHitTestVisible = false,
             Margin = new Thickness(ContentInset),
         };
-        _canvas.Draw += OnCanvasDraw;
         _cursorLayer = CreateLayer();
         _cursorLayer.Margin = new Thickness(ContentInset);
         _cursorRect = new Rectangle { IsHitTestVisible = false, Visibility = Visibility.Collapsed };
@@ -230,6 +229,7 @@ internal sealed partial class TerminalSurface : ContentControl
         if (!_loaded)
         {
             _loaded = true;
+            _canvas.Draw += OnCanvasDraw;
             _bridge.Invalidated += OnBridgeInvalidated;
             _bridge.Emulator.ClipboardCopyRequested += OnClipboardCopyRequested;
             _settings.Changed += OnSettingsChanged;
@@ -251,7 +251,9 @@ internal sealed partial class TerminalSurface : ContentControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
+        if (!_loaded) return;
         _loaded = false;
+        _canvas.Draw -= OnCanvasDraw;
         _selecting = false;
         ReleasePointerCaptures();
         _paintQueued = false;
@@ -282,8 +284,10 @@ internal sealed partial class TerminalSurface : ContentControl
 
     private void OnClipboardCopyRequested(string text)
     {
+        if (!_bridge.AllowRemoteClipboard || _bridge.IsClosed) return;
         DispatcherQueue?.TryEnqueue(() =>
         {
+            if (!_loaded || !_bridge.AllowRemoteClipboard || _bridge.IsClosed) return;
             try
             {
                 var package = new Windows.ApplicationModel.DataTransfer.DataPackage();

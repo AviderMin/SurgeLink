@@ -32,6 +32,7 @@ public static class ZhProtocols
         ["protocol.option.preferredKeyExchange"] = "首选密钥交换算法",
         ["protocol.option.commandTimeoutSeconds"] = "命令超时（秒）",
         ["protocol.option.proxyJump"] = "跳板机（user@host:port）",
+        ["protocol.option.proxyJumpPrivateKey"] = "跳板机私钥（可选）",
         ["protocol.option.portForwards"] = "端口转发（L/R/D，分号分隔）",
         ["protocol.choice.encoding.utf-8"] = "UTF-8",
         ["protocol.choice.encoding.latin1"] = "Latin-1（ISO-8859-1）",

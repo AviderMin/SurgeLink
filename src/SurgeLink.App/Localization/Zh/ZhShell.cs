@@ -108,8 +108,6 @@ public static class ZhShell
         ["shell.command.nextTab.description"] = "切换到下一个会话标签页",
         ["shell.command.previousTab"] = "上一个标签页",
         ["shell.command.previousTab.description"] = "切换到上一个会话标签页",
-        ["shell.sidebar.importSshConfig"] = "导入 SSH 配置",
-        ["shell.sidebar.importSshConfigTooltip"] = "从 ~/.ssh/config 导入会话",
         ["shell.command.settings"] = "设置",
         ["shell.command.settings.description"] = "打开设置页",
         ["shell.confirm.closeTab.title"] = "关闭会话",

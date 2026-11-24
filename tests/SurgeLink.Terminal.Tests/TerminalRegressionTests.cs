@@ -329,6 +329,54 @@ public sealed class TerminalRegressionTests
     }
 
     [Fact]
+    public void Osc52RejectsOverflowAndUnterminatedWrites()
+    {
+        var terminal = new TestTerminal(20, 2);
+        var copied = new List<string>();
+        terminal.Emulator.ClipboardCopyRequested += copied.Add;
+        // A truncated payload would still parse as Base64 with this selector.
+        var oversized = Convert.ToBase64String(new byte[3072]);
+        terminal.Feed($"\u001b]52;cpqs;{oversized}\u0007");
+        terminal.Feed("\u001b]52;c;aGVsbG8=\u001b[0mvisible");
+        Assert.Empty(copied);
+        Assert.Equal("visible", terminal.Line(0));
+
+        var limit = new string('x', 3066);
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(limit));
+        terminal.Feed($"\u001b]52;cpqs;{encoded}\u0007");
+        Assert.Equal(limit, Assert.Single(copied));
+    }
+
+    [Fact]
+    public void ReflowKeepsTheCursorContentWhenWidthAndHeightShrinkTogether()
+    {
+        var terminal = new TestTerminal(10, 4);
+        terminal.Emulator.ReflowOnResize = true;
+        terminal.Feed("TOP\r\nROW2\r\nROW3\r\nBOTTOM\u001b[1;1H");
+
+        terminal.Emulator.Resize(8, 2);
+        terminal.Feed("X");
+
+        Assert.Equal("XOP", terminal.Line(0));
+        Assert.Equal("ROW2", terminal.Line(1));
+    }
+
+    [Fact]
+    public void NewShellResetsModesAndPartialSequencesWhileKeepingHistory()
+    {
+        var terminal = new TestTerminal(20, 2);
+        terminal.Feed("history\r\nprimary\r\nready");
+        terminal.Feed("\u001b[?1049h\u001b[?2004h\u001b[?1000h\u001b[?25l\u001b]2;unfinished");
+
+        terminal.Emulator.ResetForNewShell();
+        Assert.Equal(TerminalModes.Default, terminal.Emulator.Modes);
+        Assert.Equal(1, terminal.Emulator.ScrollbackLength);
+        Assert.Equal("primary", terminal.Line(0));
+        terminal.Feed("!");
+        Assert.Equal("ready!", terminal.Line(1));
+    }
+
+    [Fact]
     public void ReflowOnResizeWrapsOnShrinkAndUnwrapsOnWidenLosslessly()
     {
         var terminal = new TestTerminal(10, 4);
