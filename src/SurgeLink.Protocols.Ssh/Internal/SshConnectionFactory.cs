@@ -33,6 +33,15 @@ internal sealed class SshConnectionFactory
     private readonly SshProtocolOptions _options;
     private readonly ProtocolHostContext _context;
     private readonly ILogger _logger;
+    private string? _dialHostOverride;
+    private int? _dialPortOverride;
+
+    /// <summary>Routes target transports through an active local jump-host tunnel while keeping host-key verification on the real target.</summary>
+    internal void SetJumpEndpoint(string host, int port)
+    {
+        _dialHostOverride = host;
+        _dialPortOverride = port;
+    }
 
     /// <summary>Creates a factory for one request.</summary>
     public SshConnectionFactory(
@@ -72,10 +81,16 @@ internal sealed class SshConnectionFactory
 
     /// <summary>Creates connection settings with authentication methods and algorithm preferences applied.</summary>
     /// <param name="cancellationToken">Token observed by interactive prompts.</param>
-    public ConnectionInfo CreateConnectionInfo(CancellationToken cancellationToken, SshConnectBudget? budget = null)
+    public ConnectionInfo CreateConnectionInfo(
+        CancellationToken cancellationToken,
+        SshConnectBudget? budget = null,
+        string? dialHostOverride = null,
+        int? dialPortOverride = null)
     {
         var methods = BuildAuthenticationMethods(budget, cancellationToken);
-        var info = new ConnectionInfo(_request.Host, Port, _request.Username, methods)
+        var host = string.IsNullOrWhiteSpace(dialHostOverride) ? (_dialHostOverride ?? _request.Host) : dialHostOverride;
+        var port = dialPortOverride is > 0 ? dialPortOverride.Value : (_dialPortOverride ?? Port);
+        var info = new ConnectionInfo(host, port, _request.Username, methods)
         {
             Timeout = _options.ConnectTimeout,
             Encoding = _options.Encoding,

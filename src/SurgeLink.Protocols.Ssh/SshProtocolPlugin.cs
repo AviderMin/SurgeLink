@@ -39,6 +39,8 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
             Minimum = 1,
             Maximum = 300,
         },
+        new(SshProtocolOptions.ProxyJumpKey, "Jump host (user@host:port)", string.Empty),
+        new(SshProtocolOptions.PortForwardsKey, "Port forwards (L/R/D, semicolon separated)", string.Empty),
     ];
 
     /// <summary>Metadata used by the session picker and the composition root.</summary>
@@ -68,8 +70,18 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
 
         var logger = context.CreateLogger<SshSession>();
         var options = new SshProtocolOptions(request);
+        var forwardSpecs = SshPortForwardSpec.ParseList(options.PortForwardsRaw);
         var factory = new SshConnectionFactory(request, options, context, logger);
         using var timeout = factory.CreateConnectBudget(cancellationToken);
+
+        SshClient? jumpClient = null;
+        ForwardedPortLocal? jumpTunnel = null;
+        if (!string.IsNullOrWhiteSpace(options.ProxyJump))
+        {
+            (jumpClient, jumpTunnel) = await OpenJumpTunnelAsync(
+                request, options, context, logger, timeout, cancellationToken).ConfigureAwait(false);
+            factory.SetJumpEndpoint("127.0.0.1", (int)jumpTunnel.BoundPort);
+        }
 
         ConnectionInfo connectionInfo;
         HostKeyVerifier verifier;
@@ -80,10 +92,12 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
         }
         catch (ProtocolException)
         {
+            DisposeJump(jumpTunnel, jumpClient);
             throw;
         }
         catch (Exception exception)
         {
+            DisposeJump(jumpTunnel, jumpClient);
             throw SshErrorMapper.Map(exception, $"prepare a connection to {factory.Endpoint}");
         }
 
@@ -103,6 +117,7 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
         {
             client.HostKeyReceived -= verifier.Handle;
             client.Dispose();
+            DisposeJump(jumpTunnel, jumpClient);
             if (cancellationToken.IsCancellationRequested)
             {
                 throw new ProtocolException(
@@ -120,6 +135,7 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
         {
             client.HostKeyReceived -= verifier.Handle;
             client.Dispose();
+            DisposeJump(jumpTunnel, jumpClient);
             if (cancellationToken.IsCancellationRequested)
             {
                 throw new ProtocolException(
@@ -138,14 +154,101 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
             throw SshErrorMapper.Map(exception, $"connect to {factory.Endpoint}");
         }
 
+        var startedForwards = new List<ForwardedPort>();
         try
         {
-            return new SshSession(client, factory, options, Descriptor, logger);
+            foreach (var spec in forwardSpecs)
+            {
+                ForwardedPort port = spec.Kind switch
+                {
+                    SshPortForwardKind.Local => new ForwardedPortLocal(spec.BindAddress, spec.BindPort, spec.TargetHost!, spec.TargetPort),
+                    SshPortForwardKind.Remote => new ForwardedPortRemote(spec.BindAddress, spec.BindPort, spec.TargetHost!, spec.TargetPort),
+                    SshPortForwardKind.Dynamic => new ForwardedPortDynamic(spec.BindAddress, spec.BindPort),
+                    _ => throw new ProtocolException("Unsupported port forwarding kind.", ProtocolFailureKind.Configuration),
+                };
+                client.AddForwardedPort(port);
+                port.Start();
+                startedForwards.Add(port);
+            }
+
+            return new SshSession(client, factory, options, Descriptor, logger, startedForwards, jumpTunnel, jumpClient);
         }
-        catch
+        catch (Exception ex)
         {
+            foreach (var port in startedForwards)
+            {
+                try { port.Stop(); port.Dispose(); } catch { }
+            }
             client.Dispose();
-            throw;
+            DisposeJump(jumpTunnel, jumpClient);
+            if (ex is ProtocolException) throw;
+            throw SshErrorMapper.Map(ex, $"start port forwarding on {factory.Endpoint}");
+        }
+    }
+
+    private static async Task<(SshClient Client, ForwardedPortLocal Tunnel)> OpenJumpTunnelAsync(
+        ConnectionRequest targetRequest,
+        SshProtocolOptions targetOptions,
+        ProtocolHostContext context,
+        ILogger<SshSession> logger,
+        SshConnectBudget timeout,
+        CancellationToken cancellationToken)
+    {
+        var jump = SshJumpTarget.Parse(targetOptions.ProxyJump!, targetRequest.Username);
+        var jumpRequest = targetRequest with
+        {
+            Host = jump.Host,
+            Port = jump.Port,
+            Username = jump.Username,
+        };
+        var jumpFactory = new SshConnectionFactory(jumpRequest, targetOptions, context, logger);
+        var jumpInfo = jumpFactory.CreateConnectionInfo(timeout.Token, timeout);
+        var jumpVerifier = jumpFactory.CreateVerifier(timeout.Token, timeout);
+        var jumpClient = new SshClient(jumpInfo);
+        jumpClient.HostKeyReceived += jumpVerifier.Handle;
+        ForwardedPortLocal? tunnel = null;
+        try
+        {
+            if (targetRequest.KeepAliveInterval > TimeSpan.Zero)
+            {
+                jumpClient.KeepAliveInterval = ClampKeepAlive(targetRequest.KeepAliveInterval);
+            }
+
+            await timeout.ConnectAsync(jumpClient).ConfigureAwait(false);
+            var targetPort = (uint)(targetRequest.Port > 0 ? targetRequest.Port : DefaultPort);
+            tunnel = new ForwardedPortLocal("127.0.0.1", 0, targetRequest.Host, targetPort);
+            jumpClient.AddForwardedPort(tunnel);
+            tunnel.Start();
+            return (jumpClient, tunnel);
+        }
+        catch (Exception ex)
+        {
+            jumpClient.HostKeyReceived -= jumpVerifier.Handle;
+            DisposeJump(tunnel, jumpClient);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw new ProtocolException($"Connecting to jump host {jumpFactory.Endpoint} was cancelled.", ProtocolFailureKind.Cancelled, ex);
+            }
+            if (jumpVerifier.RejectionReason is { Length: > 0 } reason)
+            {
+                throw new ProtocolException(reason, ProtocolFailureKind.HostKey, ex);
+            }
+            if (ex is ProtocolException) throw;
+            throw SshErrorMapper.Map(ex, $"connect to jump host {jumpFactory.Endpoint}");
+        }
+    }
+
+    private static void DisposeJump(ForwardedPortLocal? tunnel, SshClient? client)
+    {
+        if (tunnel is not null)
+        {
+            try { tunnel.Stop(); } catch { }
+            try { tunnel.Dispose(); } catch { }
+        }
+        if (client is not null)
+        {
+            try { if (client.IsConnected) client.Disconnect(); } catch { }
+            try { client.Dispose(); } catch { }
         }
     }
 

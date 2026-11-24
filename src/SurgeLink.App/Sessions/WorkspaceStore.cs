@@ -4,6 +4,7 @@ using SurgeLink.Core.Files;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
 using SurgeLink.Core.Sessions;
+using SurgeLink.Terminal;
 using SurgeLink.Core.Storage;
 
 namespace SurgeLink.App.Sessions;
@@ -180,7 +181,39 @@ public sealed class WorkspaceStore
     }
 
     /// <summary>Opens a session in a new tab. Throws <see cref="ProtocolException"/> on failure.</summary>
-    public async Task<WorkspaceTab> OpenAsync(SessionProfile profile, ConnectOptions? options, CancellationToken cancellationToken)
+    public Task<WorkspaceTab> OpenAsync(SessionProfile profile, ConnectOptions? options, CancellationToken cancellationToken) =>
+        OpenCoreAsync(profile, options, cancellationToken);
+
+    /// <summary>Imports non-duplicate SSH sessions from <c>~/.ssh/config</c> (or <paramref name="path"/>).</summary>
+    public SshConfigImportResult ImportSshConfig(string? path = null)
+    {
+        var sourcePath = string.IsNullOrWhiteSpace(path) ? SshConfigImporter.DefaultConfigPath : path;
+        SshConfigImportResult result;
+        lock (_gate)
+        {
+            var existing = _profiles.Load();
+            result = SshConfigImporter.ImportFromFile(sourcePath, existing);
+            foreach (var profile in result.Imported)
+            {
+                _profiles.Upsert(profile);
+            }
+        }
+
+        if (result.Imported.Count > 0)
+        {
+            Update(s => s with { Profiles = LoadProfilesFromDisk() });
+            _logger.LogInformation("Imported {Count} SSH profile(s) from {Path}", result.Imported.Count, result.SourcePath);
+        }
+        return result;
+    }
+
+    private async Task<WorkspaceTab> OpenCoreAsync(
+        SessionProfile profile,
+        ConnectOptions? options,
+        CancellationToken cancellationToken,
+        TerminalEmulator? existingEmulator = null,
+        string? banner = null,
+        int? insertIndex = null)
     {
         Update(s => s with { IsConnecting = true }, force: true);
         IProtocolSession? session = null;
@@ -193,7 +226,7 @@ public sealed class WorkspaceStore
             if (session.Terminal is { } remoteTerminal)
             {
                 terminal = new TerminalBridge(remoteTerminal, _dispatcher, _logger, settings: _settings,
-                    terminalType: TerminalTypeFor(profile));
+                    terminalType: TerminalTypeFor(profile), existingEmulator: existingEmulator, banner: banner);
                 await terminal.StartAsync(cancellationToken);
             }
 
@@ -229,11 +262,17 @@ public sealed class WorkspaceStore
                 }
             }
 
-            Update(s => s with
+            Update(s =>
             {
-                Profiles = LoadProfilesFromDisk(),
-                Tabs = s.Tabs.Append(tab).ToArray(),
-                ActiveTabId = tab.Id,
+                var tabs = s.Tabs.ToList();
+                var position = insertIndex is { } idx ? Math.Clamp(idx, 0, tabs.Count) : tabs.Count;
+                tabs.Insert(position, tab);
+                return s with
+                {
+                    Profiles = LoadProfilesFromDisk(),
+                    Tabs = tabs.ToArray(),
+                    ActiveTabId = tab.Id,
+                };
             });
 
             _logger.LogInformation("Session {Name} opened", profile.Name);
@@ -333,15 +372,28 @@ public sealed class WorkspaceStore
     }
 
     /// <summary>
-    /// Drops the connection behind a tab and opens the same profile again.
-    /// The tab is replaced (same position is not guaranteed, the new tab becomes active).
+    /// Drops the connection behind a tab and opens the same profile again in place,
+    /// preserving the tab position and terminal scrollback history.
     /// </summary>
     public async Task ReconnectAsync(Guid tabId, ConnectOptions? options = null, CancellationToken cancellationToken = default)
     {
         WorkspaceTab? tab;
+        int tabIndex;
+        TerminalEmulator? previousEmulator;
         lock (_gate)
         {
-            tab = _snapshot.Tabs.FirstOrDefault(t => t.Id == tabId);
+            tabIndex = -1;
+            tab = null;
+            for (var i = 0; i < _snapshot.Tabs.Count; i++)
+            {
+                if (_snapshot.Tabs[i].Id == tabId)
+                {
+                    tab = _snapshot.Tabs[i];
+                    tabIndex = i;
+                    break;
+                }
+            }
+            previousEmulator = tab?.Terminal?.Emulator;
         }
 
         if (tab is null)
@@ -353,7 +405,10 @@ public sealed class WorkspaceStore
         if (profile is null) { return; }
         cancellationToken.ThrowIfCancellationRequested();
         await CloseAsync(tabId);
-        await OpenAsync(profile, options, cancellationToken);
+        await OpenCoreAsync(profile, options, cancellationToken,
+            existingEmulator: previousEmulator,
+            banner: "--- Reconnected ---",
+            insertIndex: tabIndex >= 0 ? tabIndex : null);
     }
 
     /// <summary>Replaces only the exited shell, retaining the connection, files, monitor and transfers.</summary>
@@ -376,7 +431,9 @@ public sealed class WorkspaceStore
             cancellationToken.ThrowIfCancellationRequested();
             var remote = await tab.Session.ReopenTerminalAsync(cancellationToken);
             replacement = new TerminalBridge(remote, _dispatcher, _logger, settings: _settings,
-                terminalType: TerminalTypeFor(tab.Profile));
+                terminalType: TerminalTypeFor(tab.Profile),
+                existingEmulator: tab.Terminal?.Emulator,
+                banner: "--- Shell reopened ---");
             await replacement.StartAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             var previous = tab.Terminal;

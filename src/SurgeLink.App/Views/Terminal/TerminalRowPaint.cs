@@ -1,6 +1,4 @@
-using Microsoft.UI.Xaml.Controls;
 using SurgeLink.Terminal;
-using Rectangle = Microsoft.UI.Xaml.Shapes.Rectangle;
 
 namespace SurgeLink.App.Views.Terminal;
 
@@ -56,6 +54,9 @@ internal sealed class TerminalRowSnapshot
     /// <summary>Footprint of every column, needed to skip wide glyph halves.</summary>
     public CellWidth[] Width = Array.Empty<CellWidth>();
 
+    /// <summary>True when the cell carries an OSC 8 hyperlink.</summary>
+    public bool[] HasHyperlink = Array.Empty<bool>();
+
     /// <summary>Grows the backing arrays so they can hold <paramref name="columns"/> cells.</summary>
     public void EnsureCapacity(int columns)
     {
@@ -67,6 +68,7 @@ internal sealed class TerminalRowSnapshot
         Text = new string[columns];
         Style = new TerminalCellStyle[columns];
         Width = new CellWidth[columns];
+        HasHyperlink = new bool[columns];
     }
 
     /// <summary>Reads one row of the emulator into this snapshot.</summary>
@@ -95,6 +97,7 @@ internal sealed class TerminalRowSnapshot
             Text[column] = (cell.Attributes & CellAttributes.Hidden) != 0 ? " " : cell.Text ?? " ";
             Style[column] = style;
             Width[column] = cell.Width;
+            HasHyperlink[column] = !string.IsNullOrEmpty(cell.Hyperlink);
         }
     }
 
@@ -130,6 +133,7 @@ internal sealed class TerminalRowSnapshot
         {
             if (left.Width[column] != right.Width[column]
                 || left.Style[column] != right.Style[column]
+                || left.HasHyperlink[column] != right.HasHyperlink[column]
                 || !string.Equals(left.Text[column], right.Text[column], StringComparison.Ordinal))
             {
                 return false;
@@ -138,18 +142,4 @@ internal sealed class TerminalRowSnapshot
 
         return true;
     }
-}
-
-/// <summary>
-/// The XAML elements currently showing one row. They are reused on every repaint
-/// (created on demand, hidden when a row needs fewer of them) so steady state
-/// repaints do not allocate UIElements.
-/// </summary>
-internal sealed class TerminalRowVisuals
-{
-    /// <summary>Background bands, drawn below all text.</summary>
-    public List<Rectangle> Backgrounds { get; } = new(4);
-
-    /// <summary>Text runs of the row.</summary>
-    public List<TextBlock> Runs { get; } = new(4);
 }

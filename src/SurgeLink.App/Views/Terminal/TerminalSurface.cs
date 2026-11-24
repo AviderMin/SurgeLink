@@ -1,5 +1,7 @@
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Microsoft.Graphics.Canvas.Text;
+using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -50,21 +52,23 @@ internal sealed partial class TerminalSurface : ContentControl
     private readonly Microsoft.UI.Xaml.Controls.Primitives.ScrollBar _scrollBar;
     private bool _updatingScrollBar;
     private readonly Grid _root;
-    private readonly Canvas _backgroundLayer;
-    private readonly Canvas _textLayer;
+    private readonly CanvasControl _canvas;
     private readonly Canvas _cursorLayer;
     private readonly Rectangle _cursorRect;
     private readonly TextBlock _cursorGlyph;
     private readonly DispatcherQueueTimer? _blinkTimer;
     private readonly StringBuilder _runBuilder = new(64);
-    private readonly HashSet<TextBlock> _blinkingRuns = new();
+    private bool _hasBlinkingCells;
+    private CanvasTextFormat? _formatRegular;
+    private CanvasTextFormat? _formatBold;
+    private CanvasTextFormat? _formatItalic;
+    private CanvasTextFormat? _formatBoldItalic;
 
     private string _fontFamilyName = string.Empty;
     private double _fontSize;
     private TerminalMetrics? _metrics;
     private TerminalStyleResolver? _resolver;
 
-    private TerminalRowVisuals[] _rowVisuals = Array.Empty<TerminalRowVisuals>();
     private TerminalRowSnapshot[] _paintedRows = Array.Empty<TerminalRowSnapshot>();
     private TerminalRowSnapshot[] _scratchRows = Array.Empty<TerminalRowSnapshot>();
 
@@ -108,9 +112,14 @@ internal sealed partial class TerminalSurface : ContentControl
         BorderThickness = new Thickness(0);
         AutomationProperties.SetAutomationId(this, AutomationId);
 
-        _backgroundLayer = CreateLayer();
-        _textLayer = CreateLayer();
+        _canvas = new CanvasControl
+        {
+            IsHitTestVisible = false,
+            Margin = new Thickness(ContentInset),
+        };
+        _canvas.Draw += OnCanvasDraw;
         _cursorLayer = CreateLayer();
+        _cursorLayer.Margin = new Thickness(ContentInset);
         _cursorRect = new Rectangle { IsHitTestVisible = false, Visibility = Visibility.Collapsed };
         _cursorGlyph = new TextBlock
         {
@@ -125,10 +134,6 @@ internal sealed partial class TerminalSurface : ContentControl
         _root = new Grid();
         _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(ScrollBarWidth) });
-        foreach (var layer in new[] { _backgroundLayer, _textLayer, _cursorLayer })
-        {
-            layer.Margin = new Thickness(ContentInset);
-        }
         _scrollBar = new Microsoft.UI.Xaml.Controls.Primitives.ScrollBar
         {
             Orientation = Orientation.Vertical,
@@ -152,8 +157,7 @@ internal sealed partial class TerminalSurface : ContentControl
             }
         };
         _root.Children.Add(_scrollBar);
-        _root.Children.Add(_backgroundLayer);
-        _root.Children.Add(_textLayer);
+        _root.Children.Add(_canvas);
         _root.Children.Add(_cursorLayer);
         InitializeSearch();
         Content = _root;
@@ -227,6 +231,7 @@ internal sealed partial class TerminalSurface : ContentControl
         {
             _loaded = true;
             _bridge.Invalidated += OnBridgeInvalidated;
+            _bridge.Emulator.ClipboardCopyRequested += OnClipboardCopyRequested;
             _settings.Changed += OnSettingsChanged;
         }
 
@@ -251,6 +256,7 @@ internal sealed partial class TerminalSurface : ContentControl
         ReleasePointerCaptures();
         _paintQueued = false;
         _bridge.Invalidated -= OnBridgeInvalidated;
+        _bridge.Emulator.ClipboardCopyRequested -= OnClipboardCopyRequested;
         _settings.Changed -= OnSettingsChanged;
         _searchRefreshTimer?.Stop();
         StopBlink();
@@ -273,6 +279,23 @@ internal sealed partial class TerminalSurface : ContentControl
     }
 
     private void OnSettingsChanged(object? sender, EventArgs e) => ApplySettings(_settings.Current, initial: false);
+
+    private void OnClipboardCopyRequested(string text)
+    {
+        DispatcherQueue?.TryEnqueue(() =>
+        {
+            try
+            {
+                var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+                package.SetText(text);
+                Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "OSC 52 clipboard write failed.");
+            }
+        });
+    }
 
     private void InvalidatePaint(bool force)
     {
@@ -304,7 +327,7 @@ internal sealed partial class TerminalSurface : ContentControl
     {
         _hasFocus = true;
         _blinkOn = true;
-        foreach (var run in _blinkingRuns) { run.Opacity = 1; }
+        if (_hasBlinkingCells) _canvas.Invalidate();
         StartBlink();
         InvalidatePaint(force: true);
     }
@@ -337,6 +360,6 @@ internal sealed partial class TerminalSurface : ContentControl
 
         var emulator = _bridge.Emulator;
         lock (emulator.SyncRoot) { _cursorLayer.Opacity = !emulator.Modes.CursorBlink || _blinkOn ? 1 : 0; }
-        foreach (var run in _blinkingRuns) { run.Opacity = _blinkOn ? 1 : 0; }
+        if (_hasBlinkingCells) _canvas.Invalidate();
     }
 }

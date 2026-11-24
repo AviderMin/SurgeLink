@@ -14,6 +14,7 @@ namespace SurgeLink.Agent;
 public sealed partial class AgentGateway
 {
     private readonly object _gate = new();
+    private readonly AgentAuditLog _audit = new();
     private readonly Dictionary<string, Grant> _grants = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCompletionSource> _revocations = new(StringComparer.Ordinal);
     private readonly Func<AgentFileAccess, CancellationToken, Task<bool>> _confirmFile;
@@ -150,6 +151,12 @@ public sealed partial class AgentGateway
         }
     }
 
+    /// <summary>Returns a newest-first snapshot of structured Agent audit records.</summary>
+    public IReadOnlyList<AgentAuditEntry> GetAuditLog() => _audit.GetEntries();
+
+    /// <summary>Exports structured Agent audit records as JSON Lines (JSONL), oldest first.</summary>
+    public string ExportAuditLogJsonLines() => _audit.ExportJsonLines();
+
     public async Task<AgentResponse> ExecuteAsync(AgentRequest request, CancellationToken cancellationToken)
     {
         AgentResponse result;
@@ -166,6 +173,16 @@ public sealed partial class AgentGateway
         if (request.Method is "client.heartbeat" or "client.disconnect") return result;
         var auditMethod = IsKnownMethod(request.Method) ? request.Method : "unknown";
         var auditHandle = request.Session is { Length: 48 } handle && handle.All(char.IsAsciiHexDigit) ? handle : null;
+        var auditPath = request.Path is { Length: <= 512 } p && !p.Any(char.IsControl) ? p : null;
+        var auditOpId = request.OperationId is { Length: <= 128 } op && !op.Any(char.IsControl) ? op : null;
+        _audit.Record(new AgentAuditEntry(
+            _timeProvider.GetUtcNow(),
+            auditMethod,
+            auditHandle,
+            auditPath,
+            auditOpId,
+            result.Success,
+            result.ErrorCode ?? "ok"));
         if (OperationCompleted is { } completed)
             foreach (Action<string, string?, string> handler in completed.GetInvocationList())
                 try { handler(auditMethod, auditHandle, result.ErrorCode ?? "ok"); }

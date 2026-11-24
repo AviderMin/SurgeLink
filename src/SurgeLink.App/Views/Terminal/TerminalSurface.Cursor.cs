@@ -54,6 +54,7 @@ internal sealed partial class TerminalSurface
         Canvas.SetLeft(_cursorRect, left);
         Canvas.SetTop(_cursorRect, top);
 
+        double cursorWidth = cell.Width == CellWidth.Wide ? metrics.CellWidth * 2 : metrics.CellWidth;
         switch (modes.CursorShape)
         {
             case TerminalCursorShape.Bar:
@@ -64,13 +65,13 @@ internal sealed partial class TerminalSurface
 
             case TerminalCursorShape.Underline:
                 _cursorGlyph.Visibility = Visibility.Collapsed;
-                _cursorRect.Width = metrics.CellWidth;
+                _cursorRect.Width = cursorWidth;
                 _cursorRect.Height = Math.Max(2, metrics.CellHeight * 0.12);
                 Canvas.SetTop(_cursorRect, top + metrics.CellHeight - _cursorRect.Height);
                 break;
 
             default:
-                _cursorRect.Width = metrics.CellWidth;
+                _cursorRect.Width = cursorWidth;
                 _cursorRect.Height = metrics.CellHeight;
                 _cursorGlyph.Text = cell.Text ?? " ";
                 _cursorGlyph.Foreground = resolver.Brush(resolver.DefaultBackground);

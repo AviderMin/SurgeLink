@@ -75,6 +75,15 @@ internal sealed partial class TerminalSurface
         }
 
         TerminalPosition cell = CellFromPoint(point.Position);
+        if (IsKeyDown(VirtualKey.Control)
+            && _bridge.Emulator.GetHyperlinkAt(cell.Row, cell.Column) is { } link
+            && Uri.TryCreate(link, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            _ = Windows.System.Launcher.LaunchUriAsync(uri);
+            e.Handled = true;
+            return;
+        }
         if (IsKeyDown(VirtualKey.Shift) && HasSelection)
         {
             // Shift+click extends the existing selection instead of restarting it.

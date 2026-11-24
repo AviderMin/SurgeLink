@@ -31,15 +31,36 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
 
     /// <summary>Wraps a remote terminal; call <see cref="StartAsync"/> to open the shell channel.</summary>
     public TerminalBridge(IRemoteTerminal remote, IUiDispatcher dispatcher, ILogger logger, int columns = 120, int rows = 32,
-        IAppSettingsStore? settings = null, string? terminalType = null)
+        IAppSettingsStore? settings = null, string? terminalType = null, TerminalEmulator? existingEmulator = null,
+        string? banner = null)
     {
         _remote = remote;
         _dispatcher = dispatcher;
         _logger = logger;
         _settings = settings;
         _terminalType = string.IsNullOrWhiteSpace(terminalType) ? "xterm-256color" : terminalType.Trim();
-        Emulator = new TerminalEmulator(columns, rows, settings?.Current.TerminalScrollbackLines ?? 10000);
-        _remoteSize = (columns, rows);
+        if (existingEmulator is not null)
+        {
+            Emulator = existingEmulator;
+            lock (Emulator.SyncRoot)
+            {
+                _remoteSize = (Emulator.Columns, Emulator.Rows);
+                if (!string.IsNullOrEmpty(banner))
+                {
+                    // Exit any leftover alternate screen and reset SGR before printing the divider.
+                    var text = $"\u001b[0m\u001b[?1049l\r\n\u001b[2m{banner}\u001b[0m\r\n";
+                    Emulator.Feed(System.Text.Encoding.UTF8.GetBytes(text));
+                }
+            }
+        }
+        else
+        {
+            Emulator = new TerminalEmulator(columns, rows, settings?.Current.TerminalScrollbackLines ?? 10000)
+            {
+                ReflowOnResize = true,
+            };
+            _remoteSize = (columns, rows);
+        }
         if (settings is not null) settings.Changed += OnSettingsChanged;
         Emulator.ResponseRequested += OnResponseRequested;
         _remote.OutputReceived += OnOutputReceived;

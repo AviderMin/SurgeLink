@@ -39,7 +39,7 @@ internal sealed partial class TerminalSurface
 
         int columns = Math.Max(1, (int)Math.Floor(Math.Max(0, ActualWidth - 2 * ContentInset - ScrollBarWidth) / _metrics.CellWidth));
         int rows = Math.Max(1, (int)Math.Floor(Math.Max(0, ActualHeight - 2 * ContentInset) / _metrics.CellHeight));
-        if (columns == _requestedColumns && rows == _requestedRows && _rowVisuals.Length == rows)
+        if (columns == _requestedColumns && rows == _requestedRows && _paintedRows.Length == rows)
         {
             return;
         }
@@ -70,17 +70,11 @@ internal sealed partial class TerminalSurface
 
     private void EnsureRowBuffers(int rows)
     {
-        if (_rowVisuals.Length == rows)
+        if (_paintedRows.Length == rows)
         {
             return;
         }
 
-        for (int row = rows; row < _rowVisuals.Length; row++)
-        {
-            DiscardRowVisuals(_rowVisuals[row]);
-        }
-
-        _rowVisuals = ResizeRowArray(_rowVisuals, rows);
         _paintedRows = ResizeRowArray(_paintedRows, rows);
         _scratchRows = ResizeRowArray(_scratchRows, rows);
     }
@@ -95,22 +89,5 @@ internal sealed partial class TerminalSurface
         }
 
         return next;
-    }
-
-    private void DiscardRowVisuals(TerminalRowVisuals visuals)
-    {
-        foreach (var run in visuals.Runs)
-        {
-            _textLayer.Children.Remove(run);
-        }
-
-        foreach (var background in visuals.Backgrounds)
-        {
-            _backgroundLayer.Children.Remove(background);
-        }
-
-        foreach (var run in visuals.Runs) { _blinkingRuns.Remove(run); }
-        visuals.Runs.Clear();
-        visuals.Backgrounds.Clear();
     }
 }

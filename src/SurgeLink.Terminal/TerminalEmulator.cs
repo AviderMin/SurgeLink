@@ -37,6 +37,19 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     private bool _g1LineDrawing;
     private bool _shiftOut;
     private bool _joinNextRune;
+    private string? _activeHyperlink;
+
+    /// <summary>
+    /// When true, horizontal resizes reflow wrapped primary-screen and scrollback lines
+    /// to the new column width instead of truncating/hiding right-edge columns.
+    /// </summary>
+    public bool ReflowOnResize { get; set; }
+
+    /// <summary>
+    /// Raised when the remote host sends a bounded write-only OSC 52 clipboard payload.
+    /// Clipboard reads (<c>?</c>) are intentionally never answered.
+    /// </summary>
+    public event Action<string>? ClipboardCopyRequested;
 
     /// <summary>Creates an emulator with the given viewport size and scrollback cap.</summary>
     /// <param name="columns">Initial viewport width in columns.</param>
@@ -176,11 +189,19 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                     return;
                 }
 
-                _primaryScreen.Resize(columns, rows);
-                _alternateScreen.Resize(columns, rows);
-                for (int i = 0; i < _scrollback.Count; i++)
+                if (ReflowOnResize && columns != Columns)
                 {
-                    _scrollback[i].Resize(columns);
+                    _primaryScreen.Reflow(columns, rows, _scrollback);
+                    _alternateScreen.Resize(columns, rows);
+                }
+                else
+                {
+                    _primaryScreen.Resize(columns, rows);
+                    _alternateScreen.Resize(columns, rows);
+                    for (int i = 0; i < _scrollback.Count; i++)
+                    {
+                        _scrollback[i].Resize(columns);
+                    }
                 }
 
                 if (_viewportOffset > _scrollback.Count)
@@ -219,6 +240,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                 _g1LineDrawing = false;
                 _shiftOut = false;
                 _joinNextRune = false;
+                _activeHyperlink = null;
                 MarkDirty();
             }
             finally
@@ -522,7 +544,8 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             _sgr.Background,
             _sgr.Attributes,
             _modes.AutoWrap,
-            _modes.InsertMode);
+            _modes.InsertMode,
+            _activeHyperlink);
     }
 
     private static string? MapDecSpecialGraphics(byte value) => value switch
@@ -601,7 +624,8 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             _sgr.Background,
             _sgr.Attributes,
             _modes.AutoWrap,
-            _modes.InsertMode);
+            _modes.InsertMode,
+            _activeHyperlink);
     }
 
     /// <summary>Executes a C0 control character.</summary>
@@ -791,7 +815,8 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                             _sgr.Background,
                             _sgr.Attributes,
                             _modes.AutoWrap,
-                            _modes.InsertMode);
+                            _modes.InsertMode,
+                            _activeHyperlink);
                     }
                 }
                 break;
@@ -875,6 +900,15 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
     }
 
+    /// <summary>Returns the OSC 8 hyperlink URI attached to the visible cell, or null.</summary>
+    public string? GetHyperlinkAt(int row, int column)
+    {
+        lock (_sync)
+        {
+            return GetCell(row, column).Hyperlink;
+        }
+    }
+
     /// <summary>Handles an OSC string (already terminated by BEL or ST).</summary>
     internal void HandleOsc(ReadOnlySpan<byte> payload)
     {
@@ -885,15 +919,78 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             return;
         }
 
-        // OSC 0/2 set the window title. Icons (1), hyperlinks (8), clipboard (52)
-        // and other operating system commands are ignored.
-        if (command is not (0 or 2))
+        ReadOnlySpan<byte> rest = separator < 0 ? ReadOnlySpan<byte>.Empty : payload[(separator + 1)..];
+        switch (command)
         {
+            case 0:
+            case 2:
+                SetWindowTitle(DecodeWindowTitle(rest));
+                break;
+            case 8:
+                HandleOsc8Hyperlink(rest);
+                break;
+            case 52:
+                HandleOsc52Clipboard(rest);
+                break;
+        }
+    }
+
+    private void HandleOsc8Hyperlink(ReadOnlySpan<byte> rest)
+    {
+        int uriSeparator = rest.IndexOf((byte)';');
+        if (uriSeparator < 0)
+        {
+            _activeHyperlink = null;
             return;
         }
 
-        ReadOnlySpan<byte> textPart = separator < 0 ? ReadOnlySpan<byte>.Empty : payload[(separator + 1)..];
-        SetWindowTitle(DecodeWindowTitle(textPart));
+        ReadOnlySpan<byte> uriBytes = rest[(uriSeparator + 1)..];
+        if (uriBytes.IsEmpty)
+        {
+            _activeHyperlink = null;
+            return;
+        }
+
+        if (uriBytes.Length > 2048) return;
+        string uri = Encoding.UTF8.GetString(uriBytes).Trim();
+        if (uri.Length == 0)
+        {
+            _activeHyperlink = null;
+            return;
+        }
+
+        if (uri.Any(char.IsControl)) return;
+        if (Uri.TryCreate(uri, UriKind.Absolute, out var parsed)
+            && (parsed.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                || parsed.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            _activeHyperlink = parsed.AbsoluteUri;
+        }
+    }
+
+    private void HandleOsc52Clipboard(ReadOnlySpan<byte> rest)
+    {
+        const int maxDecodedBytes = 64 * 1024;
+        int dataSeparator = rest.IndexOf((byte)';');
+        if (dataSeparator < 0) return;
+        ReadOnlySpan<byte> dataBytes = rest[(dataSeparator + 1)..];
+        if (dataBytes.IsEmpty || (dataBytes.Length == 1 && dataBytes[0] == (byte)'?'))
+        {
+            // Never expose local clipboard contents to a remote host.
+            return;
+        }
+        if (dataBytes.Length > ((maxDecodedBytes + 2) / 3) * 4 + 4) return;
+        string base64 = Encoding.ASCII.GetString(dataBytes).Trim();
+        if (base64.Length == 0) return;
+        try
+        {
+            byte[] decoded = Convert.FromBase64String(base64);
+            if (decoded.Length > maxDecodedBytes) return;
+            ClipboardCopyRequested?.Invoke(Encoding.UTF8.GetString(decoded));
+        }
+        catch (FormatException)
+        {
+        }
     }
 
     void IScreenHost.OnScreenChanged() => MarkDirty();
@@ -1375,6 +1472,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         _g1LineDrawing = false;
         _shiftOut = false;
         _joinNextRune = false;
+        _activeHyperlink = null;
         _screen.ResetScrollRegion();
         _screen.MoveCursorAbsolute(0, 0, false);
         MarkDirty();

@@ -1,20 +1,23 @@
+using System.Numerics;
 using Microsoft.Extensions.Logging;
-using Microsoft.UI.Text;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
+using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Text;
+using Microsoft.Graphics.Canvas.UI.Xaml;
 using SurgeLink.Terminal;
-using Windows.UI.Text;
-using Rectangle = Microsoft.UI.Xaml.Shapes.Rectangle;
+using Windows.Foundation;
+using Windows.UI;
 
 namespace SurgeLink.App.Views.Terminal;
 
 /// <summary>
-/// Painting half of <see cref="TerminalSurface"/>: snapshot the grid, diff it row by
-/// row, and update only the visuals of rows that changed.
+/// GPU-accelerated Direct2D/DirectWrite painting half of <see cref="TerminalSurface"/>
+/// powered by Win2D <see cref="CanvasControl"/>. Captures immutable row snapshots under
+/// the emulator lock and renders merged background bands, text runs and decorations
+/// directly in one draw pass with zero per-row XAML elements.
 /// </summary>
 internal sealed partial class TerminalSurface
 {
-    /// <summary>Paints everything that changed since the last frame.</summary>
+    /// <summary>Captures any changed rows and triggers a Win2D frame repaint.</summary>
     private void Paint()
     {
         _paintQueued = false;
@@ -67,196 +70,239 @@ internal sealed partial class TerminalSurface
             }
         }
 
-        repaintAll |= visibleColumns != _paintedColumns;
+        repaintAll |= visibleColumns != _paintedColumns || visibleRows != _paintedRowCount;
+        bool anyRowChanged = repaintAll;
+        bool hasBlinking = false;
 
         for (int row = 0; row < visibleRows; row++)
         {
-            if (!repaintAll && TerminalRowSnapshot.AreEqual(_paintedRows[row], _scratchRows[row], visibleColumns))
+            if (repaintAll || !TerminalRowSnapshot.AreEqual(_paintedRows[row], _scratchRows[row], visibleColumns))
             {
-                continue;
+                (_paintedRows[row], _scratchRows[row]) = (_scratchRows[row], _paintedRows[row]);
+                anyRowChanged = true;
             }
 
-            PaintRow(row, _scratchRows[row], visibleColumns, metrics, resolver);
-
-            // The scratch row is now the painted row; the old snapshot becomes scratch.
-            (_paintedRows[row], _scratchRows[row]) = (_scratchRows[row], _paintedRows[row]);
+            if (!hasBlinking)
+            {
+                var styles = _paintedRows[row].Style;
+                for (int col = 0; col < visibleColumns; col++)
+                {
+                    if ((styles[col].Attributes & CellAttributes.Blink) != 0)
+                    {
+                        hasBlinking = true;
+                        break;
+                    }
+                }
+            }
         }
 
-        for (int row = visibleRows; row < _rowVisuals.Length; row++)
-        {
-            HideRow(_rowVisuals[row]);
-        }
-
+        _hasBlinkingCells = hasBlinking;
         _paintedColumns = visibleColumns;
         _paintedRowCount = visibleRows;
         _paintedVersion = version;
         _forcePaint = false;
         _allRowsDirty = false;
 
+        if (anyRowChanged)
+        {
+            _canvas.Invalidate();
+        }
+
         PaintCursor(metrics, resolver);
         LogLayoutOnce();
     }
 
-    private void PaintRow(int row, TerminalRowSnapshot snapshot, int columns, TerminalMetrics metrics, TerminalStyleResolver resolver)
+    private void OnCanvasDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
-        var visuals = _rowVisuals[row];
-        double top = row * metrics.CellHeight;
-
-        int backgroundCount = PaintBackgrounds(visuals, snapshot, columns, metrics, resolver, top);
-        int runCount = PaintRuns(visuals, snapshot, columns, metrics, resolver, top);
-
-        for (int i = backgroundCount; i < visuals.Backgrounds.Count; i++)
+        TerminalMetrics? metrics = _metrics;
+        TerminalStyleResolver? resolver = _resolver;
+        if (metrics is null || resolver is null || _paintedRowCount <= 0 || _paintedColumns <= 0)
         {
-            visuals.Backgrounds[i].Visibility = Visibility.Collapsed;
+            return;
         }
 
-        for (int i = runCount; i < visuals.Runs.Count; i++)
+        CanvasDrawingSession ds = args.DrawingSession;
+        ds.Clear(ToColor(resolver.DefaultBackground));
+        ds.TextAntialiasing = CanvasTextAntialiasing.ClearType;
+
+        float cellWidth = (float)metrics.CellWidth;
+        float cellHeight = (float)metrics.CellHeight;
+        int columns = _paintedColumns;
+        int rows = Math.Min(_paintedRowCount, _paintedRows.Length);
+        uint defaultBackground = resolver.DefaultBackground;
+
+        // Pass 1: merged horizontal background bands.
+        for (int row = 0; row < rows; row++)
         {
-            visuals.Runs[i].Visibility = Visibility.Collapsed;
+            TerminalRowSnapshot snapshot = _paintedRows[row];
+            if (snapshot.Style.Length < columns) continue;
+            float top = row * cellHeight;
+            int col = 0;
+            while (col < columns)
+            {
+                uint bg = snapshot.Style[col].Background;
+                if (bg == defaultBackground)
+                {
+                    col++;
+                    continue;
+                }
+
+                int start = col;
+                col++;
+                while (col < columns && snapshot.Style[col].Background == bg)
+                {
+                    col++;
+                }
+
+                ds.FillRectangle(
+                    new Rect(start * cellWidth, top, (col - start) * cellWidth + 0.5f, cellHeight + 0.5f),
+                    ToColor(bg));
+            }
+        }
+
+        // Pass 2: merged text runs and cell decorations (underline, strikethrough, hyperlinks).
+        for (int row = 0; row < rows; row++)
+        {
+            TerminalRowSnapshot snapshot = _paintedRows[row];
+            if (snapshot.Text.Length < columns) continue;
+            float top = row * cellHeight;
+            DrawRowTextAndDecorations(ds, snapshot, columns, cellWidth, cellHeight, top);
         }
     }
 
-    /// <summary>Emits one rectangle per run of cells sharing a non-default background.</summary>
-    private int PaintBackgrounds(
-        TerminalRowVisuals visuals,
+    private void DrawRowTextAndDecorations(
+        CanvasDrawingSession ds,
         TerminalRowSnapshot snapshot,
         int columns,
-        TerminalMetrics metrics,
-        TerminalStyleResolver resolver,
-        double top)
+        float cellWidth,
+        float cellHeight,
+        float top)
     {
-        int count = 0;
-        int column = 0;
-        uint transparent = resolver.DefaultBackground;
-
-        while (column < columns)
+        int col = 0;
+        while (col < columns)
         {
-            uint background = snapshot.Style[column].Background;
-            if (background == transparent)
+            if (snapshot.Width[col] == CellWidth.Continuation)
             {
-                column++;
+                col++;
                 continue;
             }
 
-            int start = column;
-            while (column < columns && snapshot.Style[column].Background == background)
+            TerminalCellStyle style = snapshot.Style[col];
+            bool hasLink = snapshot.HasHyperlink[col];
+            bool blinkHidden = (style.Attributes & CellAttributes.Blink) != 0 && !_blinkOn;
+            string cellText = snapshot.Text[col];
+
+            // Wide or multi-char (combining/emoji) glyphs are placed at their exact cell
+            // coordinate so DirectWrite shaping never shifts following columns off-grid.
+            bool isSingleAsciiCell = snapshot.Width[col] == CellWidth.Narrow
+                && cellText.Length == 1
+                && cellText[0] < 0x80;
+
+            int start = col;
+            if (isSingleAsciiCell)
             {
-                column++;
+                _runBuilder.Clear();
+                _runBuilder.Append(cellText);
+                col++;
+                while (col < columns
+                    && snapshot.Width[col] == CellWidth.Narrow
+                    && snapshot.Style[col].Foreground == style.Foreground
+                    && SameTextStyle(snapshot.Style[col].Attributes, style.Attributes)
+                    && snapshot.HasHyperlink[col] == hasLink)
+                {
+                    string nextText = snapshot.Text[col];
+                    if (nextText.Length != 1 || nextText[0] >= 0x80) break;
+                    _runBuilder.Append(nextText);
+                    col++;
+                }
+
+                string runText = _runBuilder.ToString();
+                if (!blinkHidden && !IsBlank(runText))
+                {
+                    DrawGlyphRun(ds, runText, start * cellWidth, top, style);
+                }
+
+                DrawDecorations(ds, start, col - start, cellWidth, cellHeight, top, style, hasLink, blinkHidden);
             }
+            else
+            {
+                int spanCols = snapshot.Width[col] == CellWidth.Wide ? 2 : 1;
+                col += spanCols;
+                if (!blinkHidden && !IsBlank(cellText))
+                {
+                    DrawGlyphRun(ds, cellText, start * cellWidth, top, style);
+                }
 
-            Rectangle rect = GetBackground(visuals, count++);
-            rect.Fill = resolver.Brush(background);
-            rect.Width = (column - start) * metrics.CellWidth;
-            rect.Height = metrics.CellHeight;
-            Canvas.SetLeft(rect, start * metrics.CellWidth);
-            Canvas.SetTop(rect, top);
-            rect.Visibility = Visibility.Visible;
+                DrawDecorations(ds, start, spanCols, cellWidth, cellHeight, top, style, hasLink, blinkHidden);
+            }
         }
-
-        return count;
     }
 
-    /// <summary>Emits one text block per run of cells sharing a foreground style.</summary>
-    private int PaintRuns(
-        TerminalRowVisuals visuals,
-        TerminalRowSnapshot snapshot,
-        int columns,
-        TerminalMetrics metrics,
-        TerminalStyleResolver resolver,
-        double top)
-    {
-        int count = 0;
-        int column = 0;
-
-        while (column < columns)
-        {
-            CellWidth width = snapshot.Width[column];
-            if (width == CellWidth.Continuation)
-            {
-                // The right half of a wide glyph carries no text of its own; the wide
-                // cell that owns it already painted the glyph across both columns.
-                column++;
-                continue;
-            }
-
-            TerminalCellStyle style = snapshot.Style[column];
-            if (width == CellWidth.Wide)
-            {
-                // A wide glyph is painted on its own so a proportional fallback cannot
-                // shift the runs that follow it.
-                count = EmitRun(visuals, count, column, snapshot.Text[column], style, metrics, resolver, top);
-                column += 2;
-                continue;
-            }
-
-            int start = column;
-            _runBuilder.Clear();
-            while (column < columns && snapshot.Width[column] == CellWidth.Narrow && snapshot.Style[column] == style)
-            {
-                _runBuilder.Append(snapshot.Text[column]);
-                column++;
-            }
-
-            count = EmitRun(visuals, count, start, _runBuilder.ToString(), style, metrics, resolver, top);
-        }
-
-        return count;
-    }
-
-    private int EmitRun(
-        TerminalRowVisuals visuals,
-        int index,
-        int column,
+    private void DrawGlyphRun(
+        CanvasDrawingSession ds,
         string text,
-        TerminalCellStyle style,
-        TerminalMetrics metrics,
-        TerminalStyleResolver resolver,
-        double top)
+        float left,
+        float top,
+        TerminalCellStyle style)
     {
-        if (text.Length == 0 && style.Attributes == CellAttributes.None)
+        bool bold = (style.Attributes & CellAttributes.Bold) != 0;
+        bool italic = (style.Attributes & CellAttributes.Italic) != 0;
+        CanvasTextFormat? format = (bold, italic) switch
         {
-            // Continuation half of a wide glyph: nothing to draw.
-            return index;
-        }
+            (true, true) => _formatBoldItalic,
+            (true, false) => _formatBold,
+            (false, true) => _formatItalic,
+            _ => _formatRegular,
+        };
+        if (format is null) return;
 
-        TextDecorations decorations = default;
-        if ((style.Attributes & CellAttributes.Underline) != 0)
-        {
-            decorations |= TextDecorations.Underline;
-        }
-
-        if ((style.Attributes & CellAttributes.Strikethrough) != 0)
-        {
-            decorations |= TextDecorations.Strikethrough;
-        }
-
-        if (decorations == default && IsBlank(text))
-        {
-            // Blank cells cost nothing: the background band already painted them.
-            return index;
-        }
-
-        TextBlock block = GetRun(visuals, index);
-        block.Text = text;
-        block.Foreground = resolver.Brush(style.Foreground);
-        block.FontWeight = (style.Attributes & CellAttributes.Bold) != 0 ? FontWeights.Bold : FontWeights.Normal;
-        block.FontStyle = (style.Attributes & CellAttributes.Italic) != 0 ? FontStyle.Italic : FontStyle.Normal;
-        block.TextDecorations = decorations;
-        if ((style.Attributes & CellAttributes.Blink) != 0)
-        {
-            _blinkingRuns.Add(block);
-            block.Opacity = _blinkOn ? 1 : 0;
-        }
-        else
-        {
-            _blinkingRuns.Remove(block);
-            block.Opacity = 1;
-        }
-        Canvas.SetLeft(block, column * metrics.CellWidth);
-        Canvas.SetTop(block, top);
-        block.Visibility = Visibility.Visible;
-        return index + 1;
+        Color color = ToColor(style.Foreground, dim: (style.Attributes & CellAttributes.Dim) != 0);
+        ds.DrawText(text, left, top, color, format);
     }
+
+    private static void DrawDecorations(
+        CanvasDrawingSession ds,
+        int startCol,
+        int spanCols,
+        float cellWidth,
+        float cellHeight,
+        float top,
+        TerminalCellStyle style,
+        bool hasLink,
+        bool blinkHidden)
+    {
+        if (blinkHidden) return;
+        bool underline = (style.Attributes & CellAttributes.Underline) != 0 || hasLink;
+        bool strike = (style.Attributes & CellAttributes.Strikethrough) != 0;
+        if (!underline && !strike) return;
+
+        Color color = ToColor(style.Foreground, dim: (style.Attributes & CellAttributes.Dim) != 0);
+        float x0 = startCol * cellWidth;
+        float x1 = (startCol + spanCols) * cellWidth;
+        if (underline)
+        {
+            float y = top + cellHeight - 1.5f;
+            ds.DrawLine(new Vector2(x0, y), new Vector2(x1, y), color, 1f);
+        }
+        if (strike)
+        {
+            float y = top + cellHeight * 0.55f;
+            ds.DrawLine(new Vector2(x0, y), new Vector2(x1, y), color, 1f);
+        }
+    }
+
+    private static bool SameTextStyle(CellAttributes left, CellAttributes right)
+    {
+        const CellAttributes mask = CellAttributes.Bold | CellAttributes.Italic | CellAttributes.Dim
+            | CellAttributes.Underline | CellAttributes.Strikethrough | CellAttributes.Blink;
+        return (left & mask) == (right & mask);
+    }
+
+    private static Color ToColor(uint rgb, bool dim = false) => Color.FromArgb(
+        dim ? (byte)153 : (byte)255,
+        (byte)((rgb >> 16) & 0xFF),
+        (byte)((rgb >> 8) & 0xFF),
+        (byte)(rgb & 0xFF));
 
     private static bool IsBlank(string text)
     {
@@ -271,54 +317,7 @@ internal sealed partial class TerminalSurface
         return true;
     }
 
-    private TextBlock GetRun(TerminalRowVisuals visuals, int index)
-    {
-        while (visuals.Runs.Count <= index)
-        {
-            var block = new TextBlock
-            {
-                IsHitTestVisible = false,
-                IsTextScaleFactorEnabled = false,
-                TextWrapping = TextWrapping.NoWrap,
-            };
-
-            StyleRun(block, _metrics!);
-            visuals.Runs.Add(block);
-            _textLayer.Children.Add(block);
-        }
-
-        return visuals.Runs[index];
-    }
-
-    private Rectangle GetBackground(TerminalRowVisuals visuals, int index)
-    {
-        while (visuals.Backgrounds.Count <= index)
-        {
-            var rect = new Rectangle { IsHitTestVisible = false };
-            visuals.Backgrounds.Add(rect);
-            _backgroundLayer.Children.Add(rect);
-        }
-
-        return visuals.Backgrounds[index];
-    }
-
-    private void HideRow(TerminalRowVisuals visuals)
-    {
-        foreach (var run in visuals.Runs)
-        {
-            run.Visibility = Visibility.Collapsed;
-        }
-
-        foreach (var background in visuals.Backgrounds)
-        {
-            background.Visibility = Visibility.Collapsed;
-        }
-    }
-
-    /// <summary>
-    /// Logs the live element count once per distinct layout. This is the number that
-    /// proves the renderer never creates one element per cell.
-    /// </summary>
+    /// <summary>Logs the live grid dimensions once per distinct layout.</summary>
     private void LogLayoutOnce()
     {
         if (_logger is null)
@@ -326,29 +325,7 @@ internal sealed partial class TerminalSurface
             return;
         }
 
-        int runs = 0;
-        int bands = 0;
-        for (int row = 0; row < _paintedRowCount && row < _rowVisuals.Length; row++)
-        {
-            var visuals = _rowVisuals[row];
-            for (int i = 0; i < visuals.Runs.Count; i++)
-            {
-                if (visuals.Runs[i].Visibility == Visibility.Visible)
-                {
-                    runs++;
-                }
-            }
-
-            for (int i = 0; i < visuals.Backgrounds.Count; i++)
-            {
-                if (visuals.Backgrounds[i].Visibility == Visibility.Visible)
-                {
-                    bands++;
-                }
-            }
-        }
-
-        string signature = _paintedColumns + "x" + _paintedRowCount + ":" + runs + ":" + bands;
+        string signature = _paintedColumns + "x" + _paintedRowCount + ":win2d";
         if (string.Equals(signature, _loggedLayout, StringComparison.Ordinal))
         {
             return;
@@ -356,11 +333,8 @@ internal sealed partial class TerminalSurface
 
         _loggedLayout = signature;
         _logger.LogDebug(
-            "Terminal painted {Columns}x{Rows} grid with {Runs} text runs, {Bands} background bands, {Elements} elements total",
+            "Terminal rendering {Columns}x{Rows} grid via Win2D Direct2D/DirectWrite",
             _paintedColumns,
-            _paintedRowCount,
-            runs,
-            bands,
-            runs + bands);
+            _paintedRowCount);
     }
 }

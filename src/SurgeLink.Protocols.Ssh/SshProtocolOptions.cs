@@ -37,6 +37,12 @@ public sealed class SshProtocolOptions
     /// <summary>Option key overriding the timeout of remote commands, in seconds.</summary>
     public const string CommandTimeoutSecondsKey = "commandTimeoutSeconds";
 
+    /// <summary>Option key specifying an SSH bastion / jump host (<c>[user@]host[:port]</c>).</summary>
+    public const string ProxyJumpKey = "proxyJump";
+
+    /// <summary>Option key specifying semicolon-delimited port forwards (<c>L:</c>, <c>R:</c>, <c>D:</c>).</summary>
+    public const string PortForwardsKey = "portForwards";
+
     /// <summary>Default TERM value.</summary>
     public const string DefaultTerminalType = "xterm-256color";
 
@@ -67,6 +73,8 @@ public sealed class SshProtocolOptions
         CommandTimeout = ClampSeconds(
             ParseDouble(request.GetOption(CommandTimeoutSecondsKey, string.Empty), DefaultCommandTimeoutSeconds));
         ConnectTimeout = ClampConnectTimeout(request.ConnectTimeout);
+        ProxyJump = FirstNonEmpty(ProxyJumpKey, ProxyJumpKey);
+        PortForwardsRaw = FirstNonEmpty(PortForwardsKey, PortForwardsKey);
     }
 
     /// <summary>The request this view was created from.</summary>
@@ -95,6 +103,12 @@ public sealed class SshProtocolOptions
 
     /// <summary>Connection timeout, clamped to a sane range.</summary>
     public TimeSpan ConnectTimeout { get; }
+
+    /// <summary>Optional SSH jump host (<c>[user@]host[:port]</c>).</summary>
+    public string? ProxyJump { get; }
+
+    /// <summary>Optional raw port forwarding specification string.</summary>
+    public string? PortForwardsRaw { get; }
 
     /// <summary>
     /// Resolves an encoding name to an <see cref="Encoding"/> instance. Unknown or

@@ -295,7 +295,8 @@ internal sealed class ScreenBuffer
         TerminalColor background,
         CellAttributes attributes,
         bool autoWrap,
-        bool insertMode)
+        bool insertMode,
+        string? hyperlink = null)
     {
         if (_columns < 1)
         {
@@ -368,7 +369,8 @@ internal sealed class ScreenBuffer
             foreground,
             background,
             attributes,
-            width == 2 ? CellWidth.Wide : CellWidth.Narrow);
+            width == 2 ? CellWidth.Wide : CellWidth.Narrow,
+            hyperlink);
         if (width == 2)
         {
             cells[_cursorColumn + 1] = new TerminalCell(
@@ -376,7 +378,8 @@ internal sealed class ScreenBuffer
                 foreground,
                 background,
                 attributes,
-                CellWidth.Continuation);
+                CellWidth.Continuation,
+                hyperlink);
         }
 
         _cursorColumn += width;
@@ -721,6 +724,203 @@ internal sealed class ScreenBuffer
         _scrollBottom = _rows - 1;
         _host.OnScreenChanged();
     }
+
+    /// <summary>
+    /// Reflows the combined scrollback + primary screen buffer to a new width/height,
+    /// re-wrapping logical lines along <see cref="CellLine.Wrapped"/> boundaries and
+    /// preserving the cursor's logical position.
+    /// </summary>
+    public void Reflow(int columns, int rows, ScrollbackBuffer scrollback)
+    {
+        if (columns == _columns && rows == _rows)
+        {
+            return;
+        }
+
+        if (_isAlternate || columns == _columns)
+        {
+            Resize(columns, rows);
+            return;
+        }
+
+        // Determine how many primary-screen rows carry content or the cursor.
+        int activeRows = _cursorRow + 1;
+        for (int r = _rows - 1; r >= activeRows; r--)
+        {
+            if (!IsRowBlank(_lines[r]))
+            {
+                activeRows = r + 1;
+                break;
+            }
+        }
+
+        int scrollCount = scrollback.Count;
+        int totalInputRows = scrollCount + activeRows;
+        int cursorAbsRow = scrollCount + _cursorRow;
+        int cursorLogicalCol = _pendingWrap ? _cursorColumn + 1 : _cursorColumn;
+
+        var reflowed = new List<CellLine>(Math.Max(rows, totalInputRows));
+        int newCursorAbsRow = 0;
+        int newCursorCol = 0;
+        bool newPendingWrap = false;
+        bool cursorMapped = false;
+
+        int i = 0;
+        while (i < totalInputRows)
+        {
+            int groupStart = i;
+            while (i + 1 < totalInputRows && GetCombinedLine(scrollback, i).Wrapped)
+            {
+                i++;
+            }
+            int groupEnd = i;
+            i++;
+
+            bool groupHasCursor = cursorAbsRow >= groupStart && cursorAbsRow <= groupEnd;
+            int cursorOffsetInGroup = -1;
+            var logicalCells = new List<TerminalCell>();
+
+            for (int r = groupStart; r <= groupEnd; r++)
+            {
+                CellLine src = GetCombinedLine(scrollback, r);
+                int srcLen = src.Length;
+                int copyLen = srcLen;
+                if (r == groupEnd)
+                {
+                    // Trim trailing blank cells on the last physical row of the logical line,
+                    // but never trim before the cursor position if the cursor is on this row.
+                    int minKeep = (groupHasCursor && r == cursorAbsRow) ? Math.Min(cursorLogicalCol, srcLen) : 0;
+                    while (copyLen > minKeep && src.GetCell(copyLen - 1) == TerminalCell.Blank)
+                    {
+                        copyLen--;
+                    }
+                }
+                else if (copyLen > 0
+                    && src.GetCell(copyLen - 1) == TerminalCell.Blank
+                    && GetCombinedLine(scrollback, r + 1).GetCell(0).Width == CellWidth.Wide)
+                {
+                    // A wide glyph at the start of the next wrapped row left one padding
+                    // blank at the right edge; drop it so re-widening stays lossless.
+                    copyLen--;
+                }
+
+                if (groupHasCursor && r == cursorAbsRow)
+                {
+                    cursorOffsetInGroup = logicalCells.Count + Math.Min(cursorLogicalCol, copyLen);
+                }
+
+                for (int c = 0; c < copyLen; c++)
+                {
+                    TerminalCell cell = src.GetCell(c);
+                    if (cell.Width == CellWidth.Continuation)
+                    {
+                        continue;
+                    }
+                    logicalCells.Add(cell);
+                }
+            }
+
+            if (groupHasCursor && cursorOffsetInGroup < 0)
+            {
+                cursorOffsetInGroup = logicalCells.Count;
+            }
+
+            // Re-emit logicalCells into new physical lines of width `columns`.
+            int emittedStart = reflowed.Count;
+            var currentLine = new CellLine(columns);
+            int col = 0;
+            int logicalPos = 0;
+
+            for (int idx = 0; idx < logicalCells.Count; idx++)
+            {
+                if (groupHasCursor && !cursorMapped && logicalPos == cursorOffsetInGroup)
+                {
+                    newCursorAbsRow = reflowed.Count;
+                    newCursorCol = Math.Min(col, columns - 1);
+                    newPendingWrap = col >= columns;
+                    cursorMapped = true;
+                }
+
+                TerminalCell cell = logicalCells[idx];
+                int width = cell.Width == CellWidth.Wide && columns >= 2 ? 2 : 1;
+                if (col + width > columns)
+                {
+                    currentLine.Wrapped = true;
+                    reflowed.Add(currentLine);
+                    currentLine = new CellLine(columns);
+                    col = 0;
+                }
+
+                currentLine.Cells[col] = width == 2 ? cell : (cell.Width == CellWidth.Wide ? cell with { Width = CellWidth.Narrow } : cell);
+                if (width == 2)
+                {
+                    currentLine.Cells[col + 1] = new TerminalCell(
+                        string.Empty,
+                        cell.Foreground,
+                        cell.Background,
+                        cell.Attributes,
+                        CellWidth.Continuation,
+                        cell.Hyperlink);
+                }
+
+                col += width;
+                logicalPos += cell.Width == CellWidth.Wide ? 2 : 1;
+            }
+
+            if (groupHasCursor && !cursorMapped)
+            {
+                newCursorAbsRow = reflowed.Count;
+                if (col >= columns)
+                {
+                    newCursorCol = columns - 1;
+                    newPendingWrap = true;
+                }
+                else
+                {
+                    newCursorCol = col;
+                    newPendingWrap = false;
+                }
+                cursorMapped = true;
+            }
+
+            reflowed.Add(currentLine);
+            _ = emittedStart;
+        }
+
+        // Split reflowed lines between scrollback and the visible primary screen.
+        int overflow = Math.Max(0, reflowed.Count - rows);
+        scrollback.Clear();
+        int scrollStart = Math.Max(0, overflow - scrollback.Limit);
+        for (int s = scrollStart; s < overflow; s++)
+        {
+            _ = scrollback.Add(reflowed[s]);
+        }
+
+        var newLines = new CellLine[rows];
+        int keep = Math.Min(rows, reflowed.Count - overflow);
+        for (int r = 0; r < keep; r++)
+        {
+            newLines[r] = reflowed[overflow + r];
+        }
+        for (int r = keep; r < rows; r++)
+        {
+            newLines[r] = new CellLine(columns);
+        }
+
+        _lines = newLines;
+        _columns = columns;
+        _rows = rows;
+        _tabStops = CreateTabStops(columns);
+        _cursorRow = Math.Clamp(newCursorAbsRow - overflow, 0, _rows - 1);
+        _cursorColumn = Math.Clamp(newCursorCol, 0, _columns - 1);
+        _pendingWrap = newPendingWrap;
+        _scrollTop = 0;
+        _scrollBottom = _rows - 1;
+        _host.OnScreenChanged();
+    }
+
+    private CellLine GetCombinedLine(ScrollbackBuffer scrollback, int index) =>
+        index < scrollback.Count ? scrollback[index] : _lines[index - scrollback.Count];
 
     private static bool IsRowBlank(CellLine line)
     {

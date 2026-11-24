@@ -29,6 +29,9 @@ public sealed class SshSession : IProtocolSession
     private readonly ProtocolDescriptor _descriptor;
     private readonly SshCommandRunner _runner;
     private readonly ILogger<SshSession> _logger;
+    private readonly IReadOnlyList<ForwardedPort> _forwardedPorts;
+    private readonly ForwardedPortLocal? _jumpTunnel;
+    private readonly SshClient? _jumpClient;
     private readonly object _gate = new();
     private readonly string _sessionId;
 
@@ -49,13 +52,19 @@ public sealed class SshSession : IProtocolSession
         SshConnectionFactory factory,
         SshProtocolOptions options,
         ProtocolDescriptor descriptor,
-        ILogger<SshSession> logger)
+        ILogger<SshSession> logger,
+        IReadOnlyList<ForwardedPort>? forwardedPorts = null,
+        ForwardedPortLocal? jumpTunnel = null,
+        SshClient? jumpClient = null)
     {
         _client = client;
         _factory = factory;
         _options = options;
         _descriptor = descriptor;
         _logger = logger;
+        _forwardedPorts = forwardedPorts ?? Array.Empty<ForwardedPort>();
+        _jumpTunnel = jumpTunnel;
+        _jumpClient = jumpClient;
         _sessionId = Guid.NewGuid().ToString("n");
         _runner = new SshCommandRunner(client, options.Encoding, options.CommandTimeout);
         _client.ErrorOccurred += OnTransportError;
@@ -274,6 +283,12 @@ public sealed class SshSession : IProtocolSession
             }
         }
 
+        foreach (var port in _forwardedPorts)
+        {
+            try { port.Stop(); } catch (Exception ex) { _logger.LogDebug(ex, "Failed to stop forwarded port."); }
+            try { port.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "Failed to dispose forwarded port."); }
+        }
+
         _client.ErrorOccurred -= OnTransportError;
         try
         {
@@ -294,6 +309,17 @@ public sealed class SshSession : IProtocolSession
         catch (Exception exception)
         {
             _logger.LogDebug(exception, "Failed to dispose {SessionId} cleanly.", _sessionId);
+        }
+
+        if (_jumpTunnel is not null)
+        {
+            try { _jumpTunnel.Stop(); } catch (Exception ex) { _logger.LogDebug(ex, "Failed to stop jump tunnel."); }
+            try { _jumpTunnel.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "Failed to dispose jump tunnel."); }
+        }
+        if (_jumpClient is not null)
+        {
+            try { if (_jumpClient.IsConnected) _jumpClient.Disconnect(); } catch (Exception ex) { _logger.LogDebug(ex, "Failed to disconnect jump client."); }
+            try { _jumpClient.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "Failed to dispose jump client."); }
         }
 
         SetState(ConnectionState.Disconnected);

@@ -291,4 +291,85 @@ public sealed class TerminalRegressionTests
         Assert.Equal("\U0001F3FD", atStart.Cell(0, 0).Text);
         Assert.True(atStart.Cursor.Column > 0);
     }
+
+    [Fact]
+    public void Osc8HyperlinkAttachesSafeHttpUriAndRejectsUnsafeSchemes()
+    {
+        var terminal = new TestTerminal(30, 3);
+        terminal.Feed("\u001b]8;;https://example.com/docs\u0007Docs\u001b]8;;\u0007 plain");
+
+        Assert.Equal("https://example.com/docs", terminal.Emulator.GetHyperlinkAt(0, 0));
+        Assert.Equal("https://example.com/docs", terminal.Emulator.GetHyperlinkAt(0, 3));
+        Assert.Null(terminal.Emulator.GetHyperlinkAt(0, 5));
+
+        // Unsafe schemes must be ignored.
+        terminal.Feed("\r\n\u001b]8;;file:///C:/Windows/win.ini\u0007bad\u001b]8;;\u0007");
+        Assert.Null(terminal.Emulator.GetHyperlinkAt(1, 0));
+
+        // Soft reset must clear active hyperlink state.
+        terminal.Feed("\u001b]8;;https://example.com\u0007\u001b[!pA");
+        Assert.Null(terminal.Emulator.GetHyperlinkAt(0, 0));
+    }
+
+    [Fact]
+    public void Osc52ClipboardEmitsDecodedPayloadAndIgnoresReadQueries()
+    {
+        var terminal = new TestTerminal(20, 2);
+        string? copied = null;
+        terminal.Emulator.ClipboardCopyRequested += text => copied = text;
+
+        // Read query ("?") must never fire the event.
+        terminal.Feed("\u001b]52;c;?\u0007");
+        Assert.Null(copied);
+
+        // Write payload ("hello 世界") is decoded and emitted.
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes("hello 世界"));
+        terminal.Feed($"\u001b]52;c;{b64}\u001b\\");
+        Assert.Equal("hello 世界", copied);
+    }
+
+    [Fact]
+    public void ReflowOnResizeWrapsOnShrinkAndUnwrapsOnWidenLosslessly()
+    {
+        var terminal = new TestTerminal(10, 4);
+        terminal.Emulator.ReflowOnResize = true;
+        terminal.Feed("ab中efghij");
+
+        terminal.Emulator.Resize(5, 4);
+        Assert.Equal("ab中e", terminal.Line(0));
+        Assert.Equal("fghij", terminal.Line(1));
+
+        // Narrowing further to 3 puts the wide glyph on the next row without splitting it.
+        terminal.Emulator.Resize(3, 5);
+        Assert.Equal("ab", terminal.Line(0));
+        Assert.Equal("中e", terminal.Line(1));
+        Assert.Equal("fgh", terminal.Line(2));
+        Assert.Equal("ij", terminal.Line(3));
+
+        // Widening back to 10 restores the exact original logical line without stray spaces.
+        terminal.Emulator.Resize(10, 4);
+        Assert.Equal("ab中efghij", terminal.Line(0));
+        Assert.Equal(string.Empty, terminal.Line(1));
+    }
+
+    [Fact]
+    public void ReflowOnResizePreservesScrollbackAndDoesNotReflowAlternateScreen()
+    {
+        var terminal = new TestTerminal(10, 3);
+        terminal.Emulator.ReflowOnResize = true;
+        terminal.Feed("0123456789\r\nsecond");
+
+        terminal.Emulator.Resize(5, 3);
+        // "0123456789" wraps to 2 rows + "second" wraps to 2 rows = 4 rows -> 1 line in scrollback.
+        Assert.Equal(1, terminal.Emulator.ScrollbackLength);
+        Assert.Equal("56789", terminal.Line(0));
+        Assert.Equal("secon", terminal.Line(1));
+        Assert.Equal("d", terminal.Line(2));
+
+        // Alternate screen must not reflow.
+        terminal.Feed("\u001b[?1049h\u001b[1;1H12345");
+        terminal.Emulator.Resize(3, 3);
+        Assert.Equal("123", terminal.Line(0));
+        Assert.Equal(string.Empty, terminal.Line(1));
+    }
 }

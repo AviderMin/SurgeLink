@@ -1,9 +1,12 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Graphics.Canvas.Text;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.Terminal;
+using Windows.UI.Text;
 
 namespace SurgeLink.App.Views.Terminal;
 
@@ -79,16 +82,27 @@ internal sealed partial class TerminalSurface
 
     private void ApplyRunFont(TerminalMetrics metrics)
     {
-        foreach (var row in _rowVisuals)
-        {
-            foreach (var run in row.Runs)
-            {
-                StyleRun(run, metrics);
-            }
-        }
+        _formatRegular?.Dispose();
+        _formatBold?.Dispose();
+        _formatItalic?.Dispose();
+        _formatBoldItalic?.Dispose();
+
+        _formatRegular = CreateCanvasTextFormat(metrics, FontWeights.Normal, FontStyle.Normal);
+        _formatBold = CreateCanvasTextFormat(metrics, FontWeights.SemiBold, FontStyle.Normal);
+        _formatItalic = CreateCanvasTextFormat(metrics, FontWeights.Normal, FontStyle.Italic);
+        _formatBoldItalic = CreateCanvasTextFormat(metrics, FontWeights.SemiBold, FontStyle.Italic);
 
         StyleRun(_cursorGlyph, metrics);
     }
+
+    private static CanvasTextFormat CreateCanvasTextFormat(TerminalMetrics metrics, FontWeight weight, FontStyle style) => new()
+    {
+        FontFamily = metrics.FontFamilyName,
+        FontSize = (float)metrics.FontSize,
+        FontWeight = weight,
+        FontStyle = style,
+        WordWrapping = CanvasWordWrapping.NoWrap,
+    };
 
     private static void StyleRun(TextBlock block, TerminalMetrics metrics)
     {
