@@ -36,14 +36,27 @@ public sealed class ResizeTests
     }
 
     [Fact]
-    public void ShrinkingRowsKeepsTopContent()
+    public void ShrinkingRowsScrollsTopIntoHistoryToKeepActiveBottomRows()
     {
         var terminal = new TestTerminal(10, 5);
         terminal.Feed("1\r\n2\r\n3\r\n4\r\n5");
         terminal.Emulator.Resize(10, 2);
         Assert.Equal(2, terminal.Emulator.Rows);
+        Assert.Equal("4", terminal.Line(0));
+        Assert.Equal("5", terminal.Line(1));
+        Assert.Equal(3, terminal.Emulator.ScrollbackLength);
+    }
+
+    [Fact]
+    public void ShrinkingRowsTrimsUnusedBlankBottomRowsWithoutScrolling()
+    {
+        var terminal = new TestTerminal(10, 5);
+        terminal.Feed("1\r\n2");
+        terminal.Emulator.Resize(10, 2);
+        Assert.Equal(2, terminal.Emulator.Rows);
         Assert.Equal("1", terminal.Line(0));
         Assert.Equal("2", terminal.Line(1));
+        Assert.Equal(0, terminal.Emulator.ScrollbackLength);
     }
 
     [Fact]

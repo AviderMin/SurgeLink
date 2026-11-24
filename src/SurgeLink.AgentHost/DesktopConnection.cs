@@ -49,7 +49,7 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
     public Task<AgentResponse> SendAsync(AgentRequest request, CancellationToken ct)
     {
         if (request.Method == "desktops.list") return SendCoreAsync(request, ct);
-        if (request.Method is not ("desktops.select" or "terminal.text" or "terminal.key"))
+        if (request.Method is not ("desktops.select" or "terminal.text" or "terminal.key" or "terminal.exec"))
         {
             Task? selection;
             lock (_orderedGate) selection = _selectionBarrier;
@@ -107,6 +107,7 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
             return await new AgentClient(AgentEndpoint.ForProcess(desktop)).SendAsync(request, ct).ConfigureAwait(false);
         }
         catch (AgentDesktopDiscoveryException ex) { return DiscoveryError(ex.ErrorCode, ex.Message, ex.ProcessIds); }
+        catch (AgentFrameTooLargeException ex) { return AgentResponse.Error("request_too_large", ex.Message); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return AgentResponse.Error("cancelled", "The request was cancelled."); }
         catch (OperationCanceledException)
         { return DiscoveryError("desktop_ipc_timeout", "The desktop did not respond before the request deadline. For uncertain terminal input, preserve the original operation ID and arguments; observe before retrying."); }
@@ -270,11 +271,12 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
         }
     }
 
-    /// <summary>Completes when the selected desktop exits, or automatic discovery has no desktops left.</summary>
+    /// <summary>Completes when the selected desktop exits, or automatic discovery has seen a desktop and all desktops have since exited.</summary>
     public async Task WaitForDesktopExitAsync(CancellationToken ct)
     {
         Process? watched = null;
         long watchedRevision = -1;
+        var sawDesktop = false;
         try
         {
             while (true)
@@ -302,18 +304,31 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
                             watched = Process.GetProcessById(selected);
                             _ = watched.SafeHandle;
                         }
-                        catch (ArgumentException) { /* The desktop already exited. */ }
+                        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                        {
+                            watched?.Dispose();
+                            watched = null;
+                        }
                         watchedRevision = revision;
                     }
-                    exited = watched is null || watched.HasExited
-                        || identity?.StartedUtc is { } started && watched.StartTime.ToUniversalTime() != started.UtcDateTime;
+                    try
+                    {
+                        exited = watched is null || watched.HasExited
+                            || identity?.StartedUtc is { } started && watched.StartTime.ToUniversalTime() != started.UtcDateTime;
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                    {
+                        exited = true;
+                    }
                 }
                 else
                 {
                     watched?.Dispose();
                     watched = null;
                     watchedRevision = -1;
-                    exited = _discoverDesktops().Count == 0;
+                    var count = _discoverDesktops().Count;
+                    if (count > 0) sawDesktop = true;
+                    exited = sawDesktop && count == 0;
                 }
 
                 // A tool may have selected another instance during observation.

@@ -314,17 +314,21 @@ public sealed class FileTransferQueue : IAsyncDisposable
         if (item.LocalPath is null) { throw new InvalidOperationException("Upload has no local source."); }
         var directories = new List<(string Local, string Remote)>();
         var files = new List<(string Local, string Remote, long Size)>();
-        var pending = new Stack<(string Local, string Remote)>();
-        pending.Push((item.LocalPath, item.RemotePath));
+        var pending = new Stack<(string Local, string Remote, int Depth)>();
+        pending.Push((item.LocalPath, item.RemotePath, 0));
         long total = 0;
         while (pending.TryPop(out var directory))
         {
             token.ThrowIfCancellationRequested();
+            if (directory.Depth > RemoteFileLimits.MaximumDepth)
+            {
+                throw new IOException($"Folder uploads cannot exceed {RemoteFileLimits.MaximumDepth} directory levels.");
+            }
             if ((File.GetAttributes(directory.Local) & FileAttributes.ReparsePoint) != 0)
             {
                 throw new IOException("Folder uploads cannot include symbolic links or junctions.");
             }
-            directories.Add(directory);
+            directories.Add((directory.Local, directory.Remote));
             foreach (var entry in new DirectoryInfo(directory.Local).EnumerateFileSystemInfos())
             {
                 token.ThrowIfCancellationRequested();
@@ -333,7 +337,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
                     throw new IOException("Folder uploads cannot include symbolic links or junctions: " + entry.FullName);
                 }
                 var remote = directory.Remote.TrimEnd('/') + "/" + entry.Name;
-                if (entry is DirectoryInfo) { pending.Push((entry.FullName, remote)); }
+                if (entry is DirectoryInfo) { pending.Push((entry.FullName, remote, directory.Depth + 1)); }
                 else if (entry is FileInfo file)
                 {
                     files.Add((file.FullName, remote, file.Length));
@@ -343,13 +347,18 @@ public sealed class FileTransferQueue : IAsyncDisposable
         }
         item.TotalBytes = total;
         Publish(force: true);
+        var listedParents = new Dictionary<string, IReadOnlyList<RemoteFileEntry>>(StringComparer.Ordinal);
         foreach (var directory in directories)
         {
             token.ThrowIfCancellationRequested();
             var split = directory.Remote.LastIndexOf('/');
             var parent = split <= 0 ? "/" : directory.Remote[..split];
             var name = directory.Remote[(split + 1)..];
-            var listing = await fileSystem.ListAsync(parent, token).ConfigureAwait(false);
+            if (!listedParents.TryGetValue(parent, out var listing))
+            {
+                listing = await fileSystem.ListAsync(parent, token).ConfigureAwait(false);
+                listedParents[parent] = listing;
+            }
             var existing = listing.FirstOrDefault(entry => string.Equals(entry.Name, name, StringComparison.Ordinal));
             if (existing is null) { await fileSystem.CreateDirectoryAsync(directory.Remote, token).ConfigureAwait(false); }
             else if (!existing.IsDirectory) { throw new IOException("Destination is not a directory: " + directory.Remote); }
@@ -417,13 +426,15 @@ public sealed class FileTransferQueue : IAsyncDisposable
         _ = LocalDownloadPath.Resolve(Path.GetTempPath(), rootName);
         var directories = new List<string> { rootName + "/" };
         var files = new List<(string Remote, string Archive, long Size)>();
-        var pending = new Stack<(string Remote, string Archive)>();
-        pending.Push((item.RemotePath, rootName));
+        var pending = new Stack<(string Remote, string Archive, int Depth)>();
+        pending.Push((item.RemotePath, rootName, 0));
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { rootName };
         long total = 0;
         while (pending.TryPop(out var directory))
         {
             token.ThrowIfCancellationRequested();
+            if (directory.Depth > RemoteFileLimits.MaximumDepth)
+                throw new IOException($"ZIP downloads cannot exceed {RemoteFileLimits.MaximumDepth} directory levels.");
             // A queued folder or child directory may have been replaced since
             // it was selected/listed. Do not follow it outside the download tree.
             var current = await fileSystem.StatAsync(directory.Remote, token).ConfigureAwait(false);
@@ -441,7 +452,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
                 if (entry.IsDirectory)
                 {
                     directories.Add(archivePath + "/");
-                    pending.Push((remote, archivePath));
+                    pending.Push((remote, archivePath, directory.Depth + 1));
                 }
                 else if (entry.Kind == RemoteEntryKind.File)
                 {

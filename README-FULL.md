@@ -8,13 +8,23 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.11**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.12**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.12** 修复 Agent 本地路径边界、终端兼容性与安装包体积：
+
+- `files.upload`/`files.download` 的本地路径在确认弹窗之前归一化：拒绝 UNC 与设备路径、NTFS 备用数据流、双向覆盖字符和控制字符，并校验 Windows 保留名；符号链接与目录联接不再能重定向本地读写。弹窗显示的即实际使用的路径。
+- `terminal.exec` 在写入后等待被取消或超时时返回 `input_outcome_unknown`，不再误报“写入前已取消”，避免 Agent 重发已送达的命令。
+- MCP Host 不再在桌面启动之前就退出；`terminal.exec` 标记为破坏性工具；可选参数接受显式 `null`。
+- 终端补上 `CSI b`（REP）、DEC 特殊图形集与 SO/SI、`SGR 4:x` 下划线样式；私有 CSI 不再被当作标准序列执行。
+- 纵向缩小窗口时把溢出的顶部行推入回滚缓冲，不再吞掉正在活动的光标行；粘贴统一 `\r\n` → `\r`，避免一条命令被执行两次。
+- 安装包不再包含三份相同的 .NET 10 运行时：CLI 与 MCP Host 与桌面程序合并到同一目录，安装包 **113.11 MB → 64.31 MB**。
+- 新增 34 项回归用例（终端 16、Agent 本地路径 18），并逐一验证其在修复前失败。
 
 **1.0.3.11** 修复 Agent 人工暂停与控制过期的授权竞态：
 
@@ -335,7 +345,7 @@ Agent 操作使用用户正在看的同一个交互终端，输入与输出直�
 只有显式停止（Stop）、关闭或重连会使旧句柄失效；手动输入只暂停，恢复后同一句柄继续可用。授权范围为同一 Windows 用户，当前不区分具体 Agent 应用。
 
 提供 `surgelink-cli` 和独立的 MCP stdio Host，两者共用同一套接入与授权逻辑，不保存额外的 SSH 凭据。
-发行打包脚本将它们分别放入 `cli/` 和 `agent/`；开发构建与 MCP 客户端配置见 [接入文档](docs/AGENT-CLI.md)。
+发行打包脚本将它们与桌面程序放在同一安装目录，三者共用同一份 .NET 10 运行时；开发构建与 MCP 客户端配置见 [接入文档](docs/AGENT-CLI.md)。
 推荐在 Agent 面板选择客户端，通过 MCP 一次注册到用户级配置，跨工作区使用；支持 Codex、Claude Code、Cursor 及通用 MCP 配置引导。
 默认自动发现唯一运行的 SurgeLink，桌面重启后无需修改配置，重新授权会话即可；多实例时可选择绑定当前桌面。面板单独显示 MCP 客户端接入状态，接入本身不会授权会话。
 点击“复制 Agent 接入指令”，粘贴到外部 Agent 对话并补充需求，即可提供包含 CLI 绝对路径和完整操作流程的说明。默认自动发现唯一运行的桌面；多实例时可用 `surgelink-cli desktops list` 查看 PID 并显式传入。

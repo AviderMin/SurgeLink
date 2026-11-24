@@ -270,6 +270,14 @@ internal sealed class AnsiParser
                     return;
             }
         }
+
+        if (value >= 0x80)
+        {
+            // Non-ASCII UTF-8 bytes are invalid inside CSI; recover to ground so following text is not swallowed.
+            _state = ParserState.Ground;
+            ResetSequence();
+            FeedGround(value);
+        }
     }
 
     private void FeedOsc(byte value)

@@ -19,6 +19,7 @@ public sealed record TerminalKeyChord(int VirtualKey, bool Control, bool Alt, bo
             "END" => 0x23, "HOME" => 0x24, "LEFT" => 0x25, "UP" => 0x26,
             "RIGHT" => 0x27, "DOWN" => 0x28, "INSERT" => 0x2D, "DELETE" => 0x2E,
             "[" => 0xDB, "\\" => 0xDC, "]" => 0xDD,
+            "-" or "_" => 0xBD, "/" or "?" => 0xBF,
             _ when name.Length == 1 && char.IsAsciiLetterOrDigit(name[0]) => name[0],
             _ when name.StartsWith('F') && int.TryParse(name.AsSpan(1), out var f) && f is >= 1 and <= 12 => 0x6F + f,
             _ => throw new ArgumentException("Unknown terminal key.", nameof(key)),

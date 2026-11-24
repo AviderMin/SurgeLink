@@ -244,6 +244,13 @@ public sealed partial class AgentGateway
                     // never approve an upload/download that the gateway will reject.
                     if (CheckFilePermission(grant, request.Method) is { } permissionFailure)
                         return permissionFailure;
+                    if (request.Method is "files.upload" or "files.download")
+                    {
+                        if (TryNormalizeLocalPath(request.LocalPath, request.Method == "files.upload", out var normalizedLocalPath, out var localPathError))
+                            request = request with { LocalPath = normalizedLocalPath };
+                        else
+                            return localPathError!;
+                    }
                     // Evaluate the host policy for every exact path and operation. The desktop
                     // explicitly allows reads within a shared connection; this is not a path sandbox
                     // or a per-read prompt. Local upload/download paths are included so the host
@@ -428,12 +435,16 @@ public sealed partial class AgentGateway
         var index = 0;
         while ((index = text.IndexOf(marker, index, StringComparison.Ordinal)) >= 0)
         {
-            var valueStart = index + marker.Length;
-            if (valueStart < text.Length
-                && (char.IsDigit(text[valueStart])
-                    || text[valueStart] == '-' && valueStart + 1 < text.Length && char.IsDigit(text[valueStart + 1])))
-                return true;
-            index = valueStart;
+            var cursor = index + marker.Length;
+            if (cursor < text.Length && text[cursor] == '-') cursor++;
+            var digitsStart = cursor;
+            while (cursor < text.Length && char.IsAsciiDigit(text[cursor])) cursor++;
+            if (cursor > digitsStart)
+            {
+                if (cursor < text.Length && text[cursor] == '\r') cursor++;
+                if (cursor < text.Length && text[cursor] == '\n') return true;
+            }
+            index += marker.Length;
         }
         return false;
     }
@@ -502,94 +513,187 @@ public sealed partial class AgentGateway
         }
     }
 
+    private static bool IsUnsafePathChar(char c) =>
+        char.IsControl(c)
+        || c is >= '\u202A' and <= '\u202E'
+        || c is >= '\u2066' and <= '\u2069'
+        || c is '\u200E' or '\u200F' or '\u061C';
+
+    private static bool TryNormalizeLocalPath(string? rawPath, bool upload, out string normalized, out AgentResponse? error)
+    {
+        normalized = string.Empty;
+        var verb = upload ? "upload" : "download";
+        if (string.IsNullOrWhiteSpace(rawPath) || rawPath.Length > 4096 || rawPath.Any(IsUnsafePathChar))
+        {
+            error = AgentResponse.Error("invalid_path", $"Supply a local {verb} path without control or bidirectional override characters.");
+            return false;
+        }
+        var trimmed = rawPath.TrimStart();
+        if (trimmed.StartsWith(@"\\", StringComparison.Ordinal) || trimmed.StartsWith("//", StringComparison.Ordinal))
+        {
+            error = AgentResponse.Error("invalid_path", $"Network UNC and device paths are not allowed for local {verb} operations.");
+            return false;
+        }
+        string fullPath;
+        try { fullPath = Path.GetFullPath(rawPath); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            error = AgentResponse.Error("invalid_path", $"The local {verb} path is invalid.");
+            return false;
+        }
+        var root = Path.GetPathRoot(fullPath) ?? string.Empty;
+        if (string.IsNullOrEmpty(root)
+            || root.StartsWith(@"\\", StringComparison.Ordinal)
+            || fullPath[root.Length..].Contains(':'))
+        {
+            error = AgentResponse.Error("invalid_path", $"The local {verb} path must be a standard local file path without alternate data streams.");
+            return false;
+        }
+        var directory = Path.GetDirectoryName(fullPath);
+        var fileName = Path.GetFileName(fullPath);
+        if (string.IsNullOrEmpty(directory) || string.IsNullOrEmpty(fileName))
+        {
+            error = AgentResponse.Error("invalid_path", $"The local {verb} path must name a file inside a directory.");
+            return false;
+        }
+        try { _ = SurgeLink.Core.Files.LocalDownloadPath.Resolve(directory, fileName); }
+        catch (IOException)
+        {
+            error = AgentResponse.Error("invalid_path", $"The local {verb} file name is invalid or reserved by Windows.");
+            return false;
+        }
+        normalized = fullPath;
+        error = null;
+        return true;
+    }
+
+    private static bool HasReparsePointInChain(string fullPath)
+    {
+        for (var current = fullPath; !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
+        {
+            if (!File.Exists(current) && !Directory.Exists(current)) continue;
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return true;
+        }
+        return false;
+    }
+
     private static async Task<AgentResponse> UploadFileAsync(IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.LocalPath) || request.LocalPath.Length > 4096 || request.LocalPath.Any(char.IsControl))
-            return AgentResponse.Error("invalid_path", "Supply a local upload path without control characters.");
-        string localPath;
-        try { localPath = Path.GetFullPath(request.LocalPath); }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        { return AgentResponse.Error("invalid_path", "The local upload path is invalid."); }
-        if (!File.Exists(localPath)) return AgentResponse.Error("local_file_not_found", "The local upload file does not exist.");
+        if (!TryNormalizeLocalPath(request.LocalPath, upload: true, out var localPath, out var pathError))
+            return pathError!;
         if (!request.Path!.StartsWith('/')) return AgentResponse.Error("invalid_path", "A remote upload path must be absolute.");
-        var length = new FileInfo(localPath).Length;
         try
         {
-            await RemoteFileWrite.WriteAsync(files, request.Path, length, null, request.Overwrite,
-                async (stream, token) =>
-                {
-                    await using var source = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous);
-                    await source.CopyToAsync(stream, 81920, token).ConfigureAwait(false);
-                }, ct).ConfigureAwait(false);
+            if (HasReparsePointInChain(localPath))
+                return AgentResponse.Error("invalid_path", "Symbolic links and junctions are not allowed for local Agent uploads.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return AgentResponse.Error("write_failed", ex.Message);
         }
-        return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = length, overwrite = request.Overwrite });
+        if (!File.Exists(localPath)) return AgentResponse.Error("local_file_not_found", "The local upload file does not exist.");
+        try
+        {
+            await using var source = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous);
+            if ((File.GetAttributes(localPath) & FileAttributes.ReparsePoint) != 0)
+                return AgentResponse.Error("invalid_path", "Symbolic links and junctions are not allowed for local Agent uploads.");
+            var length = source.Length;
+            await RemoteFileWrite.WriteAsync(files, request.Path, length, null, request.Overwrite,
+                async (stream, token) =>
+                {
+                    source.Position = 0;
+                    await source.CopyToAsync(stream, 81920, token).ConfigureAwait(false);
+                }, ct).ConfigureAwait(false);
+            return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = length, overwrite = request.Overwrite });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return AgentResponse.Error("write_failed", ex.Message);
+        }
     }
 
     private static async Task<AgentResponse> DownloadFileAsync(IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.LocalPath) || request.LocalPath.Length > 4096 || request.LocalPath.Any(char.IsControl))
-            return AgentResponse.Error("invalid_path", "Supply a local download path without control characters.");
-        string localPath;
-        try { localPath = Path.GetFullPath(request.LocalPath); }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        { return AgentResponse.Error("invalid_path", "The local download path is invalid."); }
-        if (!request.Overwrite && File.Exists(localPath))
-            return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
-        var directory = Path.GetDirectoryName(localPath) ?? Path.GetPathRoot(localPath);
+        if (!TryNormalizeLocalPath(request.LocalPath, upload: false, out var localPath, out var pathError))
+            return pathError!;
+        var directory = Path.GetDirectoryName(localPath);
         if (string.IsNullOrEmpty(directory))
             return AgentResponse.Error("invalid_path", "The local download path has no directory.");
-        // Stage beside the destination and publish only after the remote read
-        // finished. Truncating or creating the destination up front would turn a
-        // failed or cancelled transfer into data loss.
-        var temporary = Path.Combine(directory, ".surge-" + Guid.NewGuid().ToString("N") + ".tmp");
-        long written = 0;
         try
         {
-            // Close the remote source before publishing the destination. A failed
-            // close must not leave a replaced file behind a read_failed response.
-            await using (var source = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false))
-            {
-                await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
-                    FileShare.None, 81920, FileOptions.Asynchronous))
-                {
-                    var buffer = new byte[81920];
-                    int read;
-                    while ((read = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
-                    {
-                        await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-                        written += read;
-                    }
-                    await target.FlushAsync(ct).ConfigureAwait(false);
-                }
-            }
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                // Same directory, so publishing is atomic on the local volume. A
-                // new destination is moved without overwrite; an existing one is
-                // replaced with File.Replace so its NTFS access control list and
-                // alternate data streams survive. Unsupported replacements fail
-                // here without falling back to a metadata-destroying overwrite.
-                LocalFileCommit.Publish(temporary, localPath, request.Overwrite);
-            }
-            catch (LocalFileAlreadyExistsException)
-            {
-                return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
-            }
-            return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = written, overwrite = request.Overwrite });
+            if (HasReparsePointInChain(localPath))
+                return AgentResponse.Error("invalid_path", "Symbolic links and junctions are not allowed for local Agent downloads.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return AgentResponse.Error("read_failed", ex.Message);
         }
-        finally
+        if (!request.Overwrite && File.Exists(localPath))
+            return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
+        IDisposable directoryLease;
+        try
         {
-            try { File.Delete(temporary); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            directoryLease = SurgeLink.Core.Files.LocalDownloadPath.LockDirectory(directory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return AgentResponse.Error("invalid_path", ex.Message);
+        }
+        using (directoryLease)
+        {
+            if (File.Exists(localPath) && (File.GetAttributes(localPath) & FileAttributes.ReparsePoint) != 0)
+                return AgentResponse.Error("invalid_path", "Symbolic links and junctions are not allowed for local Agent downloads.");
+            if (!request.Overwrite && File.Exists(localPath))
+                return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
+            // Stage beside the destination and publish only after the remote read
+            // finished. Truncating or creating the destination up front would turn a
+            // failed or cancelled transfer into data loss.
+            var temporary = Path.Combine(directory, ".surge-" + Guid.NewGuid().ToString("N") + ".tmp");
+            long written = 0;
+            try
+            {
+                // Close the remote source before publishing the destination. A failed
+                // close must not leave a replaced file behind a read_failed response.
+                await using (var source = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false))
+                {
+                    await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
+                        FileShare.None, 81920, FileOptions.Asynchronous))
+                    {
+                        var buffer = new byte[81920];
+                        int read;
+                        while ((read = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                        {
+                            await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                            written += read;
+                        }
+                        await target.FlushAsync(ct).ConfigureAwait(false);
+                    }
+                }
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    // Same directory, so publishing is atomic on the local volume. A
+                    // new destination is moved without overwrite; an existing one is
+                    // replaced with File.Replace so its NTFS access control list and
+                    // alternate data streams survive. Unsupported replacements fail
+                    // here without falling back to a metadata-destroying overwrite.
+                    LocalFileCommit.Publish(temporary, localPath, request.Overwrite);
+                }
+                catch (LocalFileAlreadyExistsException)
+                {
+                    return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
+                }
+                return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = written, overwrite = request.Overwrite });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return AgentResponse.Error("read_failed", ex.Message);
+            }
+            finally
+            {
+                try { File.Delete(temporary); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
         }
     }
 

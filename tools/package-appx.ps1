@@ -22,20 +22,37 @@ if (!$SkipPublish) {
         -p:WindowsAppSDKSelfContained=true -p:UseSharedCompilation=false `
         -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false "-p:Version=$Version" -o $payload -m:1 -v:minimal
     if ($LASTEXITCODE -ne 0) { throw 'Self-contained publish failed.' }
-    & dotnet publish (Join-Path $repoRoot 'src/SurgeLink.Cli/SurgeLink.Cli.csproj') `
-        -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
-        -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false `
-        "-p:Version=$Version" -o (Join-Path $payload 'cli') -m:1 -v:minimal
-    if ($LASTEXITCODE -ne 0) { throw 'CLI publish failed.' }
-    & dotnet publish (Join-Path $repoRoot 'src/SurgeLink.AgentHost/SurgeLink.AgentHost.csproj') `
-        -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
-        -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false `
-        "-p:Version=$Version" -o (Join-Path $payload 'agent') -m:1 -v:minimal
-    if ($LASTEXITCODE -ne 0) { throw 'MCP host publish failed.' }
+    # The CLI and MCP host share the desktop's single copy of the .NET runtime.
+    # Publishing them into their own folders shipped three identical runtimes.
+    foreach ($companion in @(
+        @{ Project = 'src/SurgeLink.Cli/SurgeLink.Cli.csproj'; Exe = 'surgelink-cli.exe'; Label = 'CLI' },
+        @{ Project = 'src/SurgeLink.AgentHost/SurgeLink.AgentHost.csproj'; Exe = 'surgelink-agent-host.exe'; Label = 'MCP host' }
+    )) {
+        $staged = Join-Path $outputRoot ('staging-' + $companion.Label.Replace(' ', '-'))
+        & dotnet publish (Join-Path $repoRoot $companion.Project) `
+            -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
+            -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false `
+            "-p:Version=$Version" -o $staged -m:1 -v:minimal
+        if ($LASTEXITCODE -ne 0) { throw "$($companion.Label) publish failed." }
+        if (!(Test-Path (Join-Path $staged $companion.Exe))) { throw "$($companion.Label) publish output is missing." }
+        $stagedRoot = [IO.Path]::GetFullPath($staged).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        Get-ChildItem -LiteralPath $staged -Recurse -File | ForEach-Object {
+            $target = Join-Path $payload $_.FullName.Substring($stagedRoot.Length)
+            if (Test-Path -LiteralPath $target) {
+                if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash) {
+                    throw "Publish conflict: $($_.Name) differs between the desktop and $($companion.Label)."
+                }
+                return
+            }
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target)
+            Copy-Item -LiteralPath $_.FullName -Destination $target
+        }
+        Remove-Item -LiteralPath $staged -Recurse -Force
+    }
 }
 if (!(Test-Path (Join-Path $payload 'SurgeLink.exe'))) { throw 'Publish output is missing.' }
-if (!(Test-Path (Join-Path $payload 'cli/surgelink-cli.exe'))) { throw 'CLI publish output is missing.' }
-if (!(Test-Path (Join-Path $payload 'agent/surgelink-agent-host.exe'))) { throw 'MCP host publish output is missing.' }
+if (!(Test-Path (Join-Path $payload 'surgelink-cli.exe'))) { throw 'CLI publish output is missing.' }
+if (!(Test-Path (Join-Path $payload 'surgelink-agent-host.exe'))) { throw 'MCP host publish output is missing.' }
 
 # Include the project license, privacy policy and source location in binary releases.
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $payload 'LICENSE.txt') -Force

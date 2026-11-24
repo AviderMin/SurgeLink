@@ -31,6 +31,12 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     private bool _dirty;
     private int _batchDepth;
     private int _viewportOffset;
+    private string? _lastGraphicText;
+    private int _lastGraphicWidth;
+    private bool _g0LineDrawing;
+    private bool _g1LineDrawing;
+    private bool _shiftOut;
+    private bool _joinNextRune;
 
     /// <summary>Creates an emulator with the given viewport size and scrollback cap.</summary>
     /// <param name="columns">Initial viewport width in columns.</param>
@@ -207,6 +213,12 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                 _mouseModeMask = 0;
                 _modes = TerminalModes.Default;
                 _viewportOffset = 0;
+                _lastGraphicText = null;
+                _lastGraphicWidth = 0;
+                _g0LineDrawing = false;
+                _g1LineDrawing = false;
+                _shiftOut = false;
+                _joinNextRune = false;
                 MarkDirty();
             }
             finally
@@ -496,9 +508,15 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     /// <summary>Prints one printable ASCII code point (fast path).</summary>
     internal void PrintAscii(byte value)
     {
+        _joinNextRune = false;
         UpdateEraseCell();
+        string text = (_shiftOut ? _g1LineDrawing : _g0LineDrawing) && MapDecSpecialGraphics(value) is { } mapped
+            ? mapped
+            : AsciiText.Get(value);
+        _lastGraphicText = text;
+        _lastGraphicWidth = 1;
         _screen.Print(
-            AsciiText.Get(value),
+            text,
             1,
             _sgr.Foreground,
             _sgr.Background,
@@ -507,13 +525,65 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             _modes.InsertMode);
     }
 
+    private static string? MapDecSpecialGraphics(byte value) => value switch
+    {
+        0x60 => "◆",
+        0x61 => "▒",
+        0x66 => "°",
+        0x67 => "±",
+        0x6A => "┘",
+        0x6B => "┐",
+        0x6C => "┌",
+        0x6D => "└",
+        0x6E => "┼",
+        0x6F => "⎺",
+        0x70 => "⎻",
+        0x71 => "─",
+        0x72 => "⎼",
+        0x73 => "⎽",
+        0x74 => "├",
+        0x75 => "┤",
+        0x76 => "┴",
+        0x77 => "┬",
+        0x78 => "│",
+        0x79 => "≤",
+        0x7A => "≥",
+        0x7B => "π",
+        0x7C => "≠",
+        0x7D => "£",
+        0x7E => "·",
+        _ => null,
+    };
+
     /// <summary>Prints one decoded Unicode code point.</summary>
     internal void PrintRune(Rune rune)
     {
         UpdateEraseCell();
         if (rune.Value < 0xA0)
         {
+            _joinNextRune = false;
             // C1 controls decoded from UTF-8 are not printable on the grid.
+            return;
+        }
+
+        if (rune.Value == 0x200D)
+        {
+            _screen.AppendCombining(rune.ToString());
+            _joinNextRune = true;
+            return;
+        }
+
+        if (_joinNextRune)
+        {
+            _joinNextRune = false;
+            _screen.AppendCombining(rune.ToString());
+            return;
+        }
+
+        if (rune.Value is >= 0x1F3FB and <= 0x1F3FF
+            || Rune.GetUnicodeCategory(rune) == System.Globalization.UnicodeCategory.SpacingCombiningMark)
+        {
+            _screen.AppendCombining(rune.ToString());
             return;
         }
 
@@ -524,8 +594,11 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             return;
         }
 
+        string text = rune.ToString();
+        _lastGraphicText = text;
+        _lastGraphicWidth = width;
         _screen.Print(
-            rune.ToString(),
+            text,
             width,
             _sgr.Foreground,
             _sgr.Background,
@@ -537,6 +610,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     /// <summary>Executes a C0 control character.</summary>
     internal void ExecuteControl(byte control)
     {
+        _joinNextRune = false;
         UpdateEraseCell();
         switch (control)
         {
@@ -554,8 +628,14 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             case 0x0D:
                 _screen.CarriageReturn();
                 break;
+            case 0x0E:
+                _shiftOut = true;
+                break;
+            case 0x0F:
+                _shiftOut = false;
+                break;
             default:
-                // NUL, BEL, SO/SI and the remaining C0 codes have no visible effect.
+                // NUL, BEL and the remaining C0 codes have no visible effect.
                 break;
         }
     }
@@ -563,6 +643,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     /// <summary>Handles an ESC sequence that is not CSI, OSC or a string.</summary>
     internal void HandleEsc(char final, ReadOnlySpan<char> intermediates)
     {
+        _joinNextRune = false;
         UpdateEraseCell();
         if (intermediates.Length > 0)
         {
@@ -570,8 +651,18 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             {
                 _screen.FillScreen("E");
             }
+            else if (intermediates.Length == 1 && intermediates[0] == '(')
+            {
+                _g0LineDrawing = final == '0';
+                MarkDirty();
+            }
+            else if (intermediates.Length == 1 && intermediates[0] == ')')
+            {
+                _g1LineDrawing = final == '0';
+                MarkDirty();
+            }
 
-            // Character set, keypad and UTF-8 designations are consumed and ignored.
+            // Remaining character set, keypad and UTF-8 designations are consumed and ignored.
             return;
         }
 
@@ -615,89 +706,108 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         ReadOnlySpan<int> parameters,
         ReadOnlySpan<bool> parameterIsSub)
     {
+        _joinNextRune = false;
         UpdateEraseCell();
         char intermediate = intermediates.Length > 0 ? intermediates[0] : '\0';
+        bool standard = privateMarker == '\0' && intermediates.IsEmpty;
         switch (final)
         {
-            case '@':
+            case '@' when standard:
                 _screen.InsertCharacters(Parameter(parameters, 0, 1));
                 break;
-            case 'A':
+            case 'A' when standard:
                 _screen.CursorUp(Parameter(parameters, 0, 1));
                 break;
-            case 'B':
+            case 'B' when standard:
                 _screen.CursorDown(Parameter(parameters, 0, 1));
                 break;
-            case 'C':
+            case 'C' when standard:
                 _screen.CursorForward(Parameter(parameters, 0, 1));
                 break;
-            case 'D':
+            case 'D' when standard:
                 _screen.CursorBackward(Parameter(parameters, 0, 1));
                 break;
-            case 'E':
+            case 'E' when standard:
                 _screen.CursorNextLine(Parameter(parameters, 0, 1));
                 break;
-            case 'F':
+            case 'F' when standard:
                 _screen.CursorPreviousLine(Parameter(parameters, 0, 1));
                 break;
-            case 'G':
-            case '\u0060':
+            case 'G' when standard:
+            case '\u0060' when standard:
                 _screen.SetCursor(_screen.CursorRow, Parameter(parameters, 0, 1) - 1);
                 break;
-            case 'H':
-            case 'f':
+            case 'H' when standard:
+            case 'f' when standard:
                 _screen.MoveCursorAbsolute(
                     Parameter(parameters, 0, 1) - 1,
                     Parameter(parameters, 1, 1) - 1,
                     _modes.OriginMode);
                 break;
-            case 'I':
+            case 'I' when standard:
                 _screen.ForwardTabs(Parameter(parameters, 0, 1));
                 break;
-            case 'J':
+            case 'J' when standard:
                 EraseInDisplay(ParameterOrZero(parameters, 0));
                 break;
-            case 'K':
+            case 'K' when standard:
                 _screen.EraseInLine(ParameterOrZero(parameters, 0));
                 break;
-            case 'L':
+            case 'L' when standard:
                 _screen.InsertLines(Parameter(parameters, 0, 1));
                 break;
-            case 'M':
+            case 'M' when standard:
                 _screen.DeleteLines(Parameter(parameters, 0, 1));
                 break;
-            case 'P':
+            case 'P' when standard:
                 _screen.DeleteCharacters(Parameter(parameters, 0, 1));
                 break;
-            case 'S':
+            case 'S' when standard:
                 _screen.ScrollUpRegion(Parameter(parameters, 0, 1));
                 break;
-            case 'T':
+            case 'T' when standard:
                 if (parameters.Length <= 1)
                 {
                     _screen.ScrollDownRegion(Parameter(parameters, 0, 1));
                 }
 
                 break;
-            case 'X':
+            case 'X' when standard:
                 _screen.EraseCharacters(Parameter(parameters, 0, 1));
                 break;
-            case 'Z':
+            case 'Z' when standard:
                 _screen.BackwardTabs(Parameter(parameters, 0, 1));
                 break;
-            case 'a':
+            case 'a' when standard:
                 _screen.CursorForward(Parameter(parameters, 0, 1));
                 break;
-            case 'd':
+            case 'b' when standard:
+                if (_lastGraphicText is { } repeatText && _lastGraphicWidth > 0)
+                {
+                    int repeatCount = Math.Clamp(Parameter(parameters, 0, 1), 1, 9999);
+                    for (int i = 0; i < repeatCount; i++)
+                    {
+                        _screen.Print(
+                            repeatText,
+                            _lastGraphicWidth,
+                            _sgr.Foreground,
+                            _sgr.Background,
+                            _sgr.Attributes,
+                            _modes.AutoWrap,
+                            _modes.InsertMode);
+                    }
+                }
+                break;
+            case 'd' when standard:
                 _screen.MoveCursorAbsolute(
                     Parameter(parameters, 0, 1) - 1,
                     _screen.CursorColumn,
                     _modes.OriginMode);
                 break;
-            case 'e':
+            case 'e' when standard:
                 _screen.CursorDown(Parameter(parameters, 0, 1));
                 break;
-            case 'g':
+            case 'g' when standard:
                 _screen.ClearTabStops(ParameterOrZero(parameters, 0));
                 break;
             case 'h':
@@ -1292,6 +1402,12 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             int code = parameters[start];
             switch (code)
             {
+                case 4 when end > start + 1:
+                    // ITU T.416 / Kitty underline style subparameter: 4:0 clears underline, 4:1..5 enables it.
+                    int style = parameters[start + 1];
+                    _sgr.TryApplySimple(style == 0 ? 24 : 4);
+                    index = end;
+                    break;
                 case 38:
                 case 48:
                 case 58:

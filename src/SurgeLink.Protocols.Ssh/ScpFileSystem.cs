@@ -395,6 +395,10 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
             var connectionInfo = _factory.CreateConnectionInfo(budget.Token, budget);
             var verifier = _factory.CreateVerifier(budget.Token, budget);
             var client = new SshClient(connectionInfo);
+            if (_factory.KeepAliveInterval > TimeSpan.Zero)
+            {
+                client.KeepAliveInterval = _factory.KeepAliveInterval;
+            }
             client.HostKeyReceived += verifier.Handle;
 
             try
@@ -472,6 +476,10 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
             {
                 OperationTimeout = ScpOperationTimeout,
             };
+            if (_factory.KeepAliveInterval > TimeSpan.Zero)
+            {
+                client.KeepAliveInterval = _factory.KeepAliveInterval;
+            }
             client.HostKeyReceived += verifier.Handle;
 
             try

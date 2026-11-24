@@ -38,6 +38,28 @@ $outputRoot = Join-Path $repoRoot "artifacts/installer/$Architecture"
 $payload = Join-Path ([IO.Path]::GetTempPath()) ('SurgeLink-payload-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $outputRoot -Force
 $null = New-Item -ItemType Directory -Path $payload -Force
+
+# The CLI and MCP host are self-contained .NET apps like the desktop. Publishing
+# each into its own folder shipped three complete copies of the .NET 10 runtime
+# (about 154 MB of identical bytes). They target the same runtime, so they are
+# merged into the application folder instead and load the single copy already
+# there; a collision with different content is a real conflict and fails loudly.
+function Merge-Payload([string] $source, [string] $destination) {
+    $root = [IO.Path]::GetFullPath($destination).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    Get-ChildItem -LiteralPath $source -Recurse -File | ForEach-Object {
+        $relative = $_.FullName.Substring(([IO.Path]::GetFullPath($source).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar).Length)
+        $target = Join-Path $root $relative
+        if (Test-Path -LiteralPath $target) {
+            if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash) {
+                throw "Publish conflict: $relative differs between the desktop and the companion executable."
+            }
+            return
+        }
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target)
+        Copy-Item -LiteralPath $_.FullName -Destination $target
+    }
+}
+
 # WinUI self-contained native assets must be regenerated for each staging directory.
 & dotnet clean (Join-Path $repoRoot 'src/SurgeLink.App/SurgeLink.App.csproj') -c Release -r "win-$Architecture" "-p:Platform=$Architecture" -m:1 -v:quiet
 if ($LASTEXITCODE -ne 0) { throw 'Release clean failed.' }
@@ -57,19 +79,30 @@ Get-ChildItem -LiteralPath ($targetDir | Out-String).Trim() | ForEach-Object {
 foreach ($required in @('SurgeLink.exe', 'SurgeLink.dll', 'SurgeLink.pri', 'Reactor.pri', 'Microsoft.UI.Xaml.Controls.pri', 'coreclr.dll', 'Microsoft.UI.Xaml.dll', 'Assets/AppIcon.ico')) {
     if (!(Test-Path -LiteralPath (Join-Path $payload $required))) { throw "Publish output is missing $required" }
 }
-# Keep the CLI payload isolated so its dependency/runtime files cannot overwrite the WinUI app.
-& dotnet publish (Join-Path $repoRoot 'src/SurgeLink.Cli/SurgeLink.Cli.csproj') `
-    -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
-    -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false `
-    "-p:Version=$Version" -o (Join-Path $payload 'cli') -m:1 -v:minimal
-if ($LASTEXITCODE -ne 0) { throw 'CLI publish failed.' }
-if (!(Test-Path -LiteralPath (Join-Path $payload 'cli/surgelink-cli.exe'))) { throw 'CLI publish output is missing.' }
-& dotnet publish (Join-Path $repoRoot 'src/SurgeLink.AgentHost/SurgeLink.AgentHost.csproj') `
-    -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
-    -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false `
-    "-p:Version=$Version" -o (Join-Path $payload 'agent') -m:1 -v:minimal
-if ($LASTEXITCODE -ne 0) { throw 'MCP host publish failed.' }
-if (!(Test-Path -LiteralPath (Join-Path $payload 'agent/surgelink-agent-host.exe'))) { throw 'MCP host publish output is missing.' }
+# Companion executables are staged separately and merged, so a partial publish
+# never leaves a half-populated payload behind.
+$staging = Join-Path ([IO.Path]::GetTempPath()) ('SurgeLink-companions-' + [guid]::NewGuid().ToString('N'))
+try {
+    foreach ($companion in @(
+        @{ Project = 'src/SurgeLink.Cli/SurgeLink.Cli.csproj'; Folder = 'cli'; Exe = 'surgelink-cli.exe'; Label = 'CLI' },
+        @{ Project = 'src/SurgeLink.AgentHost/SurgeLink.AgentHost.csproj'; Folder = 'agent'; Exe = 'surgelink-agent-host.exe'; Label = 'MCP host' }
+    )) {
+        $staged = Join-Path $staging $companion.Folder
+        & dotnet publish (Join-Path $repoRoot $companion.Project) `
+            -c Release -r "win-$Architecture" --self-contained true "-p:Platform=$Architecture" `
+            -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false `
+            "-p:Version=$Version" -o $staged -m:1 -v:minimal
+        if ($LASTEXITCODE -ne 0) { throw "$($companion.Label) publish failed." }
+        if (!(Test-Path -LiteralPath (Join-Path $staged $companion.Exe))) { throw "$($companion.Label) publish output is missing." }
+        Merge-Payload $staged $payload
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+}
+foreach ($required in @('surgelink-cli.exe', 'surgelink-agent-host.exe')) {
+    if (!(Test-Path -LiteralPath (Join-Path $payload $required))) { throw "Merged payload is missing $required" }
+}
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $payload 'LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'PRIVACY.md') -Destination $payload
 $revision = & git -C $repoRoot rev-parse HEAD
@@ -80,7 +113,8 @@ Build base revision: $revision
 License: MIT; see LICENSE.txt.
 Third-party components retain their own licenses and notices.
 "@ | Set-Content -LiteralPath (Join-Path $payload 'SOURCE.txt') -Encoding utf8
-Write-Output "Published payload: $payload"
+$payloadBytes = (Get-ChildItem -LiteralPath $payload -Recurse -File | Measure-Object -Property Length -Sum).Sum
+Write-Output ("Published payload: {0} ({1:N1} MB, one shared .NET runtime)" -f $payload, ($payloadBytes / 1MB))
 if ($PublishOnly) { return }
 & $IsccPath "/DAppVersion=$Version" "/DAppArchitecture=$Architecture" "/DPayloadDir=$payload" "/DOutputDir=$outputRoot" (Join-Path $repoRoot 'packaging/SurgeLink.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }

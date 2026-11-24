@@ -104,6 +104,7 @@ try
 }
 catch (ArgumentException ex) { response = AgentResponse.Error("usage", ex.Message); exitCode = 2; }
 catch (AgentDesktopDiscoveryException ex) { response = AgentResponse.Error(ex.ErrorCode, ex.Message); exitCode = 3; }
+catch (AgentFrameTooLargeException ex) { response = AgentResponse.Error("request_too_large", ex.Message); exitCode = 2; }
 catch (OperationCanceledException)
 {
     response = cancellation.IsCancellationRequested
@@ -116,7 +117,12 @@ catch (TimeoutException)
     response = AgentResponse.Error("desktop_ipc_timeout", $"Could not connect to desktop PID {desktop} within 3 seconds. Confirm that desktop is running and responsive, then retry. Do not treat this as permission being disabled; uncertain terminal input needs observation before an exact retry.");
     exitCode = 3;
 }
-catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or JsonException)
+catch (UnauthorizedAccessException)
+{
+    response = AgentResponse.Error("desktop_ipc_unavailable", $"Access to desktop PID {desktop}'s named pipe was denied. Confirm the CLI uses the same Windows account and is not blocked by a restricted process sandbox (or connect through the unsandboxed MCP Host instead). Uncertain terminal input must not be resent with a new operation ID.");
+    exitCode = 3;
+}
+catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or JsonException)
 {
     response = AgentResponse.Error("desktop_ipc_unavailable", $"Could not communicate with desktop PID {desktop}. Confirm it is running and the CLI uses the same Windows account. No separate CLI switch exists; share sessions in the Agent panel after connecting. Uncertain terminal input must not be resent with a new operation ID.");
     exitCode = 3;

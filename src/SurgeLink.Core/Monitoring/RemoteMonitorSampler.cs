@@ -12,6 +12,7 @@ public sealed class RemoteMonitorSampler
     private readonly List<Subscription> _subscriptions = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private CancellationTokenSource? _lifetime;
+    private TaskCompletionSource _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private RemoteMonitorSampler(IRemoteSystemMonitor monitor) => _monitor = monitor;
 
@@ -24,11 +25,14 @@ public sealed class RemoteMonitorSampler
     {
         ArgumentNullException.ThrowIfNull(receive);
         var subscription = new Subscription(this, interval < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : interval, processes, receive, once);
+        TaskCompletionSource wake;
         lock (_gate)
         {
             _subscriptions.Add(subscription);
             StartLocked();
+            wake = _wake;
         }
+        wake.TrySetResult();
         return subscription;
     }
 
@@ -37,6 +41,7 @@ public sealed class RemoteMonitorSampler
         if (_lifetime is not null || _subscriptions.Count == 0) { return; }
         var lifetime = new CancellationTokenSource();
         _lifetime = lifetime;
+        _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = Task.Run(() => RunAsync(lifetime));
     }
 
@@ -48,16 +53,24 @@ public sealed class RemoteMonitorSampler
             {
                 Subscription[] due;
                 TimeSpan delay;
+                Task wakeTask;
                 lock (_gate)
                 {
                     var now = _clock.Elapsed;
                     due = _subscriptions.Where(item => item.Next <= now).ToArray();
                     delay = _subscriptions.Count == 0 ? TimeSpan.Zero : _subscriptions.Min(item => item.Next) - now;
+                    if (due.Length == 0 && _wake.Task.IsCompleted)
+                    {
+                        _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    }
+                    wakeTask = _wake.Task;
                 }
                 if (due.Length == 0)
                 {
-                    // Bound the delay so a newly mounted view can request a sample promptly.
-                    await Task.Delay(delay > TimeSpan.Zero && delay < TimeSpan.FromSeconds(1) ? delay : TimeSpan.FromSeconds(1), lifetime.Token).ConfigureAwait(false);
+                    // Wake immediately when a new subscriber registers instead of waiting up to 1s.
+                    var sleep = delay > TimeSpan.Zero && delay < TimeSpan.FromSeconds(1) ? delay : TimeSpan.FromSeconds(1);
+                    await Task.WhenAny(Task.Delay(sleep, lifetime.Token), wakeTask).ConfigureAwait(false);
+                    lifetime.Token.ThrowIfCancellationRequested();
                     continue;
                 }
                 MonitorSample result;
@@ -66,7 +79,12 @@ public sealed class RemoteMonitorSampler
                     var snapshot = await _monitor.SampleAsync(lifetime.Token).ConfigureAwait(false);
                     IReadOnlyList<RemoteProcessInfo> processes = Array.Empty<RemoteProcessInfo>();
                     bool needsProcesses;
-                    lock (_gate) { needsProcesses = _subscriptions.Any(item => item.Processes && item.Next <= _clock.Elapsed); }
+                    lock (_gate)
+                    {
+                        var now = _clock.Elapsed;
+                        var dueIntervals = _subscriptions.Where(item => item.Next <= now).Select(item => item.Interval).ToHashSet();
+                        needsProcesses = _subscriptions.Any(item => item.Processes && (item.Next <= now || (!item.Once && dueIntervals.Contains(item.Interval))));
+                    }
                     if (needsProcesses)
                     {
                         try { processes = await _monitor.GetTopProcessesAsync(15, lifetime.Token).ConfigureAwait(false); }
@@ -80,9 +98,11 @@ public sealed class RemoteMonitorSampler
                 lock (_gate)
                 {
                     if (lifetime.IsCancellationRequested) { return; }
-                    // Views mounted during a sample share its result as well.
+                    // Views mounted during a sample or sharing the exact same cadence
+                    // lock into phase so SidebarMonitor and MonitorView do not double-poll.
                     var completed = _clock.Elapsed;
-                    due = _subscriptions.Where(item => item.Next <= completed).ToArray();
+                    var dueIntervals = _subscriptions.Where(item => item.Next <= completed).Select(item => item.Interval).ToHashSet();
+                    due = _subscriptions.Where(item => item.Next <= completed || (!item.Once && dueIntervals.Contains(item.Interval))).ToArray();
                     foreach (var item in due)
                     {
                         // Reserve delivery before leaving the scheduling lock.

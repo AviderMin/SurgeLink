@@ -55,16 +55,17 @@ public static class TerminalInputEncoder
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(modes);
+        var normalized = text.Replace("\r\n", "\r", StringComparison.Ordinal);
         if (!modes.BracketedPaste)
         {
-            return Encoding.UTF8.GetBytes(text);
+            return Encoding.UTF8.GetBytes(normalized);
         }
 
         // Pasted content may come from remote-controlled output. ESC is the only
         // way to start the ESC[201~ terminator, so dropping it prevents a payload
         // from closing the bracketed-paste frame and smuggling the remainder in
         // as typed input. C1 controls are removed for the same reason.
-        var payload = Encoding.UTF8.GetBytes(text
+        var payload = Encoding.UTF8.GetBytes(normalized
             .Replace("\u001b", string.Empty, StringComparison.Ordinal)
             .Replace("\u009b", string.Empty, StringComparison.Ordinal)
             .Replace("\u009d", string.Empty, StringComparison.Ordinal)
@@ -180,8 +181,10 @@ public static class TerminalInputEncoder
             case 0xBE:
                 return EncodeCharacter(shift ? '>' : '.', alt);
             case 0xBF:
-                // Ctrl+? is ASCII DEL, a common readline/Emacs editing key.
-                return ctrl && shift ? WithAlt("\u007f", alt) : EncodeCharacter(shift ? '?' : '/', alt);
+                // Ctrl+? is ASCII DEL and Ctrl+/ is 0x1F (undo in readline/Emacs/nano).
+                return ctrl
+                    ? WithAlt(shift ? "\u007f" : "\u001f", alt)
+                    : EncodeCharacter(shift ? '?' : '/', alt);
             case 0xC0:
                 return EncodeCharacter(shift ? '~' : '\u0060', alt);
             case 0xDB:

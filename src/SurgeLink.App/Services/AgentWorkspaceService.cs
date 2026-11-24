@@ -272,6 +272,11 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
 
     private static string LocateExecutable(string installedFolder, string project, string executable)
     {
+        // Current installers merge the companion executables into the application
+        // folder so they share its single copy of the .NET runtime. Older layouts
+        // kept each one in its own folder; both are honoured.
+        var merged = Path.Combine(AppContext.BaseDirectory, executable);
+        if (File.Exists(merged)) return merged;
         var installed = Path.Combine(AppContext.BaseDirectory, installedFolder, executable);
         if (File.Exists(installed)) return installed;
 #if DEBUG

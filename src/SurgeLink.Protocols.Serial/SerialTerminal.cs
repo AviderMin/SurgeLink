@@ -49,6 +49,8 @@ internal sealed class SerialTerminal : IRemoteTerminal
         return Task.CompletedTask;
     }
 
+    private const int WriteChunkBytes = 256;
+
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -57,9 +59,19 @@ internal sealed class SerialTerminal : IRemoteTerminal
         try
         {
             if (!IsOpen) throw new ProtocolException("The serial terminal is closed.", ProtocolFailureKind.Network);
-            // Once a write starts, keep ownership until its bounded driver call finishes.
-            // Releasing the gate on cancellation would let the next write interleave bytes.
-            await Task.Run(() => _connection.Write(data.ToArray()), linked.Token).ConfigureAwait(false);
+            if (data.Length == 0) return;
+            // Stream large pastes in bounded chunks so low baud rates (e.g. 9600 bps)
+            // never exceed the per-call WriteTimeout while still keeping each driver
+            // call atomic and observing cancellation between chunks.
+            await Task.Run(() =>
+            {
+                for (int offset = 0; offset < data.Length; offset += WriteChunkBytes)
+                {
+                    if (offset > 0) linked.Token.ThrowIfCancellationRequested();
+                    int count = Math.Min(WriteChunkBytes, data.Length - offset);
+                    _connection.Write(data.Slice(offset, count).ToArray());
+                }
+            }, linked.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or TimeoutException)
         {
@@ -103,7 +115,6 @@ internal sealed class SerialTerminal : IRemoteTerminal
             try { await Task.Run(_connection.Dispose).ConfigureAwait(false); }
             finally { _writeGate.Release(); }
             Complete(null);
-            _lifetime.Dispose();
             completion.TrySetResult();
         }
         catch (Exception exception)

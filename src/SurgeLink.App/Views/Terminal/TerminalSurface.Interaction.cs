@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -18,8 +19,9 @@ namespace SurgeLink.App.Views.Terminal;
 /// </summary>
 internal sealed partial class TerminalSurface
 {
-    private const double MinFontSize = 6;
-    private const double MaxFontSize = 48;
+    // Keep in step with AppSettingsStore.Normalize so zooming at a limit is a no-op.
+    private const double MinFontSize = 9;
+    private const double MaxFontSize = 28;
     private const double DefaultFontSize = 13;
 
     private bool HasSelection => TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret).HasSelection;
@@ -430,7 +432,7 @@ internal sealed partial class TerminalSurface
 
         // Persisted through the store, so the zoom survives restarts and every open
         // terminal picks it up from its own Changed handler.
-        _settings.Update(settings => settings with { TerminalFontSize = next });
+        TryUpdateFontSize(next);
     }
 
     private void ResetFontSize()
@@ -440,6 +442,20 @@ internal sealed partial class TerminalSurface
             return;
         }
 
-        _settings.Update(settings => settings with { TerminalFontSize = DefaultFontSize });
+        TryUpdateFontSize(DefaultFontSize);
+    }
+
+    private void TryUpdateFontSize(double size)
+    {
+        try
+        {
+            _settings.Update(settings => settings with { TerminalFontSize = size });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A locked or read-only settings file must not tear down the process
+            // from a keyboard/wheel handler; the zoom is simply not persisted.
+            _logger?.LogWarning(ex, "Could not persist the terminal font size.");
+        }
     }
 }

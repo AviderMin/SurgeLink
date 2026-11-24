@@ -54,10 +54,11 @@ public static class WindowsMonitorScript
         function Field([string]$key, $value) { Write-Output ($key + '|' + [string]$value) }
 
         Emit 'cpu'
-        Get-CimInstance -ClassName Win32_PerfFormattedData_PerfOS_Processor | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.PercentProcessorTime) }
+        $cpuRows = @(Get-CimInstance -ClassName Win32_PerfFormattedData_PerfOS_Processor)
+        $cpuRows | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.PercentProcessorTime) }
 
         Emit 'processor'
-        Get-CimInstance -ClassName Win32_Processor | ForEach-Object { Write-Output ([string]$_.LoadPercentage + '|' + [string]$_.NumberOfLogicalProcessors + '|' + [string]$_.NumberOfCores) }
+        if ($cpuRows.Count -le 1) { Get-CimInstance -ClassName Win32_Processor | ForEach-Object { Write-Output ([string]$_.LoadPercentage + '|' + [string]$_.NumberOfLogicalProcessors + '|' + [string]$_.NumberOfCores) } }
 
         Emit 'memory'
         $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem
@@ -80,10 +81,11 @@ public static class WindowsMonitorScript
         Get-CimInstance -ClassName Win32_PerfFormattedData_PerfDisk_LogicalDisk | Where-Object { $_.Name -ne '_Total' } | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.DiskReadBytesPersec + '|' + [string]$_.DiskWriteBytesPersec) }
 
         Emit 'network'
-        Get-NetAdapterStatistics | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.ReceivedBytes + '|' + [string]$_.SentBytes + '|' + [string]$_.ReceivedUnicastPackets + '|' + [string]$_.SentUnicastPackets) }
+        $netRows = @(Get-NetAdapterStatistics)
+        $netRows | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.ReceivedBytes + '|' + [string]$_.SentBytes + '|' + [string]$_.ReceivedUnicastPackets + '|' + [string]$_.SentUnicastPackets) }
 
         Emit 'networkfallback'
-        Get-CimInstance -ClassName Win32_PerfRawData_Tcpip_NetworkInterface | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.BytesReceivedPersec + '|' + [string]$_.BytesSentPersec + '|' + [string]$_.PacketsReceivedPersec + '|' + [string]$_.PacketsSentPersec) }
+        if ($netRows.Count -eq 0) { Get-CimInstance -ClassName Win32_PerfRawData_Tcpip_NetworkInterface | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.BytesReceivedPersec + '|' + [string]$_.BytesSentPersec + '|' + [string]$_.PacketsReceivedPersec + '|' + [string]$_.PacketsSentPersec) } }
 
         Emit 'end'
         """;

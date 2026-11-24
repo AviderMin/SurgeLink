@@ -44,7 +44,7 @@ public sealed class McpAdapter(Func<AgentRequest, CancellationToken, Task<AgentR
         Annotations = new ToolAnnotations
         {
             ReadOnlyHint = definition.ReadOnly,
-            DestructiveHint = definition.Method is "terminal.text" or "terminal.key" or "files.write" or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download",
+            DestructiveHint = definition.Method is "terminal.text" or "terminal.key" or "terminal.exec" or "files.write" or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download",
             OpenWorldHint = true,
         },
     }).ToArray();
@@ -59,15 +59,21 @@ public sealed class McpAdapter(Func<AgentRequest, CancellationToken, Task<AgentR
             response = AgentResponse.Error("invalid_arguments", "Supply only the required and optional arguments with the types in the tool schema.");
         else
         {
-            string? Text(string name) => arguments.TryGetValue(name, out var value) ? value.GetString() : null;
-            long? Number(string name) => arguments.TryGetValue(name, out var value) ? value.GetInt64() : null;
+            static bool TryGetNonNull(IDictionary<string, JsonElement> map, string key, out JsonElement element)
+            {
+                if (map.TryGetValue(key, out element) && element.ValueKind != JsonValueKind.Null) return true;
+                element = default;
+                return false;
+            }
+            string? Text(string name) => TryGetNonNull(arguments, name, out var value) ? value.GetString() : null;
+            long? Number(string name) => TryGetNonNull(arguments, name, out var value) ? value.GetInt64() : null;
             int? Int(string name) => Number(name) is long value ? checked((int)value) : null;
-            bool Bool(string name) => arguments.TryGetValue(name, out var value) && value.GetBoolean();
+            bool Bool(string name) => TryGetNonNull(arguments, name, out var value) && value.GetBoolean();
             response = await send(new AgentRequest(definition.Method, Text("session"), Text("path"),
                 Text: Text("text"), Submit: Bool("submit"),
                 Key: Text("key"), Cursor: Number("cursor"), ExpectedInputRevision: Number("expectedInputRevision"),
                 OperationId: Text("operationId"), View: Text("view"), CheckToken: Text("checkToken"),
-                DesktopProcessId: arguments.TryGetValue("processId", out var pid) ? pid.GetInt32() : null,
+                DesktopProcessId: TryGetNonNull(arguments, "processId", out var pid) ? pid.GetInt32() : null,
                 Brief: Bool("brief"), StripAnsi: Bool("stripAnsi"), MaxBytes: Int("maxBytes"),
                 MaxLines: Int("maxLines"), TailRows: Int("tailRows"), Offset: Number("offset"),
                 Limit: Int("limit"), Destination: Text("destination"), Recursive: Bool("recursive"),
@@ -86,10 +92,11 @@ public sealed class McpAdapter(Func<AgentRequest, CancellationToken, Task<AgentR
 
     private static bool ValidArguments(Definition definition, IDictionary<string, JsonElement> arguments)
     {
-        if (definition.Required.Any(name => !arguments.ContainsKey(name))) return false;
+        if (definition.Required.Any(name => !arguments.TryGetValue(name, out var req) || req.ValueKind == JsonValueKind.Null)) return false;
         foreach (var (name, value) in arguments)
         {
             if (!definition.Required.Contains(name) && !definition.Optional.Contains(name)) return false;
+            if (value.ValueKind == JsonValueKind.Null && definition.Optional.Contains(name)) continue;
             var valid = name switch
             {
                 "cursor" or "expectedInputRevision" or "offset" => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) && number >= 0,

@@ -174,7 +174,8 @@ internal sealed partial class TerminalSurface
 
         if (e.Key is VirtualKey.None or VirtualKey.Control or VirtualKey.Shift or VirtualKey.Menu
             or VirtualKey.LeftWindows or VirtualKey.RightWindows or VirtualKey.Application
-            or VirtualKey.CapitalLock or VirtualKey.NumberKeyLock)
+            or VirtualKey.CapitalLock or VirtualKey.NumberKeyLock
+            || key == 229) // VK_PROCESSKEY: active IME composition owns this keystroke.
         {
             return;
         }
@@ -226,6 +227,8 @@ internal sealed partial class TerminalSurface
         }
         else
         {
+            _pendingHighSurrogate = '\0';
+            if (char.IsLowSurrogate(character)) return;
             text = character.ToString();
         }
 

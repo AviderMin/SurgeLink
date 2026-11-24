@@ -327,13 +327,30 @@ public sealed class SshSession : IProtocolSession
         }
     }
 
+    private const string PosixHostProbeCommand =
+        "printf '@@@SURGELINK:host\\n'; uname -n 2>/dev/null; " +
+        "printf '\\n@@@SURGELINK:os\\n'; cat /etc/os-release 2>/dev/null; " +
+        "printf '\\n@@@SURGELINK:shell\\n'; printf '%s\\n' \"$SHELL\"; " +
+        "printf '@@@SURGELINK:pwd\\n'; pwd 2>/dev/null";
+
     private async Task<RemoteHostInfo> ProbeCoreAsync(CancellationToken cancellationToken)
     {
         var info = RemoteHostInfo.Empty with { ServerVersion = _client.ConnectionInfo.ServerVersion };
 
         var uname = await TryRunAsync(RemoteOsDetector.UnameCommand, cancellationToken).ConfigureAwait(false);
-        var windowsVersion = await TryRunAsync(RemoteOsDetector.WindowsVersionCommand, cancellationToken).ConfigureAwait(false);
-        var operatingSystem = RemoteOsDetector.Classify(uname, windowsVersion);
+        var operatingSystem = RemoteOsDetector.Classify(uname, null);
+        string? windowsVersion = null;
+        // Only run cmd.exe when uname did not already identify a Linux/POSIX or MSYS/Cygwin guest.
+        if (operatingSystem == RemoteOperatingSystem.Unknown && string.IsNullOrWhiteSpace(uname))
+        {
+            windowsVersion = await TryRunAsync(RemoteOsDetector.WindowsVersionCommand, cancellationToken).ConfigureAwait(false);
+            operatingSystem = RemoteOsDetector.Classify(uname, windowsVersion);
+        }
+        else if (operatingSystem == RemoteOperatingSystem.Windows)
+        {
+            windowsVersion = await TryRunAsync(RemoteOsDetector.WindowsVersionCommand, cancellationToken).ConfigureAwait(false);
+        }
+
         Interlocked.CompareExchange(
             ref _remoteOperatingSystem,
             (int)operatingSystem,
@@ -377,29 +394,31 @@ public sealed class SshSession : IProtocolSession
                 }
             }
 
-            var hostName = await TryRunAsync(LinuxHostNameCommand, cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(hostName))
+            var combined = await TryRunAsync(PosixHostProbeCommand, cancellationToken).ConfigureAwait(false);
+            var sections = string.IsNullOrWhiteSpace(combined)
+                ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : MonitorOutput.Split(combined!);
+            if (sections.Count > 0)
             {
-                info = info with { HostName = hostName!.Trim() };
+                if (sections.TryGetValue("host", out var hostName) && !string.IsNullOrWhiteSpace(hostName))
+                    info = info with { HostName = hostName.Trim() };
+                if (sections.TryGetValue("os", out var osRelease) && ParsePrettyName(osRelease) is { Length: > 0 } prettyName)
+                    info = info with { OperatingSystem = prettyName };
+                if (sections.TryGetValue("shell", out var shell) && !string.IsNullOrWhiteSpace(shell))
+                    info = info with { Shell = shell.Trim() };
+                if (sections.TryGetValue("pwd", out var workingDirectory) && !string.IsNullOrWhiteSpace(workingDirectory))
+                    info = info with { HomeDirectory = workingDirectory.Trim() };
             }
-
-            var osRelease = await TryRunAsync(OsReleaseCommand, cancellationToken).ConfigureAwait(false);
-            var prettyName = ParsePrettyName(osRelease);
-            if (!string.IsNullOrWhiteSpace(prettyName))
+            else
             {
-                info = info with { OperatingSystem = prettyName };
-            }
-
-            var shell = await TryRunAsync(ShellCommand, cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(shell))
-            {
-                info = info with { Shell = shell!.Trim() };
-            }
-
-            var workingDirectory = await TryRunAsync(WorkingDirectoryCommand, cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(workingDirectory))
-            {
-                info = info with { HomeDirectory = workingDirectory!.Trim() };
+                var hostName = await TryRunAsync(LinuxHostNameCommand, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(hostName)) info = info with { HostName = hostName!.Trim() };
+                var osRelease = await TryRunAsync(OsReleaseCommand, cancellationToken).ConfigureAwait(false);
+                if (ParsePrettyName(osRelease) is { Length: > 0 } prettyName) info = info with { OperatingSystem = prettyName };
+                var shell = await TryRunAsync(ShellCommand, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(shell)) info = info with { Shell = shell!.Trim() };
+                var workingDirectory = await TryRunAsync(WorkingDirectoryCommand, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(workingDirectory)) info = info with { HomeDirectory = workingDirectory!.Trim() };
             }
         }
 

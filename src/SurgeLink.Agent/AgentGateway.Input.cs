@@ -46,6 +46,7 @@ public sealed partial class AgentGateway
         grant.Check = null;
 
         AgentResponse response;
+        var inputWritten = false;
         try
         {
             // Replaying the same operation never selects a tab or writes again.
@@ -57,6 +58,7 @@ public sealed partial class AgentGateway
             var receipt = isText
                 ? await grant.Terminal.SendCheckedTextAsync(sendText!, request.Method == "terminal.exec" || request.Submit, check.Screen, ct).ConfigureAwait(false)
                 : await grant.Terminal.SendCheckedKeyAsync(request.Key!, check.Screen, ct).ConfigureAwait(false);
+            inputWritten = true;
             TouchControl(grant);
             if (request.Method == "terminal.exec")
             {
@@ -74,7 +76,8 @@ public sealed partial class AgentGateway
         catch (AgentOperationPausedException) { response = HumanOperatingError(); }
         catch (TerminalInputConflictException) { response = AgentResponse.Error("input_conflict", "Input changed. Read the terminal again before a new operation."); }
         catch (TerminalInputUnknownException) { response = AgentResponse.Error("input_outcome_unknown", "The PTY write may be partial. Observe the terminal; do not automatically resend with a new operation ID."); }
-        catch (OperationCanceledException) { response = AgentResponse.Error("cancelled", "Input was cancelled before writing."); }
+        catch (OperationCanceledException) when (!inputWritten) { response = AgentResponse.Error("cancelled", "Input was cancelled before writing."); }
+        catch (OperationCanceledException) { response = AgentResponse.Error("input_outcome_unknown", "The command was sent to the terminal, but waiting for its completion was cancelled or timed out. Observe the terminal before continuing; do not resend with a new operation ID."); }
         catch (ArgumentException) { response = AgentResponse.Error("invalid_arguments", "Unsupported terminal key or input."); }
         catch (InvalidOperationException) { response = AgentResponse.Error("terminal_unavailable", "The terminal is closed or unavailable."); }
         catch (Exception) { response = AgentResponse.Error("input_outcome_unknown", "The input outcome is uncertain. Observe the terminal before continuing."); }
@@ -93,12 +96,24 @@ public sealed partial class AgentGateway
     private static string CleanExecOutput(string text, string marker, string? echoText)
     {
         var command = echoText?.Trim();
-        return string.Join('\n', text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n')
-                .Where(line => !line.Contains("__surge_status=$?; printf", StringComparison.Ordinal)
-                               && !line.Contains(marker, StringComparison.Ordinal)
-                               && (string.IsNullOrEmpty(command)
-                                   || !string.Equals(line.Trim(), command, StringComparison.Ordinal))))
-            .Trim();
+        var echoRemoved = false;
+        var filtered = new List<string>();
+        foreach (var line in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        {
+            if (line.Contains("__surge_status=$?; printf", StringComparison.Ordinal)
+                || line.Contains(marker, StringComparison.Ordinal))
+                continue;
+            if (!echoRemoved && !string.IsNullOrEmpty(command)
+                && string.Equals(line.Trim(), command, StringComparison.Ordinal))
+            {
+                echoRemoved = true;
+                continue;
+            }
+            filtered.Add(line);
+        }
+        while (filtered.Count > 0 && string.IsNullOrEmpty(filtered[0])) filtered.RemoveAt(0);
+        while (filtered.Count > 0 && string.IsNullOrEmpty(filtered[^1])) filtered.RemoveAt(filtered.Count - 1);
+        return string.Join('\n', filtered);
     }
 
     private static AgentResponse BuildExecResponse(string operationId, TerminalInputReceipt receipt, AgentResponse wait, string marker, string? echoText)

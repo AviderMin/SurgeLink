@@ -70,28 +70,34 @@ internal sealed class TelnetSession : IProtocolSession
 
     private void OnTerminalClosed(object? sender, EventArgs args)
     {
+        Exception? failure;
         lock (_gate)
         {
             if (_state is ConnectionState.Disconnecting or ConnectionState.Disconnected) return;
-            if (_terminal.Failure is { } failure)
-            {
-                SetState(ConnectionState.Faulted, failure.Message);
-                try { Faulted?.Invoke(this, failure.Message); }
-                catch (Exception exception) { _logger.LogDebug(exception, "A Telnet fault handler failed."); }
-            }
-            else SetState(ConnectionState.Disconnected, "The remote Telnet server closed the connection.");
+            failure = _terminal.Failure;
+        }
+        if (failure is not null)
+        {
+            SetState(ConnectionState.Faulted, failure.Message);
+            try { Faulted?.Invoke(this, failure.Message); }
+            catch (Exception exception) { _logger.LogDebug(exception, "A Telnet fault handler failed."); }
+        }
+        else
+        {
+            SetState(ConnectionState.Disconnected, "The remote Telnet server closed the connection.");
         }
     }
 
     private void SetState(ConnectionState state, string? message = null)
     {
+        SessionStateChangedEventArgs? args = null;
         lock (_gate)
         {
             if (_state == state) return;
-            var args = new SessionStateChangedEventArgs(_state, state, message);
+            args = new SessionStateChangedEventArgs(_state, state, message);
             _state = state;
-            try { StateChanged?.Invoke(this, args); }
-            catch (Exception exception) { _logger.LogDebug(exception, "A Telnet state handler failed."); }
         }
+        try { StateChanged?.Invoke(this, args); }
+        catch (Exception exception) { _logger.LogDebug(exception, "A Telnet state handler failed."); }
     }
 }

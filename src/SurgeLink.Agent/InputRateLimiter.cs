@@ -32,6 +32,10 @@ internal sealed class InputRateLimiter
                 _tokens = Math.Min(_permitsPerMinute, _tokens + elapsedMinutes * _permitsPerMinute);
                 _lastRefill = now;
             }
+            else if (elapsedMinutes < 0)
+            {
+                _lastRefill = now;
+            }
 
             if (_tokens < 1) return false;
             _tokens -= 1;

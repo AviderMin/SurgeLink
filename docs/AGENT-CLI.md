@@ -172,8 +172,11 @@ input was delivered; preserve the operation ID and arguments for input retries.
 
 A source solution
 build normally places the CLI in src/SurgeLink.Cli/bin/Debug/net10.0; a direct
-project build with Platform=x64 adds x64 after bin. Release installers include
-cli/surgelink-cli.exe and agent/surgelink-agent-host.exe, each self-contained.
+project build with Platform=x64 adds x64 after bin. Release installers place
+surgelink-cli.exe and surgelink-agent-host.exe in the application folder next to
+SurgeLink.exe. All three are self-contained but share one copy of the .NET 10
+runtime; installing them into separate folders would ship that runtime three
+times (about 154 MB of identical files).
 
 Example after allowing terminal control in the desktop:
 

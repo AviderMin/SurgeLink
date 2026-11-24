@@ -418,6 +418,7 @@ internal sealed class ScreenBuffer
     /// <summary>Erase in display: 0 to end, 1 to start, 2/3 whole screen.</summary>
     public void EraseInDisplay(int mode)
     {
+        _pendingWrap = false;
         _lines[_cursorRow].PrepareForEdit();
         switch (mode)
         {
@@ -439,6 +440,7 @@ internal sealed class ScreenBuffer
                 break;
             default:
                 ClearCells(_cursorRow, _cursorColumn, _columns);
+                _lines[_cursorRow].Wrapped = false;
                 for (int row = _cursorRow + 1; row < _rows; row++)
                 {
                     ClearRow(row);
@@ -453,6 +455,7 @@ internal sealed class ScreenBuffer
     /// <summary>Erase in line: 0 to end, 1 to start, 2 whole line.</summary>
     public void EraseInLine(int mode)
     {
+        _pendingWrap = false;
         _lines[_cursorRow].PrepareForEdit();
         switch (mode)
         {
@@ -464,6 +467,7 @@ internal sealed class ScreenBuffer
                 break;
             default:
                 ClearCells(_cursorRow, _cursorColumn, _columns);
+                _lines[_cursorRow].Wrapped = false;
                 break;
         }
 
@@ -473,6 +477,7 @@ internal sealed class ScreenBuffer
     /// <summary>Blanks <paramref name="count"/> cells starting at the cursor.</summary>
     public void EraseCharacters(int count)
     {
+        _pendingWrap = false;
         count = Math.Max(1, count);
         _lines[_cursorRow].PrepareForEdit();
         ClearCells(_cursorRow, _cursorColumn, _cursorColumn + count);
@@ -482,6 +487,7 @@ internal sealed class ScreenBuffer
     /// <summary>Inserts blank cells at the cursor, shifting the rest right.</summary>
     public void InsertCharacters(int count)
     {
+        _pendingWrap = false;
         count = Math.Max(1, count);
         _lines[_cursorRow].PrepareForEdit();
         InsertCellsInternal(_cursorRow, _cursorColumn, Math.Min(count, _columns));
@@ -491,6 +497,7 @@ internal sealed class ScreenBuffer
     /// <summary>Deletes cells at the cursor, shifting the rest left.</summary>
     public void DeleteCharacters(int count)
     {
+        _pendingWrap = false;
         count = Math.Max(1, count);
         _lines[_cursorRow].PrepareForEdit();
         TerminalCell[] cells = _lines[_cursorRow].Cells;
@@ -649,7 +656,7 @@ internal sealed class ScreenBuffer
         _host.OnScreenChanged();
     }
 
-    /// <summary>Pads or truncates the screen, keeping the top left content.</summary>
+    /// <summary>Pads or shrinks the screen; primary-screen height shrink pushes overflow top lines into scrollback so the active cursor row survives.</summary>
     public void Resize(int columns, int rows)
     {
         if (columns == _columns && rows == _rows)
@@ -660,11 +667,32 @@ internal sealed class ScreenBuffer
         // A height-only resize must not cancel a wrap that is still pending at
         // the right edge; the next glyph still belongs on a new row.
         var widthChanged = columns != _columns;
+        int scrollOff = 0;
+        if (!IsAlternate && rows < _rows)
+        {
+            int lastNonBlank = _cursorRow;
+            for (int r = _rows - 1; r > lastNonBlank; r--)
+            {
+                if (!IsRowBlank(_lines[r]))
+                {
+                    lastNonBlank = r;
+                    break;
+                }
+            }
+            scrollOff = Math.Clamp(lastNonBlank - (rows - 1), 0, _rows - rows);
+            for (int i = 0; i < scrollOff; i++)
+            {
+                CellLine scrolled = _lines[i];
+                scrolled.Resize(columns);
+                _ = _host.OnLineScrolledOff(scrolled);
+            }
+        }
+
         var lines = new CellLine[rows];
-        int keep = Math.Min(rows, _rows);
+        int keep = Math.Min(rows, _rows - scrollOff);
         for (int i = 0; i < keep; i++)
         {
-            CellLine line = _lines[i];
+            CellLine line = _lines[scrollOff + i];
             line.Resize(columns);
             lines[i] = line;
         }
@@ -678,7 +706,7 @@ internal sealed class ScreenBuffer
         _columns = columns;
         _rows = rows;
         _tabStops = CreateTabStops(columns);
-        _cursorRow = Math.Min(_cursorRow, _rows - 1);
+        _cursorRow = Math.Clamp(_cursorRow - scrollOff, 0, _rows - 1);
         _cursorColumn = Math.Min(_cursorColumn, _columns - 1);
         if (widthChanged)
         {
@@ -687,6 +715,16 @@ internal sealed class ScreenBuffer
         _scrollTop = 0;
         _scrollBottom = _rows - 1;
         _host.OnScreenChanged();
+    }
+
+    private static bool IsRowBlank(CellLine line)
+    {
+        TerminalCell[] cells = line.Cells;
+        for (int i = 0; i < line.Length; i++)
+        {
+            if (cells[i] != TerminalCell.Blank) return false;
+        }
+        return true;
     }
 
     private static CellLine[] CreateLines(int columns, int rows)

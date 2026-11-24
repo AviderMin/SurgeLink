@@ -381,10 +381,13 @@ internal static class AgentText
                             break;
                         }
 
-                        if (text[terminator] == '\u001B' && terminator + 1 < text.Length && text[terminator + 1] == '\\')
+                        if (text[terminator] == '\u001B')
                         {
-                            end = terminator + 2;
-                            complete = true;
+                            if (terminator + 1 < text.Length)
+                            {
+                                end = text[terminator + 1] == '\\' ? terminator + 2 : terminator;
+                                complete = true;
+                            }
                             break;
                         }
 

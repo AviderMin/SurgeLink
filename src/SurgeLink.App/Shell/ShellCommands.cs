@@ -25,14 +25,16 @@ internal static class ShellCommands
             Label = Str.T("shell.command.newSession", "New session"),
             Description = Str.T("shell.command.newSession.description", "Open the new session dialog"),
             Execute = newSession,
-            Accelerator = Accelerator(VirtualKey.T, VirtualKeyModifiers.Control),
+            // Ctrl+T/Ctrl+W belong to readline, Vim and fzf inside the terminal;
+            // follow Windows Terminal and use the Shift variants for app commands.
+            Accelerator = Accelerator(VirtualKey.T, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift),
         },
         new Command
         {
             Label = Str.T("shell.command.closeTab", "Close tab"),
             Description = Str.T("shell.command.closeTab.description", "Close the active session tab"),
             Execute = closeTab,
-            Accelerator = Accelerator(VirtualKey.W, VirtualKeyModifiers.Control),
+            Accelerator = Accelerator(VirtualKey.W, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift),
         },
         new Command
         {

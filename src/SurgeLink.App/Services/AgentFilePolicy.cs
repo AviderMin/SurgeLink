@@ -1,5 +1,6 @@
 using SurgeLink.Agent;
 using SurgeLink.App.Localization;
+using SurgeLink.Core.Security;
 
 namespace SurgeLink.App.Services;
 
@@ -27,7 +28,8 @@ internal static class AgentFilePolicy
             return false;
         }
 
-        var localPath = string.IsNullOrWhiteSpace(access.LocalPath) ? "(missing)" : access.LocalPath;
+        var localPath = DiagnosticText.Escape(string.IsNullOrWhiteSpace(access.LocalPath) ? "(missing)" : access.LocalPath);
+        var remotePath = DiagnosticText.Escape(access.Path ?? string.Empty);
         var title = access.Operation == "files.upload"
             ? Str.T("shell.agent.localUploadTitle", "Allow the Agent to read a local file?")
             : Str.T("shell.agent.localDownloadTitle", "Allow the Agent to write a local file?");
@@ -36,12 +38,12 @@ internal static class AgentFilePolicy
                 "shell.agent.localUploadBody",
                 "The Agent wants to upload this file from your computer:\n\n{0}\n\nRemote destination: {1}\n\nAllow this once?",
                 localPath,
-                access.Path)
+                remotePath)
             : Str.F(
                 "shell.agent.localDownloadBody",
                 "The Agent wants to save remote content to this file on your computer:\n\n{0}\n\nRemote source: {1}\n\nAllow this once?",
                 localPath,
-                access.Path);
+                remotePath);
         return await interaction.RequestConfirmationAsync(
             new ConfirmationRequest(
                 title,

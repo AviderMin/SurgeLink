@@ -51,7 +51,7 @@ public static class MonitorScript
             Mark(DiskStatsSection),
             "cat /proc/diskstats 2>/dev/null",
             Mark(DiskUsageSection),
-            "LC_ALL=C df -kP 2>/dev/null",
+            "LC_ALL=C df -kP -l 2>/dev/null || LC_ALL=C df -kP 2>/dev/null",
             Mark(ProcessCountSection),
             // One entry per thread group leader: a real process count, unlike loadavg's runnable field.
             "ls -1 /proc 2>/dev/null | grep -c '^[0-9][0-9]*$'",

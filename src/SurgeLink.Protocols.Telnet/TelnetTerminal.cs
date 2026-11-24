@@ -117,8 +117,7 @@ internal sealed class TelnetTerminal : IRemoteTerminal
             await _ioGate.WaitAsync().ConfigureAwait(false);
             _ioGate.Release();
             Complete(null);
-            _lifetime.Dispose();
-            // Pending callers may still be unwinding; leave the semaphore usable.
+            // Pending callers may still be unwinding; leave _lifetime and _ioGate usable.
             completion.TrySetResult();
         }
         catch (Exception exception) { completion.TrySetException(exception); }

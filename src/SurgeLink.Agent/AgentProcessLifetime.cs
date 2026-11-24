@@ -12,15 +12,27 @@ public static class AgentProcessLifetime
         cancellationToken.ThrowIfCancellationRequested();
         Process desktop;
         try { desktop = Process.GetProcessById(desktopProcessId); }
-        catch (ArgumentException) { throw DesktopExited(desktopProcessId); }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            throw DesktopExited(desktopProcessId);
+        }
         using (desktop)
         using (var request = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         using (var stopWatching = new CancellationTokenSource())
         {
             // Keep the process handle for this invocation, so PID reuse cannot
             // silently attach an in-flight request to a replacement process.
-            _ = desktop.SafeHandle;
-            if (desktop.HasExited) { throw DesktopExited(desktopProcessId); }
+            try
+            {
+                _ = desktop.SafeHandle;
+                if (desktop.HasExited) { throw DesktopExited(desktopProcessId); }
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                throw new AgentDesktopDiscoveryException("desktop_ipc_unavailable",
+                    $"Could not inspect desktop PID {desktopProcessId}. Confirm the desktop runs under the same Windows account and integrity level.",
+                    [desktopProcessId]);
+            }
             var watching = CancelOnExitAsync(desktop, request, stopWatching.Token);
             try { return await operation(request.Token).ConfigureAwait(false); }
             catch (Exception exception) when (!cancellationToken.IsCancellationRequested
