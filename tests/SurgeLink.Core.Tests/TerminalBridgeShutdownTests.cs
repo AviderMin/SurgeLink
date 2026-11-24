@@ -21,10 +21,7 @@ public sealed class TerminalBridgeShutdownTests
         bridge.SendText("blocked");
         await remote.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        Task disposal = bridge.DisposeAsync().AsTask();
-        Task completed = await Task.WhenAny(disposal, Task.Delay(TimeSpan.FromSeconds(2)));
-        Assert.Same(disposal, completed);
-        await disposal;
+        await bridge.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         Assert.True(remote.DisposeCalled);
     }
 

@@ -69,8 +69,8 @@ public sealed class RemoteMonitorSampler
                 {
                     // Wake immediately when a new subscriber registers instead of waiting up to 1s.
                     var sleep = delay > TimeSpan.Zero && delay < TimeSpan.FromSeconds(1) ? delay : TimeSpan.FromSeconds(1);
-                    await Task.WhenAny(Task.Delay(sleep, lifetime.Token), wakeTask).ConfigureAwait(false);
-                    lifetime.Token.ThrowIfCancellationRequested();
+                    try { await wakeTask.WaitAsync(sleep, lifetime.Token).ConfigureAwait(false); }
+                    catch (TimeoutException) { }
                     continue;
                 }
                 MonitorSample result;

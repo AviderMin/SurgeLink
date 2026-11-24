@@ -28,26 +28,28 @@ public static class ConformanceAssert
     public static async Task<T> CompletesWithinAsync<T>(Task<T> task, TimeSpan timeout, string because)
     {
         ArgumentNullException.ThrowIfNull(task);
-        Task completed = await Task.WhenAny(task, Task.Delay(timeout));
-        if (!ReferenceEquals(completed, task))
+        try
+        {
+            return await task.WaitAsync(timeout);
+        }
+        catch (TimeoutException)
         {
             throw new XunitException($"{because} did not complete within {timeout.TotalMilliseconds:0} ms.");
         }
-
-        return await task;
     }
 
     /// <summary>Awaits a task, failing the test instead of hanging when it takes too long.</summary>
     public static async Task CompletesWithinAsync(Task task, TimeSpan timeout, string because)
     {
         ArgumentNullException.ThrowIfNull(task);
-        Task completed = await Task.WhenAny(task, Task.Delay(timeout));
-        if (!ReferenceEquals(completed, task))
+        try
+        {
+            await task.WaitAsync(timeout);
+        }
+        catch (TimeoutException)
         {
             throw new XunitException($"{because} did not complete within {timeout.TotalMilliseconds:0} ms.");
         }
-
-        await task;
     }
 
     /// <summary>

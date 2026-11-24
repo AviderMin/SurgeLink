@@ -183,9 +183,7 @@ public sealed class ScpReadSafetyTests
             await pending;
         }, CancellationToken.None);
 
-        var completed = await Task.WhenAny(blocked.Task, Task.Delay(TimeSpan.FromSeconds(1)));
-        Assert.Same(blocked.Task, completed);
-        Assert.True(await blocked.Task);
+        Assert.True(await blocked.Task.WaitAsync(TimeSpan.FromSeconds(1)));
     }
 
     [Fact]
