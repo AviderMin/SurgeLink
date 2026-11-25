@@ -128,10 +128,11 @@ dotnet build SurgeLink.slnx -c Debug -p:Platform=x64
 ```
 
 The panel's **Copy Agent instructions** action copies a localized, ready-to-paste
-workflow with an absolute CLI path. It tells the Agent to execute `--help` and
-`sessions list` first, select and check the intended session, send input with the
-required token/revision/operation ID, and inspect output before reporting
-completion. By default the CLI auto-discovers the only running desktop; if
+workflow with an absolute CLI path. It tells the Agent to execute `sessions list`
+first, select and check the intended session (using `--brief`/`--minimal` on
+follow-up checks), prefer `terminal exec` for standard POSIX commands (or
+`terminal send` with `terminal output`/`wait` for interactive flows), and read
+large log tails via `files read --tail-bytes`. By default the CLI auto-discovers the only running desktop; if
 several instances are running, `surgelink-cli desktops list` reports their PIDs
 and the instructions explain how to pass `--instance PID`. Commands use local
 Windows PowerShell and work from any workspace on the same computer and Windows
@@ -215,13 +216,13 @@ surgelink-cli sessions check --session HANDLE [--brief|--minimal]
 surgelink-cli sessions activate --session HANDLE [--view terminal|files|monitor]
 surgelink-cli terminal screen --session HANDLE [--tail-rows N] [--strip-ansi]
 surgelink-cli terminal output --session HANDLE [--cursor N] [--max-bytes N] [--max-lines N] [--strip-ansi]
-surgelink-cli terminal wait --session HANDLE [--cursor N] [--idle-ms 500] [--timeout-ms 30000] [--strip-ansi]
+surgelink-cli terminal wait --session HANDLE [--cursor N] [--idle-ms 500] [--timeout-ms 30000] [--max-bytes N] [--max-lines N] [--strip-ansi]
 surgelink-cli terminal send --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) [--submit] --revision N --operation-id ID --check-token TOKEN
-surgelink-cli terminal exec --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) --revision N --operation-id ID --check-token TOKEN [--idle-ms 500] [--timeout-ms 30000] [--strip-ansi]
+surgelink-cli terminal exec --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) --revision N --operation-id ID --check-token TOKEN [--timeout-ms 30000] [--max-bytes N] [--max-lines N] [--strip-ansi]
 surgelink-cli terminal key --session HANDLE --key Ctrl+C --revision N --operation-id ID --check-token TOKEN
 surgelink-cli monitor snapshot --session HANDLE
 surgelink-cli files list --session HANDLE --path REMOTE_PATH [--offset N] [--limit N]
-surgelink-cli files read --session HANDLE --path REMOTE_PATH [--offset N] [--max-bytes N]
+surgelink-cli files read --session HANDLE --path REMOTE_PATH ([--offset N] [--max-bytes N] | [--tail-bytes N])
 surgelink-cli files stat --session HANDLE --path REMOTE_PATH
 surgelink-cli files write --session HANDLE --path REMOTE_PATH (--text TEXT | --text-file FILE | --text-stdin) [--overwrite]
 surgelink-cli files delete --session HANDLE --path REMOTE_PATH [--recursive]
@@ -271,8 +272,9 @@ The bundled helpers follow desktop lifetime. A Host bound with `--instance` or
 `select_desktop` exits when that exact desktop process exits, including when the
 MCP client keeps stdin open. Switching selection while the desktop is still
 running moves that lifetime binding to the new selection. In automatic mode,
-the Host exits when no SurgeLink desktops remain; starting it with no desktop
-running also exits. CLI requests cancel and exit if their target desktop exits.
+the Host stays running to advertise tools even if no desktop is running yet and
+connects when one starts; once it has observed a running desktop, it exits when
+no SurgeLink desktops remain. CLI requests cancel and exit if their target desktop exits.
 Closing one desktop does not terminate helpers bound to another desktop, and
 no external MCP client or unrelated process is terminated.
 
@@ -389,15 +391,19 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   occurrence that ends its own line counts as echo, so the same characters inside
   real output are preserved.
 - terminal.exec sends one command with a POSIX-shell sentinel appended and waits
-  for that sentinel; a quiet gap in the command's own output is not completion. It
-  returns `status=executed`, `exitCode`, `commandCompletionKnown=true` when the
-  sentinel is observed, and `output`. The wait ends at the sentinel, at
-  `timeoutMilliseconds`, or at the response cap, so a command that prompts for
-  input should pass a small `timeoutMilliseconds` rather than rely on idle
-  detection. The returned output keeps the end of the stream so the sentinel and
-  final result are present when `maxBytes` truncates a long response. This is best
-  effort for POSIX bash/sh; non-POSIX shells time out without an exit code,
-  in which case `commandCompletionKnown=false`.
+  for that sentinel up to `timeoutMilliseconds` (capped at 50,000 ms to fit
+  inside the 60s IPC frame deadline; quiet gaps do not end the wait). When the
+  sentinel is observed it returns `status=executed`, `exitCode`,
+  `commandCompletionKnown=true`, `timedOut=false`, `output` and a 4-line `screen`
+  tail. If the deadline expires without the sentinel, it returns
+  `status=timed_out`, `timedOut=true`, `commandCompletionKnown=false`,
+  `exitCode=null`, any output collected so far (`output.cursor` to continue via
+  `terminal.output` / `terminal.wait`) and the current `screen` tail without
+  locking the session. Pass a small `timeoutMilliseconds` for commands that
+  prompt for input. The returned output keeps the end of the stream so the
+  sentinel and final result are present when `maxBytes` truncates a long response.
+  Trailing newlines are trimmed before appending the sentinel. This is best effort
+  for POSIX bash/sh; non-POSIX shells time out without an exit code.
 - sessions.check supports `brief=true` (compact screen) and `minimal=true`
   (compact screen plus only handle, label, target, control state and fileRead instead of
   the full host/session metadata). Both are opt-in; the full check remains the
@@ -441,12 +447,13 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
 - Files accept strict Unicode text up to 128 KiB of actual bytes. Directory results
   contain at most 500 entries per page; `offset`/`limit` page through the listing.
   `files.read` also accepts `offset` and `maxBytes` (up to 512 KiB) to read a
-  bounded page of a larger file. Pages start and end on UTF-8 character
+  bounded page of a larger file, or `tailBytes` (up to 512 KiB, mutually exclusive
+  with `offset`) to read the end of a large log directly. Pages start and end on UTF-8 character
   boundaries; `maxBytes` may be exceeded by at most one code point, and an
-  unaligned `offset` is aligned forward with `skippedBytes` reporting the bytes
+  unaligned `offset` or `tailBytes` start is aligned forward with `skippedBytes` reporting the bytes
   skipped. An offset that points inside the final character returns an empty EOF
   page instead of a decode failure. `nextOffset` is the aligned position for the
-  next page. Paths and symlinks use server semantics, without a separate path
+  next page (equal to the file length after `tailBytes`, enabling subsequent tail paging). Paths and symlinks use server semantics, without a separate path
   sandbox.
 - `files.stat` returns metadata without reading content. `files.write` stages
   complete UTF-8 text and commits atomically where the protocol supports it;

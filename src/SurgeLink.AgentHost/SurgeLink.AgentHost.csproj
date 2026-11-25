@@ -9,4 +9,7 @@
     <ProjectReference Include="..\SurgeLink.Agent\SurgeLink.Agent.csproj" />
     <Content Include="Licenses\*.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SurgeLink.Agent.Tests" />
+  </ItemGroup>
 </Project>

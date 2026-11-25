@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using System.Text.Json;
 using SurgeLink.Core.Files;
 using SurgeLink.Core.Terminal;
 using Xunit;
@@ -478,8 +479,101 @@ public sealed class AgentErgonomicsTests
 
         Assert.True(response.Success);
         var data = response.Data!.Value;
+        Assert.Equal("executed", data.GetProperty("status").GetString());
         Assert.True(data.GetProperty("commandCompletionKnown").GetBoolean(), data.GetRawText());
+        Assert.False(data.GetProperty("timedOut").GetBoolean());
         Assert.Equal(0, data.GetProperty("exitCode").GetInt32());
+    }
+
+    [Fact]
+    public async Task TerminalExecTimeoutReturnsTimedOutStatusAndScreenTailWithoutLockingSession()
+    {
+        var terminal = new NeverFinishingExecTerminal();
+        var gateway = new AgentGateway();
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+        var check = await gateway.ExecuteAsync(new("sessions.check", handle), default);
+        var checkData = check.Data!.Value;
+
+        var timedOut = await gateway.ExecuteAsync(new("terminal.exec", handle,
+            Text: "sudo apt update", OperationId: "exec-timeout", TimeoutMilliseconds: 150, StripAnsi: true,
+            ExpectedInputRevision: checkData.GetProperty("screen").GetProperty("inputRevision").GetInt64(),
+            CheckToken: checkData.GetProperty("checkToken").GetString()), default);
+
+        Assert.True(timedOut.Success, timedOut.Message);
+        var data = timedOut.Data!.Value;
+        Assert.Equal("timed_out", data.GetProperty("status").GetString());
+        Assert.True(data.GetProperty("timedOut").GetBoolean());
+        Assert.False(data.GetProperty("commandCompletionKnown").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("exitCode").ValueKind);
+        Assert.Contains("[sudo] password for alice:", data.GetProperty("screen").GetProperty("text").GetString());
+        Assert.True(data.GetProperty("output").GetProperty("cursor").GetInt64() > 0);
+
+        // Session stays unlocked for the next checked operation instead of turning into input_outcome_unknown.
+        var recheck = await gateway.ExecuteAsync(new("sessions.check", handle), default);
+        Assert.True(recheck.Success, recheck.Message);
+        var next = await gateway.ExecuteAsync(new("terminal.key", handle,
+            Key: "Ctrl+C", OperationId: "cancel-after-timeout",
+            ExpectedInputRevision: recheck.Data!.Value.GetProperty("screen").GetProperty("inputRevision").GetInt64(),
+            CheckToken: recheck.Data.Value.GetProperty("checkToken").GetString()), default);
+        Assert.True(next.Success, next.Message);
+    }
+
+    [Fact]
+    public async Task TerminalExecTrimsTrailingNewlinesFromCommand()
+    {
+        var terminal = new ExecTerminal();
+        var gateway = new AgentGateway();
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+        var check = await gateway.ExecuteAsync(new("sessions.check", handle), default);
+        var checkData = check.Data!.Value;
+
+        var response = await gateway.ExecuteAsync(new("terminal.exec", handle,
+            Text: "echo hi\r\n", OperationId: "exec-crlf", StripAnsi: true,
+            ExpectedInputRevision: checkData.GetProperty("screen").GetProperty("inputRevision").GetInt64(),
+            CheckToken: checkData.GetProperty("checkToken").GetString()), default);
+
+        Assert.True(response.Success, response.Message);
+        Assert.Equal(0, response.Data!.Value.GetProperty("exitCode").GetInt32());
+        Assert.DoesNotContain("\r\n\n__surge_status", terminal.LastWrittenText);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FileReadSupportsTailBytesOnSeekableAndNonSeekableStreams(bool seekable)
+    {
+        var files = new MemoryFiles { NonSeekableReads = !seekable };
+        files.Files["/var/log/app.log"] = Encoding.UTF8.GetBytes("header-line\n中文😀tail");
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession { FileSystem = files }, null, allowFileRead: true);
+
+        // Last 6 bytes of "header-line\n中文😀tail": [last 2 bytes of 😀] + "tail" -> skips 2 continuation bytes, returns "tail".
+        var sliced = await gateway.ExecuteAsync(new("files.read", handle, "/var/log/app.log", TailBytes: 6), default);
+        Assert.True(sliced.Success, sliced.Message);
+        var slicedData = sliced.Data!.Value;
+        Assert.Equal("tail", slicedData.GetProperty("text").GetString());
+        Assert.True(slicedData.GetProperty("tail").GetBoolean());
+        Assert.True(slicedData.GetProperty("truncated").GetBoolean());
+        Assert.Equal(2, slicedData.GetProperty("skippedBytes").GetInt32());
+        Assert.Equal(6, slicedData.GetProperty("bytesRead").GetInt32());
+        Assert.Equal(files.Files["/var/log/app.log"].Length, slicedData.GetProperty("nextOffset").GetInt64());
+
+        // Tail larger than the file reads cleanly from offset 0 without truncation.
+        var full = await gateway.ExecuteAsync(new("files.read", handle, "/var/log/app.log", TailBytes: 1024), default);
+        Assert.True(full.Success, full.Message);
+        Assert.Equal("header-line\n中文😀tail", full.Data!.Value.GetProperty("text").GetString());
+        Assert.Equal(0, full.Data.Value.GetProperty("offset").GetInt64());
+        Assert.False(full.Data.Value.GetProperty("truncated").GetBoolean());
+
+        var conflict = await gateway.ExecuteAsync(new("files.read", handle, "/var/log/app.log", Offset: 0, TailBytes: 4), default);
+        Assert.Equal("invalid_arguments", conflict.ErrorCode);
+
+        var nonPositive = await gateway.ExecuteAsync(new("files.read", handle, "/var/log/app.log", TailBytes: 0), default);
+        Assert.Equal("invalid_arguments", nonPositive.ErrorCode);
     }
 
     [Fact]
@@ -573,6 +667,7 @@ public sealed class AgentErgonomicsTests
         private string _output = string.Empty;
         private long _revision;
         public int Writes { get; private set; }
+        public string? LastWrittenText { get; private set; }
         public Action? AfterWrite { get; set; }
         public TerminalScreenSnapshot ReadScreen() => new(_screen, 80, 24, 0, 0, true, false, false, false, _revision, _output.Length, false, false);
         public TerminalOutputPage ReadOutput(long? cursor)
@@ -585,6 +680,7 @@ public sealed class AgentErgonomicsTests
         {
             if (_revision != expectedRevision) throw new TerminalInputConflictException();
             Writes++;
+            LastWrittenText = text;
             _revision++;
             _screen = "hi\n";
             var marker = ReadExecMarker(text);
@@ -595,6 +691,36 @@ public sealed class AgentErgonomicsTests
         }
         public Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct) =>
             SendTextAsync(key, false, expectedRevision, ct);
+    }
+
+    /// <summary>Emits a prompt that blocks for user input without emitting the exec completion sentinel.</summary>
+    private sealed class NeverFinishingExecTerminal : ITerminalAutomation
+    {
+        private string _screen = "alice@host:~$ ";
+        private string _output = string.Empty;
+        private long _revision;
+        public TerminalScreenSnapshot ReadScreen() =>
+            new(_screen, 80, 24, 0, 0, true, false, false, false, _revision, _output.Length, false, false);
+        public TerminalOutputPage ReadOutput(long? cursor)
+        {
+            var start = (int)(cursor ?? 0);
+            var text = start < _output.Length ? _output[start..] : string.Empty;
+            return new(text, _output.Length, 0, _output.Length, false, false);
+        }
+        public Task<TerminalInputReceipt> SendTextAsync(string text, bool submit, long expectedRevision, CancellationToken ct)
+        {
+            if (_revision != expectedRevision) throw new TerminalInputConflictException();
+            _revision++;
+            _screen = "\u001b[33m[sudo] password for alice:\u001b[0m ";
+            _output = "\u001b[33m[sudo] password for alice:\u001b[0m ";
+            return Task.FromResult(new TerminalInputReceipt(_revision, 0, text.Length, submit));
+        }
+        public Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct)
+        {
+            if (_revision != expectedRevision) throw new TerminalInputConflictException();
+            _revision++;
+            return Task.FromResult(new TerminalInputReceipt(_revision, _output.Length, 1, false));
+        }
     }
 
     /// <summary>Prints, stays quiet, then emits the sentinel a slow command would produce.</summary>
@@ -639,6 +765,7 @@ public sealed class AgentErgonomicsTests
         public HashSet<string> FailingReads { get; } = new(StringComparer.Ordinal);
         public HashSet<string> FailingDisposals { get; } = new(StringComparer.Ordinal);
         public Action? OnFirstRead { get; set; }
+        public bool NonSeekableReads { get; set; }
         public bool SupportsPermissions => false;
         public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => throw new NotSupportedException();
@@ -653,7 +780,9 @@ public sealed class AgentErgonomicsTests
                 ? new PartialThenFailingStream(Files[path])
                 : FailingDisposals.Contains(path)
                     ? new ThrowOnDisposeStream(Files[path])
-                    : new HookedStream(Files[path], OnFirstRead));
+                    : NonSeekableReads
+                        ? new NonSeekableReadStream(Files[path])
+                        : new HookedStream(Files[path], OnFirstRead));
         public Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct)
         {
             var stream = new MemoryStream();
@@ -714,6 +843,13 @@ public sealed class AgentErgonomicsTests
                 }
                 base.Dispose(disposing);
             }
+        }
+
+        private sealed class NonSeekableReadStream(byte[] content) : MemoryStream(content, writable: false)
+        {
+            public override bool CanSeek => false;
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+                base.ReadAsync(buffer.Length > 3 ? buffer[..3] : buffer, cancellationToken);
         }
     }
 }

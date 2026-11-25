@@ -8,13 +8,20 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.16**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.17**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.17** 优化 AI Agent 接入体验、命令执行超时契约与大日志尾部读取：
+
+- 命令执行与超时契约：`terminal.exec` / `run_terminal_command` 按总请求预算限制最大等待时长（上限 50 秒），避免慢命令撞上 60 秒管道超时误锁会话；超时后返回 `status=timed_out`、当前输出游标与 4 行屏幕尾部以便继续观测，并自动裁剪命令末尾换行。
+- 日志尾部直接读取：`files.read` / `read_text_file` 新增 `--tail-bytes` / `tailBytes`（最大 512 KiB，兼容可寻址与非可寻址流并自动对齐 UTF-8 字符边界），无需开启终端控制即可直接读取远端大日志末尾。
+- 精简接入提示与 MCP 同步：重构桌面复制的 CLI Markdown 指引与 MCP `ServerInstructions`，将 `terminal exec` / `run_terminal_command` 推为默认首选，引导使用 `--brief`/`--minimal` 与 `--tail-bytes` 并按是否绑定 PID 区分重启说明；MCP `ServerInfo.Version` 改为上报真实程序集版本并移除 `run_terminal_command` 无效的 `idleMilliseconds` 参数。
+- CLI 参数边界与文档对齐：支持以 `--` 开头的远端/本地路径参数，补齐 `--text` / `--text-file` / `--text-stdin` 三者互斥校验，并修正 `docs/AGENT-CLI.md` 中 MCP Host 生命周期说明。
 
 **1.0.3.16** 全面优化终端内存占用、高频输出吞吐、渲染缓存与外围 I/O 性能：
 

@@ -41,9 +41,9 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
         if (method == "terminal.output") allowed.UnionWith(["--cursor", "--strip-ansi", "--max-bytes", "--max-lines"]);
         if (method == "terminal.wait") allowed.UnionWith(["--cursor", "--idle-ms", "--timeout-ms", "--strip-ansi", "--max-bytes", "--max-lines"]);
         if (method is "terminal.text" or "terminal.exec") allowed.UnionWith(["--text-file", "--text-stdin"]);
-        if (method == "terminal.exec") allowed.UnionWith(["--idle-ms", "--timeout-ms", "--max-bytes", "--max-lines"]);
+        if (method == "terminal.exec") allowed.UnionWith(["--timeout-ms", "--max-bytes", "--max-lines"]);
         if (method is "files.list") allowed.UnionWith(["--offset", "--limit"]);
-        if (method is "files.read") allowed.UnionWith(["--offset", "--max-bytes"]);
+        if (method is "files.read") allowed.UnionWith(["--offset", "--max-bytes", "--tail-bytes"]);
         if (method is "files.write") allowed.UnionWith(["--text-file", "--text-stdin", "--overwrite"]);
         if (method is "files.delete") allowed.Add("--recursive");
         if (method is "files.rename") allowed.Add("--destination");
@@ -59,7 +59,7 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
         for (var i = 2; i < args.Length; i++)
         {
             var key = args[i];
-            if (key is "--json" or "--submit" or "--brief" or "--minimal" or "--strip-ansi" or "--overwrite" or "--recursive" or "--text-stdin")
+            if (IsFlagOption(key))
             {
                 if (key == "--submit" && method != "terminal.text") throw new ArgumentException("Invalid option: --submit");
                 if ((key is "--brief" or "--minimal") && method != "sessions.check") throw new ArgumentException($"Invalid option: {key}");
@@ -71,7 +71,7 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
                 continue;
             }
             if (!allowed.Contains(key) || i + 1 >= args.Length
-                || key is not ("--text" or "--key") && args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                || IsMissingOptionValue(key, args[i + 1]))
                 throw new ArgumentException($"Invalid option: {key}");
             if (!options.TryAdd(key, args[++i])) throw new ArgumentException($"Duplicate option: {key}");
         }
@@ -103,7 +103,12 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
         var operationId = Get("--operation-id");
         var textFile = Get("--text-file");
         var textFromStdin = flags.Contains("--text-stdin");
-        if (textFile is not null && options.ContainsKey("--text")) throw new ArgumentException("--text and --text-file cannot be used together.");
+        var textSources = (options.ContainsKey("--text") ? 1 : 0) + (textFile is not null ? 1 : 0) + (textFromStdin ? 1 : 0);
+        if (textSources > 1) throw new ArgumentException("--text, --text-file and --text-stdin cannot be used together.");
+        var offset = Number("--offset");
+        var tailBytes = Int("--tail-bytes");
+        if (tailBytes is <= 0) throw new ArgumentException("--tail-bytes must be a positive integer.");
+        if (tailBytes is not null && offset is not null) throw new ArgumentException("--offset and --tail-bytes cannot be used together.");
         if (method is "terminal.text" or "terminal.exec" or "terminal.key")
         {
             if (revision is null) throw new ArgumentException("--revision from terminal screen is required.");
@@ -121,10 +126,27 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
             Key: Get("--key"), Cursor: Number("--cursor"), ExpectedInputRevision: revision, OperationId: operationId,
             View: Get("--view"), CheckToken: Get("--check-token"), Brief: flags.Contains("--brief"),
             StripAnsi: flags.Contains("--strip-ansi"), MaxBytes: Int("--max-bytes"), MaxLines: Int("--max-lines"),
-            TailRows: Int("--tail-rows"), Offset: Number("--offset"), Limit: Int("--limit"),
+            TailRows: Int("--tail-rows"), Offset: offset, Limit: Int("--limit"),
             Destination: Get("--destination"), Recursive: flags.Contains("--recursive"),
             Overwrite: flags.Contains("--overwrite"), IdleMilliseconds: Int("--idle-ms"),
             TimeoutMilliseconds: Int("--timeout-ms"), LocalPath: Get("--local-path"),
-            Minimal: flags.Contains("--minimal")), instance, textFile, textFromStdin);
+            Minimal: flags.Contains("--minimal"), TailBytes: tailBytes), instance, textFile, textFromStdin);
     }
+
+    private static bool IsFlagOption(string option) => option is
+        "--json" or "--submit" or "--brief" or "--minimal" or "--strip-ansi"
+        or "--overwrite" or "--recursive" or "--text-stdin";
+
+    private static bool IsKnownOptionOrFlag(string token) => IsFlagOption(token) || token is
+        "--instance" or "--session" or "--path" or "--view" or "--tail-rows" or "--cursor"
+        or "--max-bytes" or "--max-lines" or "--idle-ms" or "--timeout-ms" or "--text-file"
+        or "--offset" or "--limit" or "--tail-bytes" or "--destination" or "--local-path"
+        or "--revision" or "--operation-id" or "--check-token" or "--key" or "--text";
+
+    private static bool IsMissingOptionValue(string option, string next) => option switch
+    {
+        "--text" or "--key" => false,
+        "--path" or "--destination" or "--local-path" or "--text-file" => IsKnownOptionOrFlag(next),
+        _ => next.StartsWith("--", StringComparison.Ordinal),
+    };
 }

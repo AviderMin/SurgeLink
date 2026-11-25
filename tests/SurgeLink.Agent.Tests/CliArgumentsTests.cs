@@ -75,6 +75,19 @@ public sealed class CliArgumentsTests
         var upload = CliArguments.Parse(["files", "upload", "--session", "h", "--path", "/tmp/a", "--local-path", "C:\\tmp\\a.txt"]);
         Assert.Equal("files.upload", upload.Request.Method);
         Assert.Equal("C:\\tmp\\a.txt", upload.Request.LocalPath);
+
+        var leadingDashPath = CliArguments.Parse(["files", "read", "--session", "h", "--path", "--leading.log", "--tail-bytes", "4096"]);
+        Assert.Equal("--leading.log", leadingDashPath.Request.Path);
+        Assert.Equal(4096, leadingDashPath.Request.TailBytes);
+
+        var leadingDashDest = CliArguments.Parse(["files", "rename", "--session", "h", "--path", "--src.log", "--destination", "--dest.log"]);
+        Assert.Equal("--src.log", leadingDashDest.Request.Path);
+        Assert.Equal("--dest.log", leadingDashDest.Request.Destination);
+
+        var exec = CliArguments.Parse(["terminal", "exec", "--session", "h", "--text", "ls", "--revision", "0", "--operation-id", "op1", "--check-token", "tok", "--max-bytes", "4096", "--max-lines", "50"]);
+        Assert.Equal("terminal.exec", exec.Request.Method);
+        Assert.Equal(4096, exec.Request.MaxBytes);
+        Assert.Equal(50, exec.Request.MaxLines);
     }
 
     [Theory]
@@ -86,7 +99,15 @@ public sealed class CliArgumentsTests
     [InlineData("sessions list --json --json")]
     [InlineData("sessions list --unknown")]
     [InlineData("files read --session handle")]
+    [InlineData("files read --session handle --path --max-bytes 100")]
+    [InlineData("files read --session handle --path /tmp/a --offset 10 --tail-bytes 10")]
+    [InlineData("files read --session handle --path /tmp/a --tail-bytes 0")]
+    [InlineData("files read --session handle --path /tmp/a --tail-bytes -1")]
     [InlineData("files chmod --session handle --path /tmp")]
+    [InlineData("terminal exec --session h --text cmd --revision 0 --operation-id x --check-token t --idle-ms 500")]
+    [InlineData("terminal send --session h --text cmd --text-stdin --revision 0 --operation-id x --check-token t")]
+    [InlineData("terminal send --session h --text-file a.txt --text-stdin --revision 0 --operation-id x --check-token t")]
+    [InlineData("files write --session h --path /tmp/a --text hi --text-stdin")]
     public void InvalidArgumentsAreRejected(string arguments) =>
         Assert.Throws<ArgumentException>(() => CliArguments.Parse(arguments.Split(' ')));
 }

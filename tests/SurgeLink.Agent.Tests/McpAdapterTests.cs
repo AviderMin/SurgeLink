@@ -20,6 +20,36 @@ public sealed class McpAdapterTests
         }, default);
         Assert.True(extra.IsError);
         Assert.Equal("invalid_arguments", extra.StructuredContent!.Value.GetProperty("errorCode").GetString());
+
+        var badTail = await adapter.CallAsync(new CallToolRequestParams
+        {
+            Name = "read_text_file",
+            Arguments = new Dictionary<string, JsonElement>
+            {
+                ["session"] = JsonSerializer.SerializeToElement("h"),
+                ["path"] = JsonSerializer.SerializeToElement("/var/log/app.log"),
+                ["tailBytes"] = JsonSerializer.SerializeToElement(0),
+            },
+        }, default);
+        Assert.True(badTail.IsError);
+        Assert.Equal("invalid_arguments", badTail.StructuredContent!.Value.GetProperty("errorCode").GetString());
+    }
+
+    [Fact]
+    public void ToolSchemasAndHostVersionReflectUpdatedCapabilities()
+    {
+        var run = McpAdapter.Tools.Single(t => t.Name == "run_terminal_command");
+        Assert.False(run.InputSchema.GetProperty("properties").TryGetProperty("idleMilliseconds", out _));
+
+        var read = McpAdapter.Tools.Single(t => t.Name == "read_text_file");
+        Assert.True(read.InputSchema.GetProperty("properties").TryGetProperty("tailBytes", out var tailSchema));
+        Assert.Equal("integer", tailSchema.GetProperty("type").GetString());
+        Assert.Equal(1, tailSchema.GetProperty("minimum").GetInt32());
+
+        var version = Program.ResolveServerVersion();
+        Assert.False(string.IsNullOrWhiteSpace(version));
+        Assert.DoesNotContain('+', version);
+        Assert.NotEqual("1.0.0", version);
     }
 
     [Fact]

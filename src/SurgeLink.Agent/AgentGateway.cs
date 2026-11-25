@@ -192,6 +192,7 @@ public sealed partial class AgentGateway
 
     private async Task<AgentResponse> ExecuteCoreAsync(AgentRequest request, CancellationToken ct)
     {
+        var requestClock = Stopwatch.StartNew();
         ct.ThrowIfCancellationRequested();
         if (request.Version != 1) return AgentResponse.Error("version_mismatch", "Expected contract version 1.");
         if (request.Method is "client.heartbeat" or "client.disconnect") return UpdateMcpPresence(request);
@@ -231,7 +232,7 @@ public sealed partial class AgentGateway
                 return AgentResponse.Error("session_unavailable", "The session is disconnected.");
             if (CheckControlAfterQueue(grant, request) is { } expiredAfterQueue) return expiredAfterQueue;
             if (request.Method is "terminal.text" or "terminal.key" or "terminal.exec")
-                return await ExecuteInputAsync(grant, request, ct).ConfigureAwait(false);
+                return await ExecuteInputAsync(grant, request, requestClock, ct).ConfigureAwait(false);
             AgentResponse result;
             switch (request.Method)
             {
@@ -247,7 +248,10 @@ public sealed partial class AgentGateway
                     break;
                 case "terminal.screen": result = ReadScreenResponse(grant, request); break;
                 case "terminal.output": result = ReadOutputResponse(grant, request); break;
-                case "terminal.wait": (result, _) = await WaitOutputAsync(grant, request, ct).ConfigureAwait(false); break;
+                case "terminal.wait":
+                    (result, _) = await WaitOutputAsync(grant, request, ct,
+                        maxTimeoutMilliseconds: RemainingWaitMilliseconds(requestClock)).ConfigureAwait(false);
+                    break;
                 case "monitor.snapshot":
                     result = AgentResponse.Ok(await (grant.Session.Monitor ?? throw new NotSupportedException()).SampleAsync(ct).ConfigureAwait(false));
                     break;
@@ -358,13 +362,17 @@ public sealed partial class AgentGateway
         }
     }
 
+    private static int RemainingWaitMilliseconds(Stopwatch requestClock) =>
+        (int)Math.Clamp(50_000 - requestClock.ElapsedMilliseconds, 100, 50_000);
+
     private async Task<(AgentResponse Response, int? ExitCode)> WaitOutputAsync(
-        Grant grant, AgentRequest request, CancellationToken ct, string? expectText = null)
+        Grant grant, AgentRequest request, CancellationToken ct, string? expectText = null,
+        int maxTimeoutMilliseconds = 50_000)
     {
         if (grant.Terminal is null) throw new NotSupportedException();
         if (request.Cursor is < 0) return (AgentResponse.Error("invalid_cursor", "The output cursor must be non-negative."), null);
         var idleMilliseconds = Math.Clamp(request.IdleMilliseconds ?? 500, 50, 5000);
-        var timeoutMilliseconds = Math.Clamp(request.TimeoutMilliseconds ?? 30000, 100, 55000);
+        var timeoutMilliseconds = Math.Clamp(request.TimeoutMilliseconds ?? 30000, 100, Math.Clamp(maxTimeoutMilliseconds, 100, 50_000));
         var fromCursor = request.Cursor ?? grant.Terminal.ReadScreen().OutputCursor;
         var cursor = fromCursor;
         var pageStart = fromCursor;
@@ -723,6 +731,30 @@ public sealed partial class AgentGateway
 
     private static async Task<AgentResponse> ReadFileAsync(IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
     {
+        if (request.TailBytes is not null)
+        {
+            if (request.Offset is not null)
+                return AgentResponse.Error("invalid_arguments", "Specify either offset or tailBytes, not both.");
+            if (request.TailBytes <= 0)
+                return AgentResponse.Error("invalid_arguments", "tailBytes must be a positive integer.");
+            var tailLimit = Math.Clamp(request.TailBytes.Value, 1, 512 * 1024);
+            await using var tailStream = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false);
+            var tail = await AgentFilePage.ReadTailAsync(tailStream, tailLimit, ct).ConfigureAwait(false);
+            var tailText = StripLeadingBom(tail.Text, tail.Offset);
+            return AgentResponse.Ok(new
+            {
+                path = request.Path,
+                text = tailText,
+                offset = tail.Offset,
+                bytesRead = tail.BytesRead,
+                skippedBytes = tail.SkippedBytes,
+                truncated = tail.Truncated,
+                nextOffset = tail.Offset + tail.BytesRead,
+                tail = true,
+            });
+        }
+
+        if (request.Offset is < 0) return AgentResponse.Error("invalid_arguments", "The file offset must be non-negative.");
         await using var stream = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false);
         if (request.MaxBytes is null && request.Offset is null)
         {
@@ -730,12 +762,10 @@ public sealed partial class AgentGateway
             return AgentResponse.Ok(new { path = request.Path, text = legacyText });
         }
 
-        if (request.Offset is < 0) return AgentResponse.Error("invalid_arguments", "The file offset must be non-negative.");
         var offset = request.Offset ?? 0;
         var limit = Math.Clamp(request.MaxBytes ?? 128 * 1024, 1, 512 * 1024);
         var page = await AgentFilePage.ReadAsync(stream, offset, limit, ct).ConfigureAwait(false);
-        var text = page.Text;
-        if (offset == 0 && text.Length > 0 && text[0] == '\uFEFF') text = text[1..];
+        var text = StripLeadingBom(page.Text, offset);
         return AgentResponse.Ok(new
         {
             path = request.Path, text, offset,
@@ -747,6 +777,9 @@ public sealed partial class AgentGateway
             nextOffset = offset + page.BytesRead,
         });
     }
+
+    private static string StripLeadingBom(string text, long offset) =>
+        offset == 0 && text.Length > 0 && text[0] == '\uFEFF' ? text[1..] : text;
 
     private static void ThrowIfCancelled(Grant grant, CancellationToken ct)
     {

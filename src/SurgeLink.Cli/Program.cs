@@ -14,14 +14,14 @@ if (args is ["--help"] or ["-h"] or [])
         surgelink-cli sessions check --session HANDLE [--brief|--minimal] [--instance PID] [--json]
         surgelink-cli terminal screen --session HANDLE [--tail-rows N] [--strip-ansi] [--instance PID] [--json]
         surgelink-cli terminal output --session HANDLE [--cursor N] [--max-bytes N] [--max-lines N] [--strip-ansi] [--instance PID] [--json]
-        surgelink-cli terminal wait --session HANDLE [--cursor N] [--idle-ms 500] [--timeout-ms 30000] [--strip-ansi] [--instance PID] [--json]
+        surgelink-cli terminal wait --session HANDLE [--cursor N] [--idle-ms 500] [--timeout-ms 30000] [--max-bytes N] [--max-lines N] [--strip-ansi] [--instance PID] [--json]
         surgelink-cli terminal send --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) [--submit] --revision N --operation-id ID --check-token TOKEN [--instance PID] [--json]
-        surgelink-cli terminal exec --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) --revision N --operation-id ID --check-token TOKEN [--idle-ms 500] [--timeout-ms 30000] [--strip-ansi] [--instance PID] [--json]
+        surgelink-cli terminal exec --session HANDLE (--text TEXT | --text-file FILE | --text-stdin) --revision N --operation-id ID --check-token TOKEN [--timeout-ms 30000] [--max-bytes N] [--max-lines N] [--strip-ansi] [--instance PID] [--json]
         surgelink-cli terminal key --session HANDLE --key Ctrl+C --revision N --operation-id ID --check-token TOKEN [--instance PID] [--json]
         surgelink-cli sessions activate --session HANDLE [--view terminal|files|monitor] [--instance PID] [--json]
         surgelink-cli monitor snapshot --session HANDLE [--instance PID] [--json]
         surgelink-cli files list --session HANDLE --path REMOTE_PATH [--offset N] [--limit N] [--instance PID] [--json]
-        surgelink-cli files read --session HANDLE --path REMOTE_PATH [--offset N] [--max-bytes N] [--instance PID] [--json]
+        surgelink-cli files read --session HANDLE --path REMOTE_PATH ([--offset N] [--max-bytes N] | [--tail-bytes N]) [--instance PID] [--json]
         surgelink-cli files stat --session HANDLE --path REMOTE_PATH [--instance PID] [--json]
         surgelink-cli files write --session HANDLE --path REMOTE_PATH (--text TEXT | --text-file FILE | --text-stdin) [--overwrite] [--instance PID] [--json]
         surgelink-cli files delete --session HANDLE --path REMOTE_PATH [--recursive] [--instance PID] [--json]
@@ -41,7 +41,7 @@ if (args is ["--help"] or ["-h"] or [])
         The login user does not prove the effective shell user after su/nested SSH. Reuse exact arguments for retries.
         input_sent acknowledges input only; it does not report command completion or an exit code.
         terminal wait returns when output has been quiet for --idle-ms, which is an observation, not a command boundary.
-        terminal exec appends a POSIX shell sentinel and waits for it until --timeout-ms, returning exitCode when the shell supports it.
+        terminal exec appends a POSIX shell sentinel and waits up to --timeout-ms (max 50000), returning exitCode when observed or status=timed_out with screen tail and output.cursor to continue reading.
         SURGELINK_INSTANCE can supply the desktop PID when --instance is omitted.
         Results are always JSON. Exit codes: 0 success, 2 usage, 3 unavailable,
         4 operation declined/failed, 130 cancelled. Execution policy is managed by your Agent application.

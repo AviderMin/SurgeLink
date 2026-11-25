@@ -6,7 +6,8 @@ namespace SurgeLink.Agent;
 
 public sealed partial class AgentGateway
 {
-    private async Task<AgentResponse> ExecuteInputAsync(Grant grant, AgentRequest request, CancellationToken ct)
+    private async Task<AgentResponse> ExecuteInputAsync(Grant grant, AgentRequest request,
+        System.Diagnostics.Stopwatch requestClock, CancellationToken ct)
     {
         if (!grant.Info.TerminalControl || grant.Terminal is null)
             return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel first.");
@@ -66,7 +67,8 @@ public sealed partial class AgentGateway
             if (marker is not null)
             {
                 grant.LastInputText = request.Text;
-                var (wait, exitCode) = await WaitOutputAsync(grant, request with { Cursor = receipt.OutputCursor }, ct, marker + ":").ConfigureAwait(false);
+                var (wait, exitCode) = await WaitOutputAsync(grant, request with { Cursor = receipt.OutputCursor }, ct,
+                    marker + ":", RemainingWaitMilliseconds(requestClock)).ConfigureAwait(false);
                 response = BuildExecResponse(operationId, receipt, wait, exitCode, marker, request.Text);
             }
             else
@@ -91,7 +93,7 @@ public sealed partial class AgentGateway
     }
 
     private static string BuildExecText(string command, string marker) =>
-        command + "\n__surge_status=$?; printf '\\n" + marker + ":%d\\n' \"$__surge_status\"";
+        command.TrimEnd('\r', '\n') + "\n__surge_status=$?; printf '\\n" + marker + ":%d\\n' \"$__surge_status\"";
 
     private static string CleanExecOutput(string text, string marker, string? echoText)
     {
@@ -131,11 +133,13 @@ public sealed partial class AgentGateway
 
         var data = wait.Data!.Value;
         var text = CleanExecOutput(data.GetProperty("text").GetString() ?? string.Empty, marker, echoText);
+        var timedOut = data.GetProperty("timedOut").GetBoolean();
+        var status = exitCode is not null ? "executed" : timedOut ? "timed_out" : "input_sent";
 
         return AgentResponse.Ok(new
         {
             operationId, receipt.InputRevision, receipt.OutputCursor, receipt.AcceptedBytes, receipt.Submitted,
-            status = "executed", commandCompletionKnown = exitCode is not null, exitCode,
+            status, commandCompletionKnown = exitCode is not null, timedOut, exitCode,
             output = new
             {
                 text,
@@ -146,6 +150,7 @@ public sealed partial class AgentGateway
                 hasMore = data.GetProperty("hasMore").GetBoolean(),
                 truncated = data.GetProperty("truncated").GetBoolean(),
             },
+            screen = data.GetProperty("screen"),
         });
     }
 
