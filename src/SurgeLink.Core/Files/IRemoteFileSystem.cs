@@ -54,7 +54,8 @@ public interface IRemoteFileSystem
 
     /// <summary>
     /// Opens a writable stream. <paramref name="progress"/> receives byte counts
-    /// as data flows; the caller disposes the stream to complete the write.
+    /// as data flows. After writing successfully, call
+    /// <see cref="RemoteFileWrite.CompleteStreamAsync"/> before disposing the stream.
     /// </summary>
     Task<Stream> OpenWriteAsync(
         string path,
@@ -79,4 +80,10 @@ public interface IRemoteFileSystem
 
     /// <summary>Changes POSIX permissions; no-op when <see cref="SupportsPermissions"/> is false.</summary>
     Task SetPermissionsAsync(string path, int unixMode, CancellationToken cancellationToken);
+}
+
+/// <summary>A spooled remote write that needs an explicit upload after its producer succeeds.</summary>
+public interface IRemoteWriteCompletion
+{
+    Task CompleteAsync(CancellationToken cancellationToken);
 }

@@ -25,6 +25,7 @@ internal sealed class SerialSession : IProtocolSession
 
     public string SessionId { get; } = Guid.NewGuid().ToString("n");
     public ProtocolDescriptor Protocol => SerialProtocolPlugin.DefaultDescriptor;
+    public bool RequiresDisconnectBeforeReconnect => true;
     public ConnectionState State { get { lock (_gate) return _state; } }
     public RemoteHostInfo HostInfo { get; }
     public IRemoteTerminal Terminal => _terminal;

@@ -23,6 +23,7 @@ internal sealed class FakeProtocolSession : IProtocolSession
 
     /// <inheritdoc />
     public ConnectionState State { get; private set; } = ConnectionState.Connected;
+    public bool RequiresDisconnectBeforeReconnect { get; init; }
 
     /// <inheritdoc />
     public RemoteHostInfo HostInfo { get; } = new() { HostName = "fake-host" };

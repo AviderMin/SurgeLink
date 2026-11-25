@@ -13,6 +13,38 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 /// </summary>
 public sealed class SftpFileNoFollowContractTests
 {
+    [Fact]
+    public void InstalledSftpClientExposesAllRequiredBindings()
+    {
+        Assert.True(SftpNoFollow.IsAvailable);
+        Assert.True(SftpNoFollow.CanRename(overwrite: false));
+        Assert.True(SftpNoFollow.CanRename(overwrite: true));
+    }
+
+    [Theory]
+    [InlineData("RequestLStatAsync")]
+    [InlineData("RequestRenameAsync")]
+    [InlineData("RequestPosixRename")]
+    public async Task SynchronousReflectionErrorsKeepTheirOriginalType(string method)
+    {
+        var session = CreateSession();
+        var failure = new Renci.SshNet.Common.SftpPermissionDeniedException("Denied");
+        session.FailMethod = method;
+        session.Failure = failure;
+        using var client = new SftpClient("example.test", "user", "password");
+        typeof(SftpClient).GetField("_sftpSession", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(client, session);
+
+        var thrown = await Assert.ThrowsAsync<Renci.SshNet.Common.SftpPermissionDeniedException>(async () =>
+        {
+            if (method == "RequestLStatAsync")
+                await SftpNoFollow.TryLStatAsync(client, "/target/file", CancellationToken.None);
+            else
+                await SftpNoFollow.RenameAsync(client, "/staging/file", "/target/file", method == "RequestPosixRename", CancellationToken.None);
+        });
+
+        Assert.Same(failure, thrown);
+    }
+
     [Theory]
     [InlineData(0xA1FFu, "RequestRemoveAsync")] // symbolic link
     [InlineData(0x81A4u, "RequestRemoveAsync")] // regular file
@@ -95,11 +127,14 @@ public class RecordingSftpSessionProxy : DispatchProxy
     public List<(string Method, object?[] Arguments)> Calls { get; } = new();
 
     public Func<string, string> Canonicalize { get; set; } = path => path;
+    internal string? FailMethod { get; set; }
+    internal Exception? Failure { get; set; }
 
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
     {
         ArgumentNullException.ThrowIfNull(targetMethod);
         Calls.Add((targetMethod.Name, args ?? []));
+        if (targetMethod.Name == FailMethod && Failure is not null) throw Failure;
         return targetMethod.Name switch
         {
             "RequestRemoveAsync" or "RequestRmDirAsync" or "RequestRenameAsync" => Task.CompletedTask,

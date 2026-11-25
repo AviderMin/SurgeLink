@@ -604,36 +604,31 @@ public sealed partial class AgentGateway
         return true;
     }
 
-    private static bool HasReparsePointInChain(string fullPath)
-    {
-        for (var current = fullPath; !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
-        {
-            if (!File.Exists(current) && !Directory.Exists(current)) continue;
-            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return true;
-        }
-        return false;
-    }
-
     private async Task<AgentResponse> UploadFileAsync(Grant grant, IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
     {
         if (!TryNormalizeLocalPath(request.LocalPath, upload: true, out var localPath, out var pathError))
             return pathError!;
         if (!request.Path!.StartsWith('/')) return AgentResponse.Error("invalid_path", "A remote upload path must be absolute.");
+        FileStream localFile;
         try
         {
-            if (HasReparsePointInChain(localPath))
-                return AgentResponse.Error("invalid_path", "Symbolic links and junctions are not allowed for local Agent uploads.");
+            localFile = LocalDownloadPath.OpenExistingFileForRead(localPath);
+        }
+        catch (UnsafeLocalPathException ex)
+        {
+            return AgentResponse.Error("invalid_path", ex.Message);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return AgentResponse.Error("local_file_not_found", "The local upload file does not exist.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return AgentResponse.Error("write_failed", ex.Message);
         }
-        if (!File.Exists(localPath)) return AgentResponse.Error("local_file_not_found", "The local upload file does not exist.");
         try
         {
-            await using var source = LocalDownloadPath.OpenExistingFileForRead(localPath);
-            if (!OperatingSystem.IsWindows() && (File.GetAttributes(localPath) & FileAttributes.ReparsePoint) != 0)
-                return AgentResponse.Error("invalid_path", "Symbolic links and junctions are not allowed for local Agent uploads.");
+            await using var source = localFile;
             var length = source.Length;
             await RemoteFileWrite.WriteAsync(files, request.Path, length, null, request.Overwrite,
                 async (stream, token) =>
@@ -656,17 +651,6 @@ public sealed partial class AgentGateway
         var directory = Path.GetDirectoryName(localPath);
         if (string.IsNullOrEmpty(directory))
             return AgentResponse.Error("invalid_path", "The local download path has no directory.");
-        try
-        {
-            if (HasReparsePointInChain(localPath))
-                return AgentResponse.Error("invalid_path", "Symbolic links and junctions are not allowed for local Agent downloads.");
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return AgentResponse.Error("read_failed", ex.Message);
-        }
-        if (!request.Overwrite && File.Exists(localPath))
-            return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
         IDisposable directoryLease;
         try
         {
@@ -678,10 +662,6 @@ public sealed partial class AgentGateway
         }
         using (directoryLease)
         {
-            if (File.Exists(localPath) && (File.GetAttributes(localPath) & FileAttributes.ReparsePoint) != 0)
-                return AgentResponse.Error("invalid_path", "Symbolic links and junctions are not allowed for local Agent downloads.");
-            if (!request.Overwrite && File.Exists(localPath))
-                return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
             // Stage beside the destination and publish only after the remote read
             // finished. Truncating or creating the destination up front would turn a
             // failed or cancelled transfer into data loss.
@@ -689,6 +669,8 @@ public sealed partial class AgentGateway
             long written = 0;
             try
             {
+                if (LocalDownloadPath.IsSafeExistingFile(localPath) && !request.Overwrite)
+                    return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
                 // Close the remote source before publishing the destination. A failed
                 // close must not leave a replaced file behind a read_failed response.
                 await using (var source = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false))
@@ -722,6 +704,10 @@ public sealed partial class AgentGateway
                     return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
                 }
                 return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = written, overwrite = request.Overwrite });
+            }
+            catch (UnsafeLocalPathException ex)
+            {
+                return AgentResponse.Error("invalid_path", ex.Message);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

@@ -66,7 +66,7 @@ public sealed class FileSafetyTests
         }
 
         var source = linkToDirectory ? Path.Combine(link, "payload.txt") : link;
-        Assert.Throws<IOException>(() => LocalDownloadPath.OpenExistingFileForRead(source));
+        Assert.Throws<UnsafeLocalPathException>(() => LocalDownloadPath.OpenExistingFileForRead(source));
     }
 
     [Theory]

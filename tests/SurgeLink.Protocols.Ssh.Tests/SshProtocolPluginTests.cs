@@ -11,6 +11,20 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 public sealed class SshProtocolPluginTests
 {
     [Fact]
+    public void DefaultAlgorithmsExcludeLegacyOptions()
+    {
+        var request = new ConnectionRequest { Host = "example.test", Username = "alice", Password = "test-only" };
+        var factory = new SshConnectionFactory(request, new SshProtocolOptions(request), CreateContext(), NullLogger.Instance);
+        var info = factory.CreateConnectionInfo(CancellationToken.None);
+
+        Assert.DoesNotContain(info.KeyExchangeAlgorithms.Keys, name => name.EndsWith("-sha1", StringComparison.Ordinal));
+        Assert.DoesNotContain("ssh-rsa", info.HostKeyAlgorithms.Keys);
+        Assert.DoesNotContain("hmac-sha1", info.HmacAlgorithms.Keys);
+        Assert.DoesNotContain("hmac-sha1-etm@openssh.com", info.HmacAlgorithms.Keys);
+        Assert.DoesNotContain(info.Encryptions.Keys, name => name.EndsWith("-cbc", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void LegacyCompatibilityKeepsModernAlgorithmsAndExplicitKeyExchangeAhead()
     {
         const string preferred = "curve25519-sha256";

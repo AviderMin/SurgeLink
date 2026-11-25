@@ -7,6 +7,10 @@ public static class RemoteFileWrite
 {
     private static readonly ConditionalWeakTable<IRemoteFileSystem, SemaphoreSlim> Writers = new();
 
+    /// <summary>Finishes a successful write before its stream is disposed.</summary>
+    public static Task CompleteStreamAsync(Stream stream, CancellationToken cancellationToken) =>
+        stream is IRemoteWriteCompletion deferred ? deferred.CompleteAsync(cancellationToken) : stream.FlushAsync(cancellationToken);
+
     /// <summary>
     /// Writes complete contents at <paramref name="destination"/>. The precheck stat is a
     /// friendly fast-fail only; the commit still refuses to replace an existing file when
@@ -72,7 +76,7 @@ public static class RemoteFileWrite
             await using (var stream = await fileSystem.OpenWriteAsync(temporary, size, progress, cancellationToken).ConfigureAwait(false))
             {
                 await write(stream, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                await CompleteStreamAsync(stream, cancellationToken).ConfigureAwait(false);
             }
             cancellationToken.ThrowIfCancellationRequested();
             // Content replacement inherits ordinary access bits, never privilege bits.

@@ -22,10 +22,35 @@ public sealed class DeferredUploadStreamTests
             return Task.CompletedTask;
         }, lifetime.Token);
         await stream.WriteAsync(new byte[] { 42 });
-        if (cancel) { lifetime.Cancel(); }
+        if (cancel)
+        {
+            lifetime.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stream.CompleteAsync(CancellationToken.None));
+        }
+        else
+        {
+            await stream.CompleteAsync(CancellationToken.None);
+        }
         await stream.DisposeAsync();
         await stream.DisposeAsync();
         Assert.Equal(cancel ? 0 : 1, uploads);
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public async Task DisposingSpoolAfterProducerFailsDoesNotUpload()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "surge-scp-test-" + Guid.NewGuid().ToString("N"));
+        var file = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite);
+        var uploads = 0;
+        await Assert.ThrowsAsync<IOException>(async () =>
+        {
+            await using var stream = new DeferredUploadStream(file, path, _ => { uploads++; return Task.CompletedTask; }, CancellationToken.None);
+            await stream.WriteAsync(new byte[] { 42 });
+            await stream.FlushAsync();
+            throw new IOException("Source read failed.");
+        });
+        Assert.Equal(0, uploads);
         Assert.False(File.Exists(path));
     }
 

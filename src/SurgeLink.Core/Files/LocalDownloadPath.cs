@@ -9,6 +9,9 @@ public static class LocalDownloadPath
     /// <summary>Opens a local file without following Windows symbolic links or junctions.</summary>
     public static FileStream OpenExistingFileForRead(string path) => LocalDownloadDirectory.OpenExistingFileForRead(path);
 
+    /// <summary>Checks a destination's own file type. Callers secure its parent directory separately.</summary>
+    public static bool IsSafeExistingFile(string path) => LocalDownloadDirectory.IsSafeExistingFile(path);
+
     public static string Resolve(string directory, string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
@@ -30,3 +33,6 @@ public static class LocalDownloadPath
         return path;
     }
 }
+
+/// <summary>The local path contains an unsupported file type or redirecting reparse point.</summary>
+public sealed class UnsafeLocalPathException(string message) : IOException(message);

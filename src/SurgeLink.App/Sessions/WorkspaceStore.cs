@@ -68,6 +68,7 @@ public sealed class WorkspaceTab
     public bool IsClosing { get; internal set; }
 
     internal EventHandler<SessionStateChangedEventArgs>? StateChangedHandler { get; set; }
+    internal bool ConnectionReleased { get; set; }
 }
 
 /// <summary>Immutable view of the workspace used by the shell to render.</summary>
@@ -141,7 +142,7 @@ public sealed class WorkspaceStore
     private readonly ILogger<WorkspaceStore> _logger;
     private readonly IAppSettingsStore? _settings;
     private readonly object _gate = new();
-    private readonly Dictionary<Guid, TaskCompletionSource> _closing = new();
+    private readonly Dictionary<Guid, (TaskCompletionSource Completion, bool KeepTab)> _closing = new();
     private WorkspaceSnapshot _snapshot = WorkspaceSnapshot.Empty;
 
     /// <summary>Creates the store and loads saved profiles.</summary>
@@ -195,6 +196,11 @@ public sealed class WorkspaceStore
         WorkspaceTab? openingTab = null;
         try
         {
+            if (reconnecting?.Session.RequiresDisconnectBeforeReconnect == true)
+            {
+                await CloseAsync(reconnecting.Id, replacement: null, keepTab: true);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             session = await _sessions.OpenAsync(profile, options, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (session.Terminal is { } remoteTerminal)
@@ -288,47 +294,66 @@ public sealed class WorkspaceStore
     /// <summary>Closes a tab and disposes its connection.</summary>
     public Task CloseAsync(Guid tabId) => CloseAsync(tabId, null);
 
-    private Task CloseAsync(Guid tabId, WorkspaceTab? replacement)
+    private Task CloseAsync(Guid tabId, WorkspaceTab? replacement, bool keepTab = false)
     {
         WorkspaceTab? tab;
         TaskCompletionSource completion;
         lock (_gate)
         {
             if (_closing.TryGetValue(tabId, out var existing))
-                return replacement is null ? existing.Task : Task.FromCanceled(new CancellationToken(canceled: true));
+            {
+                if (replacement is not null || keepTab) return Task.FromCanceled(new CancellationToken(canceled: true));
+                return existing.KeepTab ? CloseAfterTeardownAsync(tabId, existing.Completion.Task) : existing.Completion.Task;
+            }
             tab = _snapshot.Tabs.FirstOrDefault(t => t.Id == tabId);
             if (tab is null)
             {
-                return replacement is null ? Task.CompletedTask : Task.FromCanceled(new CancellationToken(canceled: true));
+                return replacement is null && !keepTab ? Task.CompletedTask : Task.FromCanceled(new CancellationToken(canceled: true));
             }
             completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            _closing.Add(tabId, completion);
+            _closing.Add(tabId, (completion, keepTab));
             tab.IsClosing = true;
         }
-        _ = CloseTabCoreAsync(tab, completion, replacement);
+        _ = CloseTabCoreAsync(tab, completion, replacement, keepTab);
         return completion.Task;
     }
 
-    private async Task CloseTabCoreAsync(WorkspaceTab tab, TaskCompletionSource completion, WorkspaceTab? replacement)
+    private async Task CloseAfterTeardownAsync(Guid tabId, Task teardown)
+    {
+        await teardown.ConfigureAwait(false);
+        await CloseAsync(tabId).ConfigureAwait(false);
+    }
+
+    private async Task CloseTabCoreAsync(WorkspaceTab tab, TaskCompletionSource completion, WorkspaceTab? replacement, bool keepTab)
     {
         try
         {
-            if (SessionClosing is { } closing)
-                foreach (Func<WorkspaceTab, Task> handler in closing.GetInvocationList())
-                    await handler(tab).ConfigureAwait(false);
+            if (!tab.ConnectionReleased)
+            {
+                if (SessionClosing is { } closing)
+                    foreach (Func<WorkspaceTab, Task> handler in closing.GetInvocationList())
+                        await handler(tab).ConfigureAwait(false);
 
-            tab.Session.StateChanged -= tab.StateChangedHandler;
-            // Attempt every cleanup even if an earlier resource fails to close.
-            try { await tab.Transfers.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Transfer queue cleanup failed for {TabId}", tab.Id); }
-            try { if (tab.Terminal is not null) await tab.Terminal.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Terminal cleanup failed for {TabId}", tab.Id); }
-            try { await _sessions.CloseAsync(tab.Session.SessionId).ConfigureAwait(false); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Connection cleanup failed for {TabId}", tab.Id); }
+                tab.Session.StateChanged -= tab.StateChangedHandler;
+                // Attempt every cleanup even if an earlier resource fails to close.
+                try { await tab.Transfers.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Transfer queue cleanup failed for {TabId}", tab.Id); }
+                try { if (tab.Terminal is not null) await tab.Terminal.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Terminal cleanup failed for {TabId}", tab.Id); }
+                try { await _sessions.CloseAsync(tab.Session.SessionId).ConfigureAwait(false); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Connection cleanup failed for {TabId}", tab.Id); }
+            }
 
             Update(s =>
             {
                 _closing.Remove(tab.Id);
+                tab.ConnectionReleased = true;
+                if (keepTab)
+                {
+                    tab.IsClosing = false;
+                    if (tab.State != ConnectionState.Faulted) tab.State = ConnectionState.Disconnected;
+                    return s;
+                }
                 if (replacement is not null)
                 {
                     return s with
@@ -348,7 +373,7 @@ public sealed class WorkspaceStore
                 }
 
                 return s with { Tabs = remaining, ActiveTabId = activeTabId };
-            });
+            }, force: keepTab);
             completion.TrySetResult();
         }
         catch (Exception ex)

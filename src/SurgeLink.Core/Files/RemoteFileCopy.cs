@@ -134,6 +134,7 @@ public static class RemoteFileCopy
                     await using (var output = await fileSystem.OpenWriteAsync(to, entry.Size, null, cancellationToken).ConfigureAwait(false))
                     {
                         await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                        await RemoteFileWrite.CompleteStreamAsync(output, cancellationToken).ConfigureAwait(false);
                     }
                     if (fileSystem.SupportsPermissions)
                         await fileSystem.SetPermissionsAsync(to, mode, cancellationToken).ConfigureAwait(false);

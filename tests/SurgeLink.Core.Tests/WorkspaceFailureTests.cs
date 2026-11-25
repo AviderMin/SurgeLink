@@ -104,6 +104,38 @@ public sealed class WorkspaceFailureTests
     }
 
     [Fact]
+    public async Task ExclusiveReconnectReleasesOldConnectionAndKeepsTabOnFailure()
+    {
+        var plugin = new FakeProtocolPlugin();
+        var original = new FakeProtocolSession(plugin.Descriptor) { RequiresDisconnectBeforeReconnect = true };
+        plugin.SessionFactory = _ => original;
+        var catalog = new ProtocolCatalog(); catalog.Register(plugin);
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new FailingStore(), credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var tab = await workspace.OpenAsync(SessionProfile.New("fake", "example.test", 22, "alice"), null, default);
+        plugin.SessionFactory = _ =>
+        {
+            Assert.Equal(1, original.DisposeCount);
+            throw new ProtocolException("Replacement unavailable.");
+        };
+
+        await Assert.ThrowsAsync<ProtocolException>(() => workspace.ReconnectAsync(tab.Id));
+        Assert.Same(tab, Assert.Single(workspace.Snapshot.Tabs));
+        Assert.Equal(tab.Id, workspace.Snapshot.ActiveTabId);
+        Assert.Equal(ConnectionState.Disconnected, tab.State);
+        Assert.False(tab.IsClosing);
+
+        var replacement = new FakeProtocolSession(plugin.Descriptor);
+        plugin.SessionFactory = _ => replacement;
+        await workspace.ReconnectAsync(tab.Id);
+        Assert.Same(replacement, Assert.Single(workspace.Snapshot.Tabs).Session);
+        Assert.Equal(1, original.DisposeCount);
+        await workspace.CloseAsync(Assert.Single(workspace.Snapshot.Tabs).Id);
+    }
+
+    [Fact]
     public async Task ReconnectKeepsOldShellWhenReplacementShellCannotStart()
     {
         var plugin = new FakeProtocolPlugin();

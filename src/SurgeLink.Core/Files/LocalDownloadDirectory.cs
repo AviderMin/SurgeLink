@@ -12,6 +12,8 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
     private const uint GenericRead = 0x80000000;
     private const uint CloudReparseTag = 0x9000001A;
     private const uint CloudReparseTagMask = 0x0000F000;
+    private const int FileNotFound = 2;
+    private const int PathNotFound = 3;
     private readonly List<SafeFileHandle> _directories = [];
 
     internal static IDisposable Open(string path, bool create = true)
@@ -29,20 +31,27 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
                 if (!OperatingSystem.IsWindows())
                 {
                     if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
-                        throw new IOException("Download directories must not contain symbolic links.");
+                        throw new UnsafeLocalPathException("Download directories must not contain symbolic links.");
                     continue;
                 }
                 var nativePath = ToExtendedPath(directory);
                 // Deny write/delete sharing: an ancestor cannot be renamed or
                 // converted to a junction while it owns a download destination.
                 var handle = CreateFile(nativePath, 0x80, FileShare.Read, 0, FileMode.Open, 0x02200000, 0);
+                var openError = Marshal.GetLastPInvokeError();
                 lease._directories.Add(handle);
-                if (handle.IsInvalid || !GetFileInformationByHandleEx(handle, 9, out var info, 8))
+                if (handle.IsInvalid)
+                {
+                    if (openError is FileNotFound or PathNotFound)
+                        throw new DirectoryNotFoundException("The local file directory does not exist.");
+                    throw new IOException("Cannot secure the download directory.", new Win32Exception(openError));
+                }
+                if (!GetFileInformationByHandleEx(handle, 9, out var info, 8))
                     throw new IOException("Cannot secure the download directory.", new Win32Exception(Marshal.GetLastPInvokeError()));
                 var attributes = (FileAttributes)info.Attributes;
                 if ((attributes & FileAttributes.Directory) == 0
                     || (attributes & FileAttributes.ReparsePoint) != 0 && !IsCloudReparseTag(info.ReparseTag))
-                    throw new IOException("Download directories must not contain junctions or symbolic links.");
+                    throw new UnsafeLocalPathException("Download directories must not contain junctions or symbolic links.");
             }
             return lease;
         }
@@ -60,7 +69,7 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
         if (!OperatingSystem.IsWindows())
         {
             if ((File.GetAttributes(fullPath) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
-                throw new IOException("The local upload source must be a regular file.");
+                throw new UnsafeLocalPathException("The local upload source must be a regular file.");
             return new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.Asynchronous);
         }
 
@@ -68,16 +77,18 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
         var handle = CreateFile(nativePath, GenericRead, FileShare.Read, 0, FileMode.Open, OpenReparsePoint | Overlapped, 0);
         try
         {
-            if (handle.IsInvalid || !GetFileInformationByHandleEx(handle, 9, out var info, 8))
-                throw new IOException("Cannot open the local upload file.", new Win32Exception(Marshal.GetLastPInvokeError()));
-            var attributes = (FileAttributes)info.Attributes;
-            if ((attributes & FileAttributes.Directory) != 0)
-                throw new IOException("The local upload source must be a regular file.");
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            if (handle.IsInvalid)
             {
-                if (!IsCloudReparseTag(info.ReparseTag))
-                    throw new IOException("The local upload source must be a regular file.");
-
+                var error = Marshal.GetLastPInvokeError();
+                if (error is FileNotFound or PathNotFound)
+                    throw new FileNotFoundException("The local upload file does not exist.", fullPath);
+                throw new IOException("Cannot open the local upload file.", new Win32Exception(error));
+            }
+            if (!GetFileInformationByHandleEx(handle, 9, out var info, 8))
+                throw new IOException("Cannot open the local upload file.", new Win32Exception(Marshal.GetLastPInvokeError()));
+            ValidateFileType((FileAttributes)info.Attributes, info.ReparseTag);
+            if (((FileAttributes)info.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
                 // Keep the inspected placeholder pinned while opening it for hydration.
                 using (handle)
                     return new FileStream(nativePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.Asynchronous);
@@ -85,6 +96,37 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
             return new FileStream(handle, FileAccess.Read, bufferSize, isAsync: true);
         }
         catch { handle.Dispose(); throw; }
+    }
+
+    internal static bool IsSafeExistingFile(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            try { ValidateFileType(File.GetAttributes(path), 0); }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
+            return true;
+        }
+
+        using var handle = CreateFile(ToExtendedPath(path), 0x80, FileShare.ReadWrite | FileShare.Delete,
+            0, FileMode.Open, OpenReparsePoint | 0x02000000, 0);
+        if (handle.IsInvalid)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            if (error is FileNotFound or PathNotFound) return false;
+            throw new IOException("Cannot inspect the local file.", new Win32Exception(error));
+        }
+        if (!GetFileInformationByHandleEx(handle, 9, out var info, 8))
+            throw new IOException("Cannot inspect the local file.", new Win32Exception(Marshal.GetLastPInvokeError()));
+        ValidateFileType((FileAttributes)info.Attributes, info.ReparseTag);
+        return true;
+    }
+
+    private static void ValidateFileType(FileAttributes attributes, uint tag)
+    {
+        if ((attributes & FileAttributes.Directory) != 0
+            || (attributes & FileAttributes.ReparsePoint) != 0 && !IsCloudReparseTag(tag))
+            throw new UnsafeLocalPathException("The local path must name a regular file or cloud placeholder.");
     }
 
     private static bool IsCloudReparseTag(uint tag) => (tag & ~CloudReparseTagMask) == CloudReparseTag;

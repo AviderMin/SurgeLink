@@ -1,14 +1,17 @@
+using SurgeLink.Core.Files;
+
 namespace SurgeLink.Protocols.Ssh.Internal;
 
 /// <summary>Spools SCP content locally. Cancellation or write failure aborts the deferred upload.</summary>
 internal sealed class DeferredUploadStream(FileStream file, string temporaryPath,
-    Func<CancellationToken, Task> upload, CancellationToken lifetime) : Stream
+    Func<CancellationToken, Task> upload, CancellationToken lifetime) : Stream, IRemoteWriteCompletion
 {
     private int _disposed;
+    private bool _completed;
     private bool _failed;
     public override bool CanRead => false;
     public override bool CanSeek => false;
-    public override bool CanWrite => _disposed == 0;
+    public override bool CanWrite => _disposed == 0 && !_completed;
     public override long Length => file.Length;
     public override long Position { get => file.Position; set => throw new NotSupportedException(); }
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
@@ -41,13 +44,24 @@ internal sealed class DeferredUploadStream(FileStream file, string temporaryPath
         if (disposing) { DisposeAsync().AsTask().GetAwaiter().GetResult(); }
         base.Dispose(disposing);
     }
+
+    public async Task CompleteAsync(CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
+        if (_failed || _completed) throw new InvalidOperationException("The SCP upload cannot be completed twice or after a write error.");
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime);
+        linked.Token.ThrowIfCancellationRequested();
+        _completed = true;
+        await file.DisposeAsync().ConfigureAwait(false);
+        await upload(linked.Token).ConfigureAwait(false);
+    }
+
     public override async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) { return; }
         try
         {
             await file.DisposeAsync().ConfigureAwait(false);
-            if (!_failed && !lifetime.IsCancellationRequested) { await upload(lifetime).ConfigureAwait(false); }
         }
         finally
         {

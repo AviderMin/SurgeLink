@@ -141,6 +141,7 @@ public sealed class SshIntegrationTests
         await using (var stream = await target.Files.OpenWriteAsync(path + "/leaf.txt", 4, null, CancellationToken.None))
         {
             await stream.WriteAsync("leaf"u8.ToArray());
+            await RemoteFileWrite.CompleteStreamAsync(stream, CancellationToken.None);
         }
 
         var destination = target.Root + "/deep-copy";

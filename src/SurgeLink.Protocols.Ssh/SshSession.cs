@@ -78,6 +78,9 @@ public sealed class SshSession : IProtocolSession
     public ProtocolDescriptor Protocol => _descriptor;
 
     /// <inheritdoc />
+    public bool RequiresDisconnectBeforeReconnect => _forwardedPorts.Count != 0;
+
+    /// <inheritdoc />
     public ConnectionState State
     {
         get

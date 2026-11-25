@@ -280,11 +280,11 @@ internal sealed class SshConnectionFactory
             _logger.LogWarning(
                 "Legacy SSH algorithms are enabled for {Endpoint}; this weakens transport security.",
                 Endpoint);
-            MoveToBack(info.KeyExchangeAlgorithms, LegacyKeyExchangeAlgorithms);
-            MoveToBack(info.HostKeyAlgorithms, LegacyHostKeyAlgorithms);
-            MoveToBack(info.HmacAlgorithms, LegacyHmacAlgorithms);
-            MoveToBack(info.Encryptions, LegacyEncryptionAlgorithms);
         }
+        ApplyLegacyPolicy(info.KeyExchangeAlgorithms, LegacyKeyExchangeAlgorithms, _options.UseLegacyAlgorithms);
+        ApplyLegacyPolicy(info.HostKeyAlgorithms, LegacyHostKeyAlgorithms, _options.UseLegacyAlgorithms);
+        ApplyLegacyPolicy(info.HmacAlgorithms, LegacyHmacAlgorithms, _options.UseLegacyAlgorithms);
+        ApplyLegacyPolicy(info.Encryptions, LegacyEncryptionAlgorithms, _options.UseLegacyAlgorithms);
 
         var preferred = _options.PreferredKeyExchange;
         if (!string.IsNullOrWhiteSpace(preferred))
@@ -300,11 +300,16 @@ internal sealed class SshConnectionFactory
         }
     }
 
-    private static void MoveToBack<TValue>(IOrderedDictionary<string, TValue> algorithms, IReadOnlyList<string> names)
+    private static void ApplyLegacyPolicy<TValue>(IOrderedDictionary<string, TValue> algorithms,
+        IReadOnlyList<string> names, bool allowLegacy)
     {
         foreach (var name in names)
         {
-            if (algorithms.ContainsKey(name))
+            if (!allowLegacy)
+            {
+                algorithms.Remove(name);
+            }
+            else if (algorithms.ContainsKey(name))
             {
                 algorithms.SetPosition(name, algorithms.Count - 1);
             }

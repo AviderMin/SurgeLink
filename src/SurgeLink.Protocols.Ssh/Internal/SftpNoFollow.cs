@@ -18,22 +18,17 @@ internal static class SftpNoFollow
     private static readonly PropertyInfo? SessionAccessor = typeof(SftpClient)
         .GetProperty("SftpSession", BindingFlags.Instance | BindingFlags.NonPublic);
 
-    private static readonly MethodInfo? LStatMethod = SessionAccessor is null
-        ? null
-        : SessionAccessor.PropertyType.GetMethod(
-            "RequestLStatAsync",
-            BindingFlags.Instance | BindingFlags.Public,
-            binder: null,
-            types: [typeof(string), typeof(CancellationToken)],
-            modifiers: null);
+    private static readonly MethodInfo? LStatMethod = Bind(
+        "RequestLStatAsync", typeof(Task<SftpFileAttributes>), typeof(string), typeof(CancellationToken));
 
-    private static readonly MethodInfo? RenameMethod = SessionAccessor?.PropertyType.GetMethod(
-        "RequestRenameAsync", [typeof(string), typeof(string), typeof(CancellationToken)]);
+    private static readonly MethodInfo? RenameMethod = Bind(
+        "RequestRenameAsync", typeof(Task), typeof(string), typeof(string), typeof(CancellationToken));
 
-    private static readonly MethodInfo? PosixRenameMethod = SessionAccessor?.PropertyType.GetMethod(
-        "RequestPosixRename", [typeof(string), typeof(string)]);
+    private static readonly MethodInfo? PosixRenameMethod = Bind(
+        "RequestPosixRename", typeof(void), typeof(string), typeof(string));
 
     public static bool IsAvailable => SessionAccessor is not null && LStatMethod is not null;
+    internal static bool CanRename(bool overwrite) => (overwrite ? PosixRenameMethod : RenameMethod) is not null;
 
     /// <summary>Returns the link's own attributes, or null when the accessor is unavailable.</summary>
     public static async Task<SftpFileAttributes?> TryLStatAsync(SftpClient client, string path, CancellationToken cancellationToken)
@@ -43,7 +38,7 @@ internal static class SftpNoFollow
             return null;
         }
 
-        var request = (Task<SftpFileAttributes>)LStatMethod!.Invoke(session, [path, cancellationToken])!;
+        var request = (Task<SftpFileAttributes>)Invoke(LStatMethod!, session, path, cancellationToken)!;
         return await request.ConfigureAwait(false);
     }
 
@@ -56,16 +51,25 @@ internal static class SftpNoFollow
                 ProtocolFailureKind.Configuration);
 
         if (!overwrite)
-            return (Task)method.Invoke(session, [source, destination, cancellationToken])!;
+            return (Task)Invoke(method, session, source, destination, cancellationToken)!;
 
         // SSH.NET only exposes the synchronous OpenSSH extension.
-        return Task.Run(() =>
+        return Task.Run(() => { Invoke(method, session, source, destination); }, cancellationToken);
+    }
+
+    private static MethodInfo? Bind(string name, Type returnType, params Type[] parameters)
+    {
+        var method = SessionAccessor?.PropertyType.GetMethod(name, parameters);
+        return method?.ReturnType == returnType && !method.IsStatic ? method : null;
+    }
+
+    private static object? Invoke(MethodInfo method, object session, params object?[] arguments)
+    {
+        try { return method.Invoke(session, arguments); }
+        catch (TargetInvocationException exception) when (exception.InnerException is not null)
         {
-            try { method.Invoke(session, [source, destination]); }
-            catch (TargetInvocationException exception) when (exception.InnerException is not null)
-            {
-                ExceptionDispatchInfo.Throw(exception.InnerException);
-            }
-        }, cancellationToken);
+            ExceptionDispatchInfo.Throw(exception.InnerException);
+            throw;
+        }
     }
 }

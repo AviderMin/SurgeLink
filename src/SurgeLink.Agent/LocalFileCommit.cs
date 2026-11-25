@@ -1,3 +1,5 @@
+using SurgeLink.Core.Files;
+
 namespace SurgeLink.Agent;
 
 /// <summary>
@@ -21,7 +23,7 @@ internal static class LocalFileCommit
 
         for (var attempt = 0; attempt < MaximumAttempts; attempt++)
         {
-            if (!File.Exists(destination))
+            if (!LocalDownloadPath.IsSafeExistingFile(destination))
             {
                 try
                 {
@@ -29,8 +31,9 @@ internal static class LocalFileCommit
                     File.Move(temporary, destination, overwrite: false);
                     return;
                 }
-                catch (IOException) when (File.Exists(destination))
+                catch (IOException)
                 {
+                    if (!LocalDownloadPath.IsSafeExistingFile(destination)) throw;
                     if (!overwrite)
                     {
                         throw new LocalFileAlreadyExistsException(destination);
@@ -46,9 +49,6 @@ internal static class LocalFileCommit
 
                 try
                 {
-                    if ((File.GetAttributes(destination) & FileAttributes.ReparsePoint) != 0)
-                        throw new IOException("Symbolic links and junctions are not allowed for local Agent downloads.");
-
                     // ReplaceFile is the only overwrite path: it merges the
                     // replaced file's access control list and keeps its alternate
                     // data streams on NTFS. Failures (locked, encrypted or

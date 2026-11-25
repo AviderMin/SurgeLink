@@ -141,6 +141,7 @@ internal sealed class SshIntegrationTarget : IAsyncDisposable
         var bytes = Encoding.UTF8.GetBytes(content);
         await using var stream = await Files.OpenWriteAsync(path, bytes.Length, null, CancellationToken.None);
         await stream.WriteAsync(bytes);
+        await RemoteFileWrite.CompleteStreamAsync(stream, CancellationToken.None);
         return path;
     }
 

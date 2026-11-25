@@ -20,6 +20,9 @@ public interface IProtocolSession : IAsyncDisposable
     /// <summary>Current lifecycle state.</summary>
     ConnectionState State { get; }
 
+    /// <summary>Whether this connection must release exclusive resources before its replacement opens.</summary>
+    bool RequiresDisconnectBeforeReconnect => false;
+
     /// <summary>What is known about the remote host.</summary>
     RemoteHostInfo HostInfo { get; }
 
