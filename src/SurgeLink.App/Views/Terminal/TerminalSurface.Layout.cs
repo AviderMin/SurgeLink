@@ -30,15 +30,21 @@ internal sealed partial class TerminalSurface
         UpdateGridSize();
     }
 
-    private void UpdateGridSize()
+    private void UpdateGridSize(bool immediate = false)
     {
-        if (_metrics is null || ActualWidth <= 0 || ActualHeight <= 0)
+        if (!_active || !_loaded || _metrics is null || ActualWidth <= 0 || ActualHeight <= 0)
         {
             return;
         }
 
         int columns = Math.Max(1, (int)Math.Floor(Math.Max(0, ActualWidth - 2 * ContentInset - ScrollBarWidth) / _metrics.CellWidth));
         int rows = Math.Max(1, (int)Math.Floor(Math.Max(0, ActualHeight - 2 * ContentInset) / _metrics.CellHeight));
+        if (!immediate && _requestedColumns > 0 && columns != _requestedColumns && _resizeTimer is { } timer)
+        {
+            if (!timer.IsRunning) { timer.Start(); }
+            return;
+        }
+        _resizeTimer?.Stop();
         if (columns == _requestedColumns && rows == _requestedRows && _paintedRows.Length == rows)
         {
             return;
@@ -75,6 +81,7 @@ internal sealed partial class TerminalSurface
             return;
         }
 
+        for (var index = rows; index < _paintedRows.Length; index++) { _paintedRows[index].ReleaseTextLayouts(); }
         _paintedRows = ResizeRowArray(_paintedRows, rows);
         _scratchRows = ResizeRowArray(_scratchRows, rows);
     }

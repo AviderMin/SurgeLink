@@ -61,6 +61,21 @@ public sealed class TerminalBridgeResponseTests
     }
 
     [Fact]
+    public async Task BorrowedSshOutputSurvivesReuseOfTheReceiveBuffer()
+    {
+        var remote = new BorrowingTerminal();
+        var bridge = new TerminalBridge(remote, new InlineDispatcher(), NullLogger.Instance);
+        var bytes = Encoding.UTF8.GetBytes("héllo");
+        remote.EmitBorrowed(bytes);
+        bytes.AsSpan().Fill((byte)'x');
+        Assert.Equal("héllo", bridge.ReadOutput(null).Text);
+        Assert.Contains("héllo", bridge.Emulator.GetVisibleText());
+        await bridge.DisposeAsync();
+        remote.EmitBorrowed("ignored"u8);
+        Assert.Equal("héllo", bridge.ReadOutput(null).Text);
+    }
+
+    [Fact]
     public async Task ConcurrentResizesDoNotLetAnOlderSizeOvertakeTheNewest()
     {
         var remote = new GatedResizeTerminal();
@@ -190,7 +205,13 @@ public sealed class TerminalBridgeResponseTests
         public void Post(Action action) => action();
     }
 
-    private sealed class CapturingTerminal : IRemoteTerminal
+    private sealed class BorrowingTerminal : CapturingTerminal, IBorrowedTerminalOutput
+    {
+        public event Action<ReadOnlySpan<byte>>? BorrowedOutputReceived;
+        public void EmitBorrowed(ReadOnlySpan<byte> bytes) => BorrowedOutputReceived?.Invoke(bytes);
+    }
+
+    private class CapturingTerminal : IRemoteTerminal
     {
         public int Columns => 120;
         public int Rows => 32;

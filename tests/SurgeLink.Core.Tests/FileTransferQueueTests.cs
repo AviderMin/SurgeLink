@@ -323,6 +323,7 @@ public sealed class FileTransferQueueTests
         Assert.Equal("hello", Encoding.UTF8.GetString(fileSystem.Files["/remote/folder/nested/second.txt"]));
         Assert.Equal(8, item.TotalBytes);
         Assert.Equal(8, item.DoneBytes);
+        Assert.Equal(4, fileSystem.DirectoryCreates);
         Assert.DoesNotContain(fileSystem.Directories.Keys, path => path.Contains(".surge-", StringComparison.Ordinal));
     }
 
@@ -352,7 +353,7 @@ public sealed class FileTransferQueueTests
         };
         var writes = 0;
         string? firstFile = null;
-        fileSystem.BeforeCommit = path =>
+        void InterruptSecondFile(string path)
         {
             if (++writes == 1) { firstFile = path; return; }
             if (cancel)
@@ -361,7 +362,9 @@ public sealed class FileTransferQueueTests
                 item.Cancellation.Token.ThrowIfCancellationRequested();
             }
             throw new IOException("Connection interrupted.");
-        };
+        }
+        if (merge) { fileSystem.BeforeCommit = InterruptSecondFile; }
+        else { fileSystem.BeforeOpenWrite = InterruptSecondFile; }
 
         await using var queue = new FileTransferQueue();
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -638,7 +641,9 @@ public sealed class FileTransferQueueTests
 
         public Func<string, RemoteFileEntry?>? StatOverride { get; init; }
         public Action<string>? BeforeCommit { get; set; }
+        public Action<string>? BeforeOpenWrite { get; set; }
         public Action? BeforeRename { get; set; }
+        public int DirectoryCreates { get; private set; }
 
         public ConcurrentQueue<string> ListCalls { get; } = new();
 
@@ -705,11 +710,15 @@ public sealed class FileTransferQueueTests
             string path,
             long? expectedSize,
             IProgress<TransferProgress>? progress,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<Stream>(new UploadStream(bytes => Files[path] = bytes));
+            CancellationToken cancellationToken)
+        {
+            BeforeOpenWrite?.Invoke(path);
+            return Task.FromResult<Stream>(new UploadStream(bytes => Files[path] = bytes));
+        }
 
         public Task CreateDirectoryAsync(string path, CancellationToken cancellationToken)
         {
+            DirectoryCreates++;
             Directories[path] = true;
             return Task.CompletedTask;
         }

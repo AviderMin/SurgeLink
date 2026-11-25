@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using SurgeLink.App.Localization;
 using SurgeLink.Core.Storage;
 using SurgeLink.Terminal;
@@ -55,6 +56,8 @@ public sealed record AppSettings
 /// <summary>Reads and updates <see cref="AppSettings"/>; notifies the UI on change.</summary>
 public interface IAppSettingsStore
 {
+    void UpdateTerminalFontSize(double size) => Update(settings => settings with { TerminalFontSize = size });
+    void FlushPendingChanges() { }
     /// <summary>Current settings snapshot.</summary>
     AppSettings Current { get; }
 
@@ -69,28 +72,67 @@ public interface IAppSettingsStore
 }
 
 /// <summary>JSON backed settings store.</summary>
-public sealed class AppSettingsStore : IAppSettingsStore
+public sealed class AppSettingsStore : IAppSettingsStore, IDisposable
 {
     private readonly object _gate = new();
     private readonly string _path;
-    private AppSettings _current;
+    private readonly ILogger? _logger;
+    private volatile AppSettings _current;
+    private Timer? _fontSaveTimer;
+    private double? _pendingFontSize;
 
     /// <summary>Creates the store and loads the existing settings file.</summary>
-    public AppSettingsStore(string path)
+    public AppSettingsStore(string path, ILogger? logger = null)
     {
         _path = path;
+        _logger = logger;
         _current = Normalize(AtomicJsonFile.Read(path, AppSettings.Default));
     }
 
     /// <inheritdoc />
-    public AppSettings Current
+    public AppSettings Current => _current;
+
+    public void UpdateTerminalFontSize(double size)
     {
-        get
+        lock (_gate)
         {
-            lock (_gate)
+            var next = Normalize(_current with { TerminalFontSize = size });
+            if (next.TerminalFontSize == _current.TerminalFontSize) { return; }
+            _pendingFontSize = next.TerminalFontSize;
+            _current = next;
+            _fontSaveTimer ??= new Timer(_ =>
             {
-                return _current;
-            }
+                try { FlushPendingChanges(); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                { _logger?.LogWarning(ex, "Could not save the terminal font size."); }
+            });
+            _fontSaveTimer.Change(300, Timeout.Infinite);
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void FlushPendingChanges()
+    {
+        lock (_gate)
+        {
+            if (_pendingFontSize is not double size) { return; }
+            AtomicJsonFile.WithExclusiveAccess(_path, () =>
+            {
+                var latest = Normalize(AtomicJsonFile.Read(_path, _current, tolerateErrors: false));
+                AtomicJsonFile.Write(_path, latest with { TerminalFontSize = size });
+                return true;
+            });
+            _pendingFontSize = null;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            _fontSaveTimer?.Dispose();
+            _fontSaveTimer = null;
+            FlushPendingChanges();
         }
     }
 
@@ -114,10 +156,12 @@ public sealed class AppSettingsStore : IAppSettingsStore
             var next = AtomicJsonFile.WithExclusiveAccess(_path, () =>
             {
                 var latest = Normalize(AtomicJsonFile.Read(_path, _current, tolerateErrors: false));
-                var updated = Normalize(mutate(latest));
-                if (updated != latest) AtomicJsonFile.Write(_path, updated);
+                var basis = _pendingFontSize is double size ? latest with { TerminalFontSize = size } : latest;
+                var updated = Normalize(mutate(basis));
+                if (updated != latest || _pendingFontSize is not null) AtomicJsonFile.Write(_path, updated);
                 return updated;
             });
+            _pendingFontSize = null;
             if (next == _current)
             {
                 return;

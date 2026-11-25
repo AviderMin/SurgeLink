@@ -15,6 +15,36 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 public sealed class SshIntegrationTests
 {
     [SshIntegrationFact]
+    public async Task NewFolderUploadPublishesCompleteTreeFromOneStagingRoot()
+    {
+        await using var target = await SshIntegrationTarget.ConnectAsync();
+        var local = Directory.CreateTempSubdirectory("surgelink-folder-upload-");
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(local.FullName, "first.txt"), "first");
+            var nested = local.CreateSubdirectory("nested");
+            await File.WriteAllTextAsync(Path.Combine(nested.FullName, "second.txt"), "second");
+            var remote = target.Root + "/uploaded";
+            var item = new TransferItem
+            {
+                Id = "integration-upload", Name = "uploaded", LocalPath = local.FullName,
+                RemotePath = remote, IsDirectory = true, Direction = TransferDirection.Upload,
+            };
+            await using var queue = new FileTransferQueue();
+            var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            queue.TransferFinished += _ => finished.TrySetResult();
+            queue.Enqueue(item, target.Files);
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(20));
+
+            Assert.True(item.Status == TransferStatus.Completed, item.Error);
+            Assert.Equal("first", await target.ReadTextAsync(remote + "/first.txt"));
+            Assert.Equal("second", await target.ReadTextAsync(remote + "/nested/second.txt"));
+            Assert.Equal("uploaded", Assert.Single(await target.Files.ListAsync(target.Root, default)).Name);
+        }
+        finally { local.Delete(recursive: true); }
+    }
+
+    [SshIntegrationFact]
     public async Task InteractiveShellStartsAndReportsItsColorCapability()
     {
         await using var session = await SshIntegration.ConnectSessionAsync();

@@ -82,6 +82,7 @@ internal sealed partial class TerminalSurface
 
     private void DisposeRunFormats()
     {
+        ReleaseRowLayouts();
         _formatRegular?.Dispose();
         _formatBold?.Dispose();
         _formatItalic?.Dispose();

@@ -14,7 +14,7 @@ using static Microsoft.UI.Reactor.Factories;
 
 namespace SurgeLink.App.Shell;
 
-internal sealed record AgentPanelProps(Action Close);
+internal sealed record AgentPanelProps(Action Close, bool Visible);
 
 /// <summary>One non-modal home for Agent access, setup, takeover and activity.</summary>
 internal sealed class AgentPanel : Component<AgentPanelProps>
@@ -32,13 +32,15 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
         var (pinInstance, setPinInstance) = UseState(false);
         var (_, setPresenceTime) = UseState(DateTimeOffset.UtcNow);
         // Expire crashed/disconnected Host leases even when no further IPC arrives.
+        var visible = Props.Visible;
         UseEffect(() =>
         {
+            if (!visible) { return () => { }; }
             var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
             timer.Tick += (_, _) => setPresenceTime(DateTimeOffset.UtcNow);
             timer.Start();
             return () => timer.Stop();
-        }, Array.Empty<object>());
+        }, visible);
         var client = (AgentMcpClient)clientIndex;
         var peers = agent.McpPeers;
         var copySetupLabel = client is AgentMcpClient.Codex or AgentMcpClient.ClaudeCode

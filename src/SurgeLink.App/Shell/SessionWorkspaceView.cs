@@ -115,7 +115,8 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
             terminalVisited.Current
                 ? Border(Component<TerminalView, TerminalViewProps>(new TerminalViewProps(props.Terminal,
                     props.State == ConnectionState.Connected && tab.Session.CanReopenTerminal,
-                    () => _ = ReopenShellAsync(), props.ReopeningTerminal, props.State == ConnectionState.Connected)))
+                    () => _ = ReopenShellAsync(), props.ReopeningTerminal, props.State == ConnectionState.Connected,
+                    props.View == SessionViewKind.Terminal && activeTabId == tab.Id)))
                     .IsVisible(props.View == SessionViewKind.Terminal)
                     .Grid(row: 1).WithKey("terminal-view")
                 : null,

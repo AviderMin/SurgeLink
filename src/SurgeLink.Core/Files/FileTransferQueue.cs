@@ -294,19 +294,30 @@ public sealed class FileTransferQueue : IAsyncDisposable
         await using var source = LocalDownloadPath.OpenExistingFileForRead(localPath ?? item.LocalPath);
 
         var destination = remotePath ?? item.RemotePath;
+        if (stagedFolder)
+        {
+            // The private directory is already the staging boundary. Failed writes
+            // leave no final file and are rolled back with the directory.
+            await using var target = await fileSystem.OpenWriteAsync(destination, source.Length, null, token).ConfigureAwait(false);
+            await CopyAsync(target, token).ConfigureAwait(false);
+            await RemoteFileWrite.CompleteStreamAsync(target, token).ConfigureAwait(false);
+            return;
+        }
         await RemoteFileWrite.WriteAsync(fileSystem, destination, source.Length,
-            null, item.OverwritePaths.Contains(destination), async (target, writeToken) =>
+            null, item.OverwritePaths.Contains(destination), CopyAsync, token).ConfigureAwait(false);
+
+        async Task CopyAsync(Stream target, CancellationToken writeToken)
+        {
+            var buffer = new byte[BufferSize];
+            long done = 0;
+            int read;
+            while ((read = await source.ReadAsync(buffer, writeToken).ConfigureAwait(false)) > 0)
             {
-                var buffer = new byte[BufferSize];
-                long done = 0;
-                int read;
-                while ((read = await source.ReadAsync(buffer, writeToken).ConfigureAwait(false)) > 0)
-                {
-                    await target.WriteAsync(buffer.AsMemory(0, read), writeToken).ConfigureAwait(false);
-                    done += read;
-                    SetDone(item, offset + done);
-                }
-            }, token, destinationKnownAbsent: stagedFolder).ConfigureAwait(false);
+                await target.WriteAsync(buffer.AsMemory(0, read), writeToken).ConfigureAwait(false);
+                done += read;
+                SetDone(item, offset + done);
+            }
+        }
     }
 
     private async Task UploadDirectoryAsync(TransferItem item, IRemoteFileSystem fileSystem, CancellationToken token)

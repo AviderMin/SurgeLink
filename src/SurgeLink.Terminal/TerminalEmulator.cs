@@ -38,6 +38,8 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     private bool _shiftOut;
     private bool _joinNextRune;
     private string? _activeHyperlink;
+    private readonly Dictionary<string, string> _hyperlinks = new(StringComparer.Ordinal);
+    private const int MaximumHyperlinks = 4096;
     private List<string>? _pendingResponses;
 
     /// <summary>
@@ -81,6 +83,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             copy._primaryScreen.CopyContentFrom(_primaryScreen);
             for (var row = 0; row < _scrollback.Count; row++)
                 _ = copy._scrollback.Add(_scrollback[row].Copy());
+            foreach (var link in _hyperlinks) { copy._hyperlinks.Add(link.Key, link.Value); }
             return copy;
         }
     }
@@ -292,6 +295,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         _parser.Reset();
         _screen = _primaryScreen;
         _sgr.Reset();
+        UpdateEraseCell();
         _savedCursor = default;
         _alternateSavedCursor = default;
         _mouseModeMask = 0;
@@ -323,6 +327,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 // Erase with the default cell, not whatever colour the remote left active.
                 _screen.EraseCell = TerminalCell.Blank;
                 _screen.EraseInDisplay(2);
+                UpdateEraseCell();
                 _screen.SetCursor(0, 0);
                 ClearScrollback();
                 MarkDirty();
@@ -588,7 +593,6 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     internal void PrintAscii(byte value)
     {
         _joinNextRune = false;
-        UpdateEraseCell();
         string text = (_shiftOut ? _g1LineDrawing : _g0LineDrawing) && MapDecSpecialGraphics(value) is { } mapped
             ? mapped
             : AsciiText.Get(value);
@@ -604,6 +608,21 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             _modes.InsertMode,
             _activeHyperlink,
             _sgr.UnderlineColor);
+    }
+
+    internal void PrintAsciiRun(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length == 1 || (_shiftOut ? _g1LineDrawing : _g0LineDrawing)
+            || _modes.InsertMode || !_modes.AutoWrap || _activeHyperlink is not null)
+        {
+            foreach (byte value in bytes) { PrintAscii(value); }
+            return;
+        }
+
+        _joinNextRune = false;
+        _lastGraphicText = AsciiText.Get(bytes[^1]);
+        _lastGraphicWidth = 1;
+        _screen.WriteAsciiRun(bytes, _sgr);
     }
 
     private static string? MapDecSpecialGraphics(byte value) => value switch
@@ -639,7 +658,6 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     /// <summary>Prints one decoded Unicode code point.</summary>
     internal void PrintRune(Rune rune)
     {
-        UpdateEraseCell();
         if (rune.Value < 0xA0)
         {
             _joinNextRune = false;
@@ -647,32 +665,32 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             return;
         }
 
+        string text = RuneText.Get(rune);
         if (rune.Value == 0x200D)
         {
-            _joinNextRune = _screen.AppendCombining(rune.ToString());
+            _joinNextRune = _screen.AppendCombining(text);
             return;
         }
 
         if (_joinNextRune)
         {
             _joinNextRune = false;
-            if (_screen.AppendCombining(rune.ToString(), requireSameGrapheme: true)) return;
+            if (_screen.AppendCombining(text, requireSameGrapheme: true)) return;
         }
 
         if (rune.Value is >= 0x1F3FB and <= 0x1F3FF
             || Rune.GetUnicodeCategory(rune) == System.Globalization.UnicodeCategory.SpacingCombiningMark)
         {
-            if (_screen.AppendCombining(rune.ToString(), requireSameGrapheme: true)) return;
+            if (_screen.AppendCombining(text, requireSameGrapheme: true)) return;
         }
 
         int width = CharacterWidth.GetWidth(rune);
         if (width == 0)
         {
-            _screen.AppendCombining(rune.ToString());
+            _screen.AppendCombining(text);
             return;
         }
 
-        string text = rune.ToString();
         _lastGraphicText = text;
         _lastGraphicWidth = width;
         _screen.Print(
@@ -1027,7 +1045,14 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             && (parsed.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
                 || parsed.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
         {
-            _activeHyperlink = parsed.AbsoluteUri;
+            string canonical = parsed.AbsoluteUri;
+            if (_hyperlinks.TryGetValue(canonical, out var existing)) { _activeHyperlink = existing; }
+            else if (canonical.Length <= 2048 && _hyperlinks.Count < MaximumHyperlinks)
+            {
+                _hyperlinks.Add(canonical, canonical);
+                _activeHyperlink = canonical;
+            }
+            else { _activeHyperlink = null; }
         }
     }
 
@@ -1394,6 +1419,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
 
             _alternateScreen.SetCursorRaw(_screen.CursorRow, _screen.CursorColumn, false);
             _screen = _alternateScreen;
+            UpdateEraseCell();
             SetModes(_modes with { AlternateScreen = true });
             _viewportOffset = 0;
             MarkDirty();
@@ -1425,6 +1451,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 SetModes(_modes with { OriginMode = _alternateSavedCursor.OriginMode });
             }
             _alternateSavedCursor = default;
+            UpdateEraseCell();
 
             _viewportOffset = 0;
             MarkDirty();
@@ -1453,6 +1480,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         {
             _screen.SetCursorRaw(0, 0, false);
             _sgr.Reset();
+            UpdateEraseCell();
             SetModes(_modes with { OriginMode = false });
             MarkDirty();
             return;
@@ -1460,6 +1488,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
 
         _screen.SetCursorRaw(_savedCursor.Row, _savedCursor.Column, _savedCursor.PendingWrap);
         _sgr = _savedCursor.Sgr;
+        UpdateEraseCell();
         SetModes(_modes with { OriginMode = _savedCursor.OriginMode });
         MarkDirty();
     }
@@ -1526,6 +1555,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         });
         _mouseModeMask = 0;
         _sgr.Reset();
+        UpdateEraseCell();
         _savedCursor = default;
         _lastGraphicText = null;
         _lastGraphicWidth = 0;
@@ -1544,6 +1574,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         if (parameters.Length == 0)
         {
             _sgr.Reset();
+            UpdateEraseCell();
             MarkDirty();
             return;
         }
@@ -1579,6 +1610,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             }
         }
 
+        UpdateEraseCell();
         MarkDirty();
     }
 
@@ -1642,7 +1674,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
 
     private void SetIndexedColor(int code, int index)
     {
-        SetColor(code, TerminalColor.FromIndex((byte)Math.Clamp(index, 0, 255)) with { IsExplicitIndex = true });
+        SetColor(code, TerminalColor.FromIndex((byte)Math.Clamp(index, 0, 255), isExplicit: true));
     }
 
     private void SetRgbColor(int code, int red, int green, int blue)

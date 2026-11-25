@@ -403,6 +403,42 @@ internal sealed class ScreenBuffer
         _host.OnScreenChanged();
     }
 
+    /// <summary>Writes a plain ASCII run with automatic wrapping and one fixed style.</summary>
+    public void WriteAsciiRun(ReadOnlySpan<byte> text, SgrState sgr)
+    {
+        var template = new TerminalCell(string.Empty, sgr.Foreground, sgr.Background, sgr.Attributes,
+            CellWidth.Narrow, UnderlineColor: sgr.UnderlineColor);
+        do
+        {
+            if (_pendingWrap)
+            {
+                _pendingWrap = false;
+                _cursorColumn = 0;
+                _lines[_cursorRow].Wrapped = true;
+                LineFeedInternal();
+            }
+            var line = _lines[_cursorRow];
+            line.PrepareForEdit();
+            var cells = line.Cells;
+            int count = Math.Min(text.Length, _columns - _cursorColumn);
+            for (var index = 0; index < count; index++)
+            {
+                int column = _cursorColumn + index;
+                if (cells[column].Width != CellWidth.Narrow) { ClearWidePair(cells, column); }
+                cells[column] = template with { Text = AsciiText.Get(text[index]) };
+            }
+            _cursorColumn += count;
+            if (_cursorColumn == _columns)
+            {
+                _cursorColumn--;
+                _pendingWrap = true;
+            }
+            text = text[count..];
+        }
+        while (!text.IsEmpty);
+        _host.OnScreenChanged();
+    }
+
     /// <summary>Appends a zero width combining mark to the preceding cell.</summary>
     public bool AppendCombining(string mark, bool requireSameGrapheme = false)
     {
@@ -782,6 +818,7 @@ internal sealed class ScreenBuffer
         bool newPendingWrap = false;
         bool cursorMapped = false;
 
+        var logicalCells = new List<TerminalCell>();
         int i = 0;
         while (i < totalInputRows)
         {
@@ -794,9 +831,23 @@ internal sealed class ScreenBuffer
             i++;
 
             bool groupHasCursor = cursorAbsRow >= groupStart && cursorAbsRow <= groupEnd;
+            if (!groupHasCursor && groupStart == groupEnd)
+            {
+                var line = GetCombinedLine(scrollback, groupStart);
+                int length = line.Length;
+                while (length > columns && line.GetCell(length - 1) == TerminalCell.Blank) { length--; }
+                if (length <= columns)
+                {
+                    line.PrepareForEdit();
+                    line.Resize(columns);
+                    line.Wrapped = false;
+                    reflowed.Add(line);
+                    continue;
+                }
+            }
             int cursorOffsetInGroup = -1;
             int logicalWidth = 0;
-            var logicalCells = new List<TerminalCell>();
+            logicalCells.Clear();
 
             for (int r = groupStart; r <= groupEnd; r++)
             {

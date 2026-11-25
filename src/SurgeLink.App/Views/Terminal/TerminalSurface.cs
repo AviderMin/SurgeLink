@@ -57,6 +57,9 @@ internal sealed partial class TerminalSurface : ContentControl
     private readonly Rectangle _cursorRect;
     private readonly TextBlock _cursorGlyph;
     private readonly DispatcherQueueTimer? _blinkTimer;
+    private readonly DispatcherQueueTimer? _resizeTimer;
+    private bool _active;
+    private bool _cursorBlinking;
     private readonly StringBuilder _runBuilder = new(64);
     private bool _hasBlinkingCells;
     private CanvasTextFormat? _formatRegular;
@@ -93,7 +96,8 @@ internal sealed partial class TerminalSurface : ContentControl
     /// <param name="bridge">Bridge whose emulator is rendered and whose remote receives input.</param>
     /// <param name="settings">Settings store used for the font and colour scheme.</param>
     /// <param name="logger">Optional diagnostic log; metrics and the painted element count land here.</param>
-    public TerminalSurface(TerminalBridge bridge, IAppSettingsStore settings, ILogger? logger = null)
+    /// <param name="active">Whether this terminal is initially visible in the workspace.</param>
+    public TerminalSurface(TerminalBridge bridge, IAppSettingsStore settings, ILogger? logger, bool active)
     {
         ArgumentNullException.ThrowIfNull(bridge);
         ArgumentNullException.ThrowIfNull(settings);
@@ -101,6 +105,7 @@ internal sealed partial class TerminalSurface : ContentControl
         _bridge = bridge;
         _settings = settings;
         _logger = logger;
+        _active = active;
 
         IsTabStop = true;
         UseSystemFocusVisuals = true;
@@ -169,14 +174,35 @@ internal sealed partial class TerminalSurface : ContentControl
             timer.Tick += OnBlinkTick;
             _blinkTimer = timer;
         }
+        _resizeTimer = DispatcherQueue?.CreateTimer();
+        if (_resizeTimer is { } resizeTimer)
+        {
+            resizeTimer.Interval = TimeSpan.FromMilliseconds(40);
+            resizeTimer.IsRepeating = false;
+            resizeTimer.Tick += (_, _) => UpdateGridSize(immediate: true);
+        }
     }
 
-    /// <summary>Re-applies settings and repaints; called by the Reactor host on every render.</summary>
-    internal void Refresh()
+    internal void SetActive(bool active)
     {
-        ApplySettings(_settings.Current, initial: false);
-        ApplySearchLocalization();
-        InvalidatePaint(force: true);
+        if (_active == active) { return; }
+        _active = active;
+        if (active)
+        {
+            _allRowsDirty = true;
+            UpdateGridSize(immediate: true);
+            if (IsSearchVisible) { RefreshSearch(resetCurrent: false, ensureVisible: false); }
+            InvalidatePaint(force: true);
+        }
+        else
+        {
+            ReleaseRowLayouts();
+            _resizeTimer?.Stop();
+            _searchRefreshTimer?.Stop();
+            _searchInputTimer?.Stop();
+            DiscardPendingSearch();
+            StopBlink();
+        }
     }
 
     /// <summary>
@@ -229,6 +255,7 @@ internal sealed partial class TerminalSurface : ContentControl
                 Margin = new Thickness(ContentInset),
             };
             _canvas.Draw += OnCanvasDraw;
+            _canvas.CreateResources += OnCanvasResourcesCreated;
             _root.Children.Insert(1, _canvas);
             ApplySettings(_settings.Current, initial: false);
             if (_formatRegular is null && _metrics is not null) ApplyRunFont(_metrics);
@@ -237,9 +264,8 @@ internal sealed partial class TerminalSurface : ContentControl
             _settings.Changed += OnSettingsChanged;
         }
 
-        UpdateGridSize();
-        StartBlink();
-        if (IsSearchVisible) { RefreshSearch(resetCurrent: false, ensureVisible: false); }
+        UpdateGridSize(immediate: true);
+        if (_active && IsSearchVisible) { RefreshSearch(resetCurrent: false, ensureVisible: false); }
         InvalidatePaint(force: true);
         _logger?.LogInformation(
             "Terminal surface loaded: size={Width}x{Height}, grid={Columns}x{Rows}",
@@ -249,7 +275,7 @@ internal sealed partial class TerminalSurface : ContentControl
             _requestedRows);
 
         // A terminal is only useful once it has focus: take it as soon as the view appears.
-        DispatcherQueue?.TryEnqueue(() => Focus(FocusState.Programmatic));
+        if (_active) { DispatcherQueue?.TryEnqueue(() => { if (_active) Focus(FocusState.Programmatic); }); }
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -259,6 +285,7 @@ internal sealed partial class TerminalSurface : ContentControl
         if (_canvas is { } canvas)
         {
             canvas.Draw -= OnCanvasDraw;
+            canvas.CreateResources -= OnCanvasResourcesCreated;
             canvas.RemoveFromVisualTree();
             _canvas = null;
         }
@@ -271,12 +298,22 @@ internal sealed partial class TerminalSurface : ContentControl
         _settings.Changed -= OnSettingsChanged;
         _searchRefreshTimer?.Stop();
         _searchInputTimer?.Stop();
+        _resizeTimer?.Stop();
         DiscardPendingSearch();
         StopBlink();
     }
 
+    private void OnCanvasResourcesCreated(CanvasControl sender, Microsoft.Graphics.Canvas.UI.CanvasCreateResourcesEventArgs args)
+        => ReleaseRowLayouts();
+
+    private void ReleaseRowLayouts()
+    {
+        foreach (var row in _paintedRows) { row.ReleaseTextLayouts(); }
+    }
+
     private void OnBridgeInvalidated(object? sender, EventArgs e)
     {
+        if (!_active) { return; }
         if (IsSearchVisible && !string.IsNullOrEmpty(_searchQuery))
         {
             // Output can evict scrollback lines and shift every match index. Refresh
@@ -291,7 +328,11 @@ internal sealed partial class TerminalSurface : ContentControl
         InvalidatePaint(force: false);
     }
 
-    private void OnSettingsChanged(object? sender, EventArgs e) => ApplySettings(_settings.Current, initial: false);
+    private void OnSettingsChanged(object? sender, EventArgs e)
+    {
+        ApplySettings(_settings.Current, initial: false);
+        ApplySearchLocalization();
+    }
 
     private void OnClipboardCopyRequested(string text)
     {
@@ -319,7 +360,7 @@ internal sealed partial class TerminalSurface : ContentControl
             _forcePaint = true;
         }
 
-        if (!_loaded || _paintQueued)
+        if (!_active || !_loaded || _paintQueued)
         {
             return;
         }
@@ -342,19 +383,28 @@ internal sealed partial class TerminalSurface : ContentControl
     {
         _hasFocus = true;
         _blinkOn = true;
-        if (_hasBlinkingCells) _canvas?.Invalidate();
-        StartBlink();
+        if (_active && _hasBlinkingCells) _canvas?.Invalidate();
         InvalidatePaint(force: true);
     }
 
     private void OnLostFocus(object sender, RoutedEventArgs e)
     {
         _hasFocus = false;
+        StopBlink();
+        _blinkOn = true;
+        if (_active && _hasBlinkingCells) _canvas?.Invalidate();
         InvalidatePaint(force: true);
     }
 
-    private void StartBlink()
+    private void UpdateBlink(bool cursorBlinking)
     {
+        _cursorBlinking = cursorBlinking;
+        if (!_active || !_hasFocus || _bridge.IsClosed || (!cursorBlinking && !_hasBlinkingCells))
+        {
+            StopBlink();
+            _blinkOn = true;
+            return;
+        }
         if (_blinkTimer is not null && !_blinkTimer.IsRunning)
         {
             _blinkTimer.Start();
@@ -373,8 +423,7 @@ internal sealed partial class TerminalSurface : ContentControl
     {
         _blinkOn = !_blinkOn;
 
-        var emulator = _bridge.Emulator;
-        lock (emulator.SyncRoot) { _cursorLayer.Opacity = !emulator.Modes.CursorBlink || _blinkOn ? 1 : 0; }
+        _cursorLayer.Opacity = !_cursorBlinking || _blinkOn ? 1 : 0;
         if (_hasBlinkingCells) _canvas?.Invalidate();
     }
 }

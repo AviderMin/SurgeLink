@@ -12,7 +12,7 @@ namespace SurgeLink.Protocols.Ssh;
 /// A dedicated background thread reads raw bytes and raises <see cref="OutputReceived"/>;
 /// writes are serialised so the UI thread can call <see cref="WriteAsync"/> freely.
 /// </summary>
-public sealed class SshTerminal : IRemoteTerminal
+public sealed class SshTerminal : IRemoteTerminal, IBorrowedTerminalOutput
 {
     private const int MaximumDimension = 2000;
     private const int ReaderJoinTimeoutMilliseconds = 5000;
@@ -56,6 +56,7 @@ public sealed class SshTerminal : IRemoteTerminal
 
     /// <inheritdoc />
     public event EventHandler<TerminalOutputEventArgs>? OutputReceived;
+    public event Action<ReadOnlySpan<byte>>? BorrowedOutputReceived;
 
     /// <inheritdoc />
     public event EventHandler? Closed;
@@ -324,9 +325,7 @@ public sealed class SshTerminal : IRemoteTerminal
                     break;
                 }
 
-                var chunk = new byte[read];
-                Buffer.BlockCopy(buffer, 0, chunk, 0, read);
-                RaiseOutput(new ReadOnlyMemory<byte>(chunk));
+                RaiseOutput(buffer.AsSpan(0, read));
             }
         }
         finally
@@ -349,17 +348,19 @@ public sealed class SshTerminal : IRemoteTerminal
         stream.Flush();
     }
 
-    private void RaiseOutput(ReadOnlyMemory<byte> data)
+    private void RaiseOutput(ReadOnlySpan<byte> data)
     {
-        var handler = OutputReceived;
-        if (handler is null)
-        {
-            return;
-        }
-
         try
         {
-            handler(this, new TerminalOutputEventArgs(data));
+            BorrowedOutputReceived?.Invoke(data);
+        }
+        catch (Exception exception) { _logger.LogDebug(exception, "A borrowed terminal output handler failed."); }
+
+        var handler = OutputReceived;
+        if (handler is null) { return; }
+        try
+        {
+            handler(this, new TerminalOutputEventArgs(data.ToArray()));
         }
         catch (Exception exception)
         {

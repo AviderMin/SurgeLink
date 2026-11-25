@@ -4,6 +4,20 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class EditorLineIndexTests
 {
+    [Fact]
+    public void UpdatingReusedIndexMatchesFreshIndexAcrossNewlineEdits()
+    {
+        var index = new EditorLineIndex("one\r\ntwo\nthree");
+        foreach (var text in new[] { "one\rtwo\nthree", "one\r\ntwo\r\nthree\n", "one\r", "", "\r\n", "\r\nlast" })
+        {
+            index.Update(text);
+            var fresh = new EditorLineIndex(text);
+            Assert.Equal(Enumerable.Range(0, fresh.Count).Select(i => fresh[i]),
+                Enumerable.Range(0, index.Count).Select(i => index[i]));
+            Assert.True(EditorTextBuffer.MatchesDocument(text, EditorTextBuffer.ToDocumentText(text)));
+            Assert.False(EditorTextBuffer.MatchesDocument(text, EditorTextBuffer.ToDocumentText(text) + "x"));
+        }
+    }
     [Theory]
     [InlineData("", new[] { 0 })]
     [InlineData("one", new[] { 0 })]

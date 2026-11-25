@@ -10,7 +10,7 @@ internal sealed partial class TerminalSurface
     /// <summary>
     /// Draws the cursor and keeps the glyph visible inside a block cursor.
     /// </summary>
-    private void PaintCursor(TerminalMetrics metrics, TerminalStyleResolver resolver)
+    private bool PaintCursor(TerminalMetrics metrics, TerminalStyleResolver resolver)
     {
         var emulator = _bridge.Emulator;
         TerminalCursor cursor;
@@ -38,9 +38,8 @@ internal sealed partial class TerminalSurface
         if (!visible)
         {
             _cursorLayer.Visibility = Visibility.Collapsed;
-            return;
+            return false;
         }
-
         _cursorLayer.Visibility = Visibility.Visible;
         _cursorLayer.Opacity = !modes.CursorBlink || _blinkOn ? 1 : 0;
 
@@ -79,5 +78,6 @@ internal sealed partial class TerminalSurface
                 _cursorGlyph.Visibility = Visibility.Visible;
                 break;
         }
+        return modes.CursorBlink;
     }
 }

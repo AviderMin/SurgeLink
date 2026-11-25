@@ -8,13 +8,26 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.14**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.16**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.16** 全面优化终端内存占用、高频输出吞吐、渲染缓存与外围 I/O 性能：
+
+- 终端内存与吞吐优化：`TerminalColor` 压缩为单 `uint` 存储，`TerminalCell` 合并文本与超链接引用以降低每格内存占用；新增 `IBorrowedTerminalOutput` 零拷贝输出回调、`ScreenBuffer.WriteAsciiRun` 连续 ASCII 快路径与 `RuneText` 单码点缓存，减少高频刷屏时的 GC 分配。
+- 渲染与生命周期优化：按行缓存并复用 Win2D `CanvasTextLayout`（随行变更或卸载释放），窗口缩窗重排增加防抖，非活动终端与隐藏 Agent 面板跳过不必要的刷新与后台轮询。
+- 编辑器、传输与监控优化：`EditorLineIndex` 改为增量复用未改动前缀，`EditorTextBuffer.MatchesDocument` 实现无拷贝脏检查并防抖统计刷新；目录暂存上传跳过多余临时文件重命名；Windows 监控网卡采样改用 .NET `NetworkInterface.GetIPStatistics()` 替代 `Get-NetAdapterStatistics`。
+- 日志与界面响应优化：`FileLoggerProvider` 改为异步批量写盘，`AppSettingsStore` 字体缩放防抖落盘，`WorkspaceSnapshot` 与 `PrivacyDisplay` 缓存派生属性与脱敏正则。
+
+**1.0.3.15** 增强终端多颜色、真彩色能力协商与渲染对比度：
+
+- 终端多颜色与真彩色增强：支持 `SGR 58`/`59` 独立下划线颜色、区分基础 ANSI 加粗提亮与 `38;5;n` 显式索引、修正 ITU T.416 冒号 SGR 解析；支持 `OSC 4/10/11/12` 及 `104/110/111/112` 动态调色板读写与 X.Org 命名色，并在完整重置时清除颜色覆盖。
+- 协议真彩能力协商与查询：支持 `DCS + q`（`XTGETTCAP`）真彩能力查询；SSH 交互式 Shell 预发送 `COLORTERM=truecolor`，Telnet 新增 `NEW-ENVIRON` 环境变量与真彩协商。
+- 配色与渲染体验优化：修正 Light 主题亮白色与选区／搜索／光标文本对比度，并优化调色板更新锁路径。
 
 **1.0.3.14** 集中修复终端渲染与行重排回归、原地重连、本地/远端文件安全与 Agent 控制边界：
 

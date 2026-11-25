@@ -10,7 +10,26 @@ public static class EditorTextBuffer
         => string.IsNullOrEmpty(documentText) ? string.Empty : Normalize(documentText, "\r\n");
 
     public static string ToDocumentText(string? editorText)
-        => string.IsNullOrEmpty(editorText) ? string.Empty : Normalize(editorText, "\n");
+        => editorText is null ? string.Empty : editorText.Contains('\r') ? Normalize(editorText, "\n") : editorText;
+
+    /// <summary>Compares a native buffer with canonical LF text without allocating a copy.</summary>
+    public static bool MatchesDocument(string editorText, string documentText)
+    {
+        if (editorText.Length == documentText.Length && !editorText.Contains('\r'))
+            return string.Equals(editorText, documentText, StringComparison.Ordinal);
+        int offset = 0;
+        for (int i = 0; i < editorText.Length; i++)
+        {
+            char value = editorText[i];
+            if (value == '\r')
+            {
+                if (i + 1 < editorText.Length && editorText[i + 1] == '\n') { i++; }
+                value = '\n';
+            }
+            if (offset == documentText.Length || documentText[offset++] != value) { return false; }
+        }
+        return offset == documentText.Length;
+    }
 
     public static int ToDocumentOffset(string editorText, int editorOffset)
     {

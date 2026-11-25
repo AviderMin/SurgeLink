@@ -466,7 +466,7 @@ internal sealed partial class TerminalSurface
     {
         try
         {
-            _settings.Update(settings => settings with { TerminalFontSize = size });
+            _settings.UpdateTerminalFontSize(size);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

@@ -23,7 +23,7 @@ internal sealed partial class TerminalSurface
         _paintQueued = false;
         TerminalMetrics? metrics = _metrics;
         TerminalStyleResolver? resolver = _resolver;
-        if (!_loaded || metrics is null || resolver is null)
+        if (!_active || !_loaded || metrics is null || resolver is null)
         {
             return;
         }
@@ -99,6 +99,7 @@ internal sealed partial class TerminalSurface
         {
             if (repaintAll || !TerminalRowSnapshot.AreEqual(_paintedRows[row], _scratchRows[row], visibleColumns))
             {
+                _paintedRows[row].ReleaseTextLayouts();
                 (_paintedRows[row], _scratchRows[row]) = (_scratchRows[row], _paintedRows[row]);
                 anyRowChanged = true;
             }
@@ -129,7 +130,7 @@ internal sealed partial class TerminalSurface
             _canvas?.Invalidate();
         }
 
-        PaintCursor(metrics, resolver);
+        UpdateBlink(PaintCursor(metrics, resolver));
         LogLayoutOnce();
     }
 
@@ -137,7 +138,7 @@ internal sealed partial class TerminalSurface
     {
         TerminalMetrics? metrics = _metrics;
         TerminalStyleResolver? resolver = _resolver;
-        if (metrics is null || resolver is null || _paintedRowCount <= 0 || _paintedColumns <= 0)
+        if (!_active || metrics is null || resolver is null || _paintedRowCount <= 0 || _paintedColumns <= 0)
         {
             return;
         }
@@ -187,11 +188,12 @@ internal sealed partial class TerminalSurface
             TerminalRowSnapshot snapshot = _paintedRows[row];
             if (snapshot.Text.Length < columns) continue;
             float top = row * cellHeight;
-            DrawRowTextAndDecorations(ds, snapshot, columns, cellWidth, cellHeight, top);
+            DrawRowTextAndDecorations(sender, ds, snapshot, columns, cellWidth, cellHeight, top);
         }
     }
 
     private void DrawRowTextAndDecorations(
+        CanvasControl canvas,
         CanvasDrawingSession ds,
         TerminalRowSnapshot snapshot,
         int columns,
@@ -222,8 +224,7 @@ internal sealed partial class TerminalSurface
             int start = col;
             if (isSingleAsciiCell)
             {
-                _runBuilder.Clear();
-                _runBuilder.Append(cellText);
+                bool hasText = cellText[0] != ' ';
                 col++;
                 while (col < columns
                     && snapshot.Width[col] == CellWidth.Narrow
@@ -234,14 +235,20 @@ internal sealed partial class TerminalSurface
                 {
                     string nextText = snapshot.Text[col];
                     if (nextText.Length != 1 || nextText[0] >= 0x80) break;
-                    _runBuilder.Append(nextText);
+                    hasText |= nextText[0] != ' ';
                     col++;
                 }
 
-                string runText = _runBuilder.ToString();
-                if (!blinkHidden && !IsBlank(runText))
+                if (!blinkHidden && hasText)
                 {
-                    DrawGlyphRun(ds, runText, start * cellWidth, top, style);
+                    string? runText = null;
+                    if (snapshot.TextLayouts?.ContainsKey(start) != true)
+                    {
+                        _runBuilder.Clear();
+                        for (var index = start; index < col; index++) { _runBuilder.Append(snapshot.Text[index]); }
+                        runText = _runBuilder.ToString();
+                    }
+                    DrawGlyphRun(canvas, ds, snapshot, start, runText, start * cellWidth, top, style);
                 }
 
                 DrawDecorations(ds, start, col - start, cellWidth, cellHeight, top, style, hasLink, blinkHidden);
@@ -252,7 +259,7 @@ internal sealed partial class TerminalSurface
                 col += spanCols;
                 if (!blinkHidden && !IsBlank(cellText))
                 {
-                    DrawGlyphRun(ds, cellText, start * cellWidth, top, style);
+                    DrawGlyphRun(canvas, ds, snapshot, start, cellText, start * cellWidth, top, style);
                 }
 
                 DrawDecorations(ds, start, spanCols, cellWidth, cellHeight, top, style, hasLink, blinkHidden);
@@ -261,12 +268,22 @@ internal sealed partial class TerminalSurface
     }
 
     private void DrawGlyphRun(
+        CanvasControl canvas,
         CanvasDrawingSession ds,
-        string text,
+        TerminalRowSnapshot row,
+        int column,
+        string? text,
         float left,
         float top,
         TerminalCellStyle style)
     {
+        if (row.TextLayouts?.TryGetValue(column, out var cached) == true)
+        {
+            ds.DrawTextLayout(cached, left, top, ToColor(style.Foreground));
+            return;
+        }
+        if (text is null) { return; }
+
         bool bold = (style.Attributes & CellAttributes.Bold) != 0;
         bool italic = (style.Attributes & CellAttributes.Italic) != 0;
         CanvasTextFormat? format = (bold, italic) switch
@@ -279,7 +296,15 @@ internal sealed partial class TerminalSurface
         if (format is null) return;
 
         Color color = ToColor(style.Foreground);
-        ds.DrawText(text, left, top, color, format);
+        var layouts = row.TextLayouts ??= new();
+        if (layouts.Count >= 128)
+        {
+            ds.DrawText(text, left, top, color, format);
+            return;
+        }
+        var layout = new CanvasTextLayout(canvas, text, format, 0, 0);
+        layouts.Add(column, layout);
+        ds.DrawTextLayout(layout, left, top, color);
     }
 
     private static void DrawDecorations(

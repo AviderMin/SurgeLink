@@ -1,3 +1,4 @@
+using Microsoft.Graphics.Canvas.Text;
 using SurgeLink.Terminal;
 
 namespace SurgeLink.App.Views.Terminal;
@@ -45,6 +46,15 @@ internal readonly record struct TerminalSelectionRange(TerminalPosition First, T
 /// </summary>
 internal sealed class TerminalRowSnapshot
 {
+    public Dictionary<int, CanvasTextLayout>? TextLayouts { get; set; }
+
+    public void ReleaseTextLayouts()
+    {
+        if (TextLayouts is not { } layouts) { return; }
+        foreach (var layout in layouts.Values) { layout.Dispose(); }
+        layouts.Clear();
+    }
+
     /// <summary>Text of every column; continuation cells hold an empty string.</summary>
     public string[] Text = Array.Empty<string>();
 

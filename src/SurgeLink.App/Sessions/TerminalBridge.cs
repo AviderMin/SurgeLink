@@ -15,6 +15,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     /// <summary>Stable, unique identity for native surface reconciliation across shell replacement.</summary>
     public Guid Id { get; } = Guid.NewGuid();
     private readonly IRemoteTerminal _remote;
+    private readonly Action<ReadOnlySpan<byte>> _recordOutput;
     private readonly IUiDispatcher _dispatcher;
     private readonly ILogger _logger;
     private readonly IAppSettingsStore? _settings;
@@ -36,6 +37,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         string? banner = null)
     {
         _remote = remote;
+        _recordOutput = _output.Append;
         _dispatcher = dispatcher;
         _logger = logger;
         _settings = settings;
@@ -66,7 +68,8 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         ApplyTerminalTheme();
         if (settings is not null) settings.Changed += OnSettingsChanged;
         Emulator.ResponseRequested += OnResponseRequested;
-        _remote.OutputReceived += OnOutputReceived;
+        if (_remote is IBorrowedTerminalOutput borrowed) { borrowed.BorrowedOutputReceived += OnOutputReceived; }
+        else { _remote.OutputReceived += OnOutputReceived; }
         _remote.Closed += OnRemoteClosed;
     }
 
@@ -261,8 +264,11 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     }
 
     private void OnOutputReceived(object? sender, TerminalOutputEventArgs e)
+        => OnOutputReceived(e.Data.Span);
+
+    private void OnOutputReceived(ReadOnlySpan<byte> data)
     {
-        Emulator.Feed(e.Data.Span, _output.Append);
+        Emulator.Feed(data, _recordOutput);
 
         ScheduleRepaint();
         ScheduleActivity();
@@ -336,7 +342,8 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
 
         if (_settings is not null) _settings.Changed -= OnSettingsChanged;
         Emulator.ResponseRequested -= OnResponseRequested;
-        _remote.OutputReceived -= OnOutputReceived;
+        if (_remote is IBorrowedTerminalOutput borrowed) { borrowed.BorrowedOutputReceived -= OnOutputReceived; }
+        else { _remote.OutputReceived -= OnOutputReceived; }
         _remote.Closed -= OnRemoteClosed;
         await _remote.DisposeAsync().ConfigureAwait(false);
     }

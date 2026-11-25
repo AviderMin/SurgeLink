@@ -3,6 +3,17 @@ namespace SurgeLink.Terminal.Tests;
 public sealed class OscTests
 {
     [Fact]
+    public void Osc8DeduplicatesUrlsAndStopsAdmittingNewLinksAtTheLimit()
+    {
+        var terminal = new TestTerminal();
+        for (var i = 0; i < 4096; i++)
+            terminal.Feed(FormattableString.Invariant($"\u001b]8;;https://example.test/{i}\u0007"));
+        terminal.Feed("\u001b]8;;https://example.test/new\u0007X");
+        terminal.Feed("\u001b]8;;https://example.test/0\u0007Y");
+        Assert.Null(terminal.Cell(0, 0).Hyperlink);
+        Assert.Equal("https://example.test/0", terminal.Cell(0, 1).Hyperlink);
+    }
+    [Fact]
     public void IndexedPaletteCanSetQueryAndResetMultipleColors()
     {
         var terminal = new TestTerminal();

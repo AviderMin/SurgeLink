@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Reactor.Core;
 using SurgeLink.App.Localization;
@@ -106,7 +107,12 @@ public sealed class AppServices : IAsyncDisposable
         }
         finally
         {
-            try { if (Sessions is IAsyncDisposable disposable) await disposable.DisposeAsync().ConfigureAwait(false); }
+            try
+            {
+                try { if (Settings is IDisposable disposableSettings) disposableSettings.Dispose(); else Settings.FlushPendingChanges(); }
+                catch (Exception ex) { failures.Add(ex); }
+                if (Sessions is IAsyncDisposable disposable) await disposable.DisposeAsync().ConfigureAwait(false);
+            }
             finally { Logs.Dispose(); }
         }
         if (failures.Count > 0) throw new AggregateException("Application cleanup failed.", failures);
@@ -131,7 +137,7 @@ public sealed class AppServices : IAsyncDisposable
         var loggerFactory = LoggerFactory.Create(builder =>
         {
             builder.SetMinimumLevel(LogLevel.Information);
-            builder.AddProvider(new FileLoggerProvider(AppPaths.LogsDirectory));
+            builder.Services.AddSingleton<ILoggerProvider>(_ => new FileLoggerProvider(AppPaths.LogsDirectory));
         });
 
         // Protocol registry: the single place a new protocol is wired in.
@@ -159,7 +165,7 @@ public sealed class AppServices : IAsyncDisposable
                     Str.T("shell.dialog.secret.continue", "Continue"), Str.T("common.cancel", "Cancel"), challenge.Uri), ct));
 
         interaction = new InteractionService(dispatcher);
-        var settings = new AppSettingsStore(Path.Combine(AppPaths.Root, "settings.json"));
+        var settings = new AppSettingsStore(Path.Combine(AppPaths.Root, "settings.json"), loggerFactory.CreateLogger<AppSettingsStore>());
         var localization = new LocalizationService(settings);
 
         var sessions = new SessionManager(

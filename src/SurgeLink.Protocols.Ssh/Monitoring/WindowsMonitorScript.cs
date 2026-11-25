@@ -81,8 +81,14 @@ public static class WindowsMonitorScript
         Get-CimInstance -ClassName Win32_PerfFormattedData_PerfDisk_LogicalDisk | Where-Object { $_.Name -ne '_Total' } | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.DiskReadBytesPersec + '|' + [string]$_.DiskWriteBytesPersec) }
 
         Emit 'network'
-        $netRows = @(Get-NetAdapterStatistics)
-        $netRows | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.ReceivedBytes + '|' + [string]$_.SentBytes + '|' + [string]$_.ReceivedUnicastPackets + '|' + [string]$_.SentUnicastPackets) }
+        $netRows = @(foreach ($adapter in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+            if ($adapter.NetworkInterfaceType -eq [System.Net.NetworkInformation.NetworkInterfaceType]::Loopback) { continue }
+            try {
+                $stats = $adapter.GetIPStatistics()
+                ([string]$adapter.Name + '|' + [string]$stats.BytesReceived + '|' + [string]$stats.BytesSent + '|' + [string]$stats.UnicastPacketsReceived + '|' + [string]$stats.UnicastPacketsSent)
+            } catch { }
+        })
+        $netRows | Write-Output
 
         Emit 'networkfallback'
         if ($netRows.Count -eq 0) { Get-CimInstance -ClassName Win32_PerfRawData_Tcpip_NetworkInterface | ForEach-Object { Write-Output ([string]$_.Name + '|' + [string]$_.BytesReceivedPersec + '|' + [string]$_.BytesSentPersec + '|' + [string]$_.PacketsReceivedPersec + '|' + [string]$_.PacketsSentPersec) } }

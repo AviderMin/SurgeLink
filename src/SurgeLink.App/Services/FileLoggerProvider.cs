@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading.Channels;
 using SurgeLink.Core.Security;
 using Microsoft.Extensions.Logging;
 
@@ -8,12 +9,19 @@ namespace SurgeLink.App.Services;
 public sealed class FileLoggerProvider : ILoggerProvider
 {
     private const int MaxRetainedDays = 14;
+    private const int BatchSize = 128;
     private readonly string _directory;
-    private readonly object _gate = new();
+    private readonly Channel<(DateOnly Day, string Text)> _pending = Channel.CreateBounded<(DateOnly, string)>(
+        new BoundedChannelOptions(4096) { SingleReader = true, FullMode = BoundedChannelFullMode.DropOldest });
+    private readonly Task _writer;
     private DateOnly _lastPruneDate;
 
     /// <summary>Creates a provider writing one file per day under <paramref name="directory"/>.</summary>
-    public FileLoggerProvider(string directory) => _directory = directory;
+    public FileLoggerProvider(string directory)
+    {
+        _directory = directory;
+        _writer = Task.Run(WriteQueuedAsync);
+    }
 
     /// <inheritdoc />
     public ILogger CreateLogger(string categoryName) => new FileLogger(this, categoryName);
@@ -21,25 +29,49 @@ public sealed class FileLoggerProvider : ILoggerProvider
     /// <inheritdoc />
     public void Dispose()
     {
+        _pending.Writer.TryComplete();
+        _writer.GetAwaiter().GetResult();
     }
 
-    private void Write(string line)
+    private void Write(string line) => _pending.Writer.TryWrite((DateOnly.FromDateTime(DateTime.Now), line));
+
+    private async Task WriteQueuedAsync()
+    {
+        var buffer = new StringBuilder();
+        while (await _pending.Reader.WaitToReadAsync().ConfigureAwait(false))
+        {
+            DateOnly day = default;
+            int remaining = BatchSize;
+            while (remaining-- > 0 && _pending.Reader.TryRead(out var entry))
+            {
+                if (buffer.Length != 0 && day != entry.Day)
+                {
+                    await WriteBatchAsync(day, buffer.ToString()).ConfigureAwait(false);
+                    buffer.Clear();
+                }
+                day = entry.Day;
+                buffer.AppendLine(DiagnosticText.Escape(entry.Text));
+            }
+            if (buffer.Length != 0)
+            {
+                await WriteBatchAsync(day, buffer.ToString()).ConfigureAwait(false);
+                buffer.Clear();
+            }
+        }
+    }
+
+    private async Task WriteBatchAsync(DateOnly day, string batch)
     {
         try
         {
             Directory.CreateDirectory(_directory);
-            var now = DateTime.Now;
-            var today = DateOnly.FromDateTime(now);
-            var path = Path.Combine(_directory, $"surge-{now:yyyyMMdd}.log");
-            lock (_gate)
+            var path = Path.Combine(_directory, $"surge-{day:yyyyMMdd}.log");
+            if (_lastPruneDate != day)
             {
-                if (_lastPruneDate != today)
-                {
-                    _lastPruneDate = today;
-                    PruneOldLogs(today);
-                }
-                File.AppendAllText(path, DiagnosticText.Escape(line) + Environment.NewLine, Encoding.UTF8);
+                _lastPruneDate = day;
+                PruneOldLogs(day);
             }
+            await File.AppendAllTextAsync(path, batch, Encoding.UTF8).ConfigureAwait(false);
         }
         catch (IOException)
         {

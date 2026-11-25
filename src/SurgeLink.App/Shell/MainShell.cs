@@ -430,7 +430,7 @@ internal sealed class MainShell : Component
                 titleBar.Grid(row: 0),
                 navigation.Grid(row: 1),
                 statusBar.Grid(row: 2),
-                Border(Component<AgentPanel, AgentPanelProps>(new AgentPanelProps(() => setAgentOpen(false)))
+                Border(Component<AgentPanel, AgentPanelProps>(new AgentPanelProps(() => setAgentOpen(false), agentOpen))
                         .HAlign(HorizontalAlignment.Right).MaxWidth(360).Margin(AppTheme.SpacingM))
                     .IsVisible(agentOpen).Grid(row: 1).WithKey("agent-panel"),
                 editorOverlay.Grid(row: 0, rowSpan: 3),

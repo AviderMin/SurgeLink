@@ -7,7 +7,7 @@ namespace SurgeLink.Protocols.Ssh.Monitoring;
 public static class WindowsNetworkParser
 {
     /// <summary>Parses rows shaped <c>name|receivedBytes|sentBytes|receivedPackets|sentPackets</c>.</summary>
-    /// <param name="networkSection">Either the <c>Get-NetAdapterStatistics</c> or the raw CIM fallback section.</param>
+    /// <param name="networkSection">Either the IP interface statistics or the raw CIM fallback section.</param>
     /// <returns>One cumulative <see cref="NetworkSample"/> per adapter.</returns>
     public static IReadOnlyList<NetworkSample> Parse(string? networkSection)
     {

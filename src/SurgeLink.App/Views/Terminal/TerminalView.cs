@@ -12,7 +12,7 @@ namespace SurgeLink.App.Views.Terminal;
 
 /// <summary>Props for <see cref="TerminalView"/>.</summary>
 internal sealed record TerminalViewProps(TerminalBridge? Bridge, bool CanReopen = false, Action? Reopen = null,
-    bool Reopening = false, bool Connected = true);
+    bool Reopening = false, bool Connected = true, bool Active = true);
 
 /// <summary>
 /// Reactor host for one session's <see cref="TerminalSurface"/>.
@@ -43,7 +43,11 @@ internal sealed class TerminalView : Component<TerminalViewProps>
 
         // Rendering happens once per mount: the surface repaints itself from
         // TerminalBridge.Invalidated, so terminal output never re-renders Reactor.
-        Element surface = new XamlHostElement(() => new TerminalSurface(bridge, settings, logger), UpdateSurface)
+        var active = Props.Active;
+        Element surface = new XamlHostElement(() => new TerminalSurface(bridge, settings, logger, active), element =>
+        {
+            if (element is TerminalSurface surface) { surface.SetActive(active); }
+        })
         {
             TypeKey = "TerminalSurface:" + bridge.Id,
         };
@@ -56,14 +60,6 @@ internal sealed class TerminalView : Component<TerminalViewProps>
                     .IsEnabled(!Props.Reopening).AutomationId("ReopenShellButton") : null)
                 .Padding(AppTheme.SpacingM).Grid(row: 0) : null,
             surface.Grid(row: 1));
-    }
-
-    private static void UpdateSurface(FrameworkElement element)
-    {
-        if (element is TerminalSurface surface)
-        {
-            surface.Refresh();
-        }
     }
 
     private static Element Placeholder(string message) =>

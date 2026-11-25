@@ -40,8 +40,11 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var (saving, setSaving) = UseState(false, threadSafe: true);
         var (connected, setConnected) = UseState(props.Session is null || props.Session.State == ConnectionState.Connected, threadSafe: true);
         var (exporting, setExporting) = UseState(false);
-        var (savedText, setSavedText) = UseState(string.Empty, threadSafe: true);
-        var dirty = !string.Equals(text, savedText, StringComparison.Ordinal);
+        var (dirty, setDirty) = UseState(false);
+        var dirtyRef = UseRef(false);
+        var (statistics, setStatistics) = UseState((Lines: 1, Characters: 0));
+        var documentRevision = UseRef(0);
+        var surfaceRef = UseRef<FileEditorSurface?>(null);
         var (loadFailed, setLoadFailed) = UseState(false, threadSafe: true);
         var (confirmation, setConfirmation) = UseState(0);
         var window = UseWindow();
@@ -64,6 +67,15 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var editorRef = UseRef<TextBox?>(null);
         var focusSearch = UseRef(false);
         var comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+
+        void UpdateDirty(bool value)
+        {
+            if (dirtyRef.Current == value) { return; }
+            dirtyRef.Current = value;
+            setDirty(value);
+        }
+        bool HasUnsavedChanges() => dirtyRef.Current && (surfaceRef.Current?.HasUnsavedChanges() ?? true);
+        string ReadDocument() => surfaceRef.Current?.ReadDocument() ?? text;
 
         void OpenSearch(bool replace)
         {
@@ -147,7 +159,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 setStatus(Str.T("sftp.editor.waitForSave", "Wait for the current operation to finish before closing."));
                 return false;
             }
-            if (dirty && !allowClose.Current) { setConfirmation(1); return false; }
+            if (!allowClose.Current && HasUnsavedChanges()) { setConfirmation(1); return false; }
             return true;
         });
 
@@ -202,8 +214,9 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 // Editing works in canonical LF space; the original breaks are restored on save.
                 var canonical = EditorTextBuffer.ToDocumentText(content.Text);
                 document.Current = content with { Text = canonical };
+                documentRevision.Current++;
                 setText(canonical);
-                setSavedText(canonical);
+                UpdateDirty(false);
             }
             catch (OperationCanceledException)
             {
@@ -227,10 +240,10 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             setSaving(true);
             setError(null);
             setStatus(null);
-            var snapshot = text;
             var token = lifetime.Token;
             try
             {
+                var snapshot = ReadDocument();
                 var baseline = document.Current ?? throw new InvalidOperationException("No loaded document.");
                 // Write the file back with its original line endings while the editor keeps LF internally.
                 var persisted = TextLineEndings.Apply(snapshot, documentNewLine.Current);
@@ -243,7 +256,8 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 // Edits made while the write was in flight remain dirty.
                 if (!token.IsCancellationRequested)
                 {
-                    setSavedText(snapshot);
+                    surfaceRef.Current?.SetBaseline(snapshot);
+                    UpdateDirty(surfaceRef.Current?.HasUnsavedChanges() ?? false);
                     setStatus(Str.T("sftp.editor.saved", "Saved"));
                 }
             }
@@ -266,7 +280,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         void Reload()
         {
             if (loading || operationBusy.Current || (!connected && document.Current is null)) { return; }
-            if (dirty) { setConfirmation(2); }
+            if (HasUnsavedChanges()) { setConfirmation(2); }
             else if (!connected) { RestoreLoadedCopy(); }
             else if (!lifetime.IsCancellationRequested) { _ = LoadAsync(lifetime.Token); }
         }
@@ -274,8 +288,9 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         void RestoreLoadedCopy()
         {
             if (document.Current is not { } baseline) { return; }
+            documentRevision.Current++;
             setText(baseline.Text);
-            setSavedText(baseline.Text);
+            UpdateDirty(false);
             setLoadFailed(false);
             setStatus(Str.T("sftp.editor.restored", "Restored the last loaded copy."));
             setError(null);
@@ -286,7 +301,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             try
             {
                 var package = new DataPackage();
-                package.SetText(text);
+                package.SetText(ReadDocument());
                 Clipboard.SetContent(package);
                 setError(null);
                 setStatus(Str.T("sftp.editor.copied", "Copied all text."));
@@ -299,10 +314,10 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             if (loading || operationBusy.Current || pickers is null || document.Current is null) { return; }
             operationBusy.Current = true;
             setExporting(true);
-            var snapshot = text;
             var encoding = document.Current?.Encoding ?? new System.Text.UTF8Encoding(false, true);
             try
             {
+                var snapshot = ReadDocument();
                 var file = await pickers.PickSaveFileAsync(Str.T("sftp.editor.textFiles", "Text files")).ConfigureAwait(true);
                 if (file is null) { return; }
                 var persisted = TextLineEndings.Apply(snapshot, documentNewLine.Current);
@@ -329,8 +344,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             }, Str.T("sftp.editor.discard", "Discard changes"), Str.T("common.cancel", "Cancel"),
             ThemeController.ToElementTheme(settings.Theme));
 
-        var lineCount = UseMemo(() => LineLayout.CountLines(text), text);
-        var characterCount = text.Length;
+        var (lineCount, characterCount) = statistics;
         var statusText = error ?? (loading
             ? Str.T("sftp.editor.loading", "Loading file…")
             : saving
@@ -356,7 +370,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                     AppTheme.SpacingS,
                     Button(Str.T("sftp.editor.copyAll", "Copy all"), CopyAll).SubtleButton()
                         .AutomationName(Str.T("sftp.editor.copyAll", "Copy all"))
-                        .IsEnabled(!loading && text.Length > 0),
+                        .IsEnabled(!loading && (dirty || characterCount > 0)),
                     Button(Str.T("sftp.editor.export", "Save local copy"), () => _ = ExportAsync()).SubtleButton()
                         .AutomationName(Str.T("sftp.editor.export", "Save local copy"))
                         .IsEnabled(!loading && !saving && !exporting && document.Current is not null),
@@ -400,13 +414,22 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             Element surface = new XamlHostElement(() => new FileEditorSurface(), element =>
             {
                 var editorSurface = (FileEditorSurface)element;
+                surfaceRef.Current = editorSurface;
                 editorRef.Current = editorSurface.Editor;
-                editorSurface.TextEdited = value =>
+                editorSurface.TextEdited = () =>
                 {
-                    setText(value);
-                    setStatus(null);
+                    if (!dirtyRef.Current)
+                    {
+                        UpdateDirty(true);
+                        setStatus(null);
+                    }
                 };
-                editorSurface.Update(text, wrap, Str.T("sftp.editor.contents", "File contents"));
+                editorSurface.StatisticsChanged = (changed, lines, chars) =>
+                {
+                    UpdateDirty(changed);
+                    setStatistics((lines, chars));
+                };
+                editorSurface.Update(text, documentRevision.Current, wrap, Str.T("sftp.editor.contents", "File contents"));
             }) { TypeKey = "FileEditorSurface" };
             body = Border(surface)
                 .Padding(AppTheme.SpacingS)

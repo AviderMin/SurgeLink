@@ -4,24 +4,30 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using SurgeLink.App.Sessions;
 
 namespace SurgeLink.App.Services;
 
 /// <summary>Display-only address masking. Connection profiles are never modified.</summary>
 internal static class PrivacyDisplay
 {
+    private sealed class Masker(WorkspaceSnapshot snapshot)
+    {
+        private readonly System.Text.RegularExpressions.Regex? _regex = AddressMasker.CreateMatcher(
+            snapshot.Profiles.Select(profile => profile.Host)
+                .Concat(snapshot.Tabs.Select(tab => tab.Profile.Host))
+                .Concat(snapshot.Tabs.Select(tab => tab.Session.HostInfo.HostName ?? string.Empty)));
+
+        internal string Apply(string text) => _regex?.Replace(text, "***") ?? text;
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<WorkspaceSnapshot, Masker> Matchers = new();
+
     public static string Mask(string text)
     {
         var services = AppServices.Current;
         if (services is null || !services.Settings.Current.PrivacyMode || string.IsNullOrEmpty(text)) return text;
-        var snapshot = services.Workspace.Snapshot;
-        var hosts = snapshot.Profiles.Select(p => p.Host)
-            .Concat(snapshot.Tabs.Select(t => t.Profile.Host))
-            .Concat(snapshot.Tabs.Select(t => t.Session.HostInfo.HostName ?? string.Empty))
-            .Where(h => !string.IsNullOrWhiteSpace(h))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(h => h.Length);
-        return AddressMasker.Mask(text, hosts);
+        return Matchers.GetValue(services.Workspace.Snapshot, static snapshot => new(snapshot)).Apply(text);
     }
 
     public static TextBlockElement Private(this TextBlockElement element, string original) =>

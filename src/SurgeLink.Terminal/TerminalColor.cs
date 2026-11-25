@@ -20,27 +20,34 @@ public enum TerminalColorKind : byte
 /// </summary>
 public readonly record struct TerminalColor
 {
+    private readonly uint _packed;
+    private const uint ExplicitIndex = 1u << 26;
+    private TerminalColor(uint packed) => _packed = packed;
     /// <summary>Default theme foreground or background.</summary>
     public static TerminalColor Default { get; } = default;
 
     /// <summary>Colour kind.</summary>
-    public TerminalColorKind Kind { get; init; }
+    public TerminalColorKind Kind => (TerminalColorKind)((_packed >> 24) & 3);
 
     /// <summary>Palette index, valid when <see cref="Kind"/> is <see cref="TerminalColorKind.Indexed"/>.</summary>
-    public byte Index { get; init; }
+    public byte Index => Kind == TerminalColorKind.Indexed ? (byte)_packed : (byte)0;
 
     /// <summary>True when an extended SGR requested this exact palette index.</summary>
-    public bool IsExplicitIndex { get; init; }
+    public bool IsExplicitIndex => (_packed & ExplicitIndex) != 0;
 
     /// <summary>0xRRGGBB value, valid when <see cref="Kind"/> is <see cref="TerminalColorKind.Rgb"/>.</summary>
-    public uint Rgb { get; init; }
+    public uint Rgb => Kind == TerminalColorKind.Rgb ? _packed & 0xFFFFFFu : 0;
 
     /// <summary>Creates an indexed colour.</summary>
-    public static TerminalColor FromIndex(byte index) => new() { Kind = TerminalColorKind.Indexed, Index = index };
+    public static TerminalColor FromIndex(byte index) => FromIndex(index, false);
+
+    /// <summary>Creates an indexed colour with optional exact-index semantics.</summary>
+    public static TerminalColor FromIndex(byte index, bool isExplicit) =>
+        new(((uint)TerminalColorKind.Indexed << 24) | index | (isExplicit ? ExplicitIndex : 0));
 
     /// <summary>Creates a true colour value.</summary>
-    public static TerminalColor FromRgb(uint rgb) => new() { Kind = TerminalColorKind.Rgb, Rgb = rgb & 0xFFFFFFu };
+    public static TerminalColor FromRgb(uint rgb) => new(((uint)TerminalColorKind.Rgb << 24) | (rgb & 0xFFFFFFu));
 
     /// <summary>Same colour with a different palette index.</summary>
-    public TerminalColor WithIndex(byte index) => this with { Kind = TerminalColorKind.Indexed, Index = index, Rgb = 0 };
+    public TerminalColor WithIndex(byte index) => FromIndex(index, IsExplicitIndex);
 }

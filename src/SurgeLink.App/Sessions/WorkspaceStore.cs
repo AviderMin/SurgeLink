@@ -80,6 +80,14 @@ public sealed record WorkspaceSnapshot(
     bool IsConnecting,
     long Revision = 0)
 {
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<WorkspaceSnapshot, Derived> DerivedValues = new();
+
+    private sealed class Derived(WorkspaceSnapshot snapshot)
+    {
+        internal readonly Lazy<int> ServerCount = new(snapshot.CountConnectedServers);
+        internal readonly Lazy<IReadOnlyList<SessionProfile>> Profiles = new(snapshot.GetFilteredProfiles);
+    }
+
     /// <summary>Initial empty workspace.</summary>
     public static WorkspaceSnapshot Empty { get; } = new(
         Array.Empty<SessionProfile>(),
@@ -89,7 +97,9 @@ public sealed record WorkspaceSnapshot(
         false);
 
     /// <summary>Distinct connected hosts, independent of users, ports and tab count.</summary>
-    public int ConnectedServerCount => Tabs
+    public int ConnectedServerCount => DerivedValues.GetValue(this, static snapshot => new(snapshot)).ServerCount.Value;
+
+    private int CountConnectedServers() => Tabs
         .Where(tab => tab.State == ConnectionState.Connected
             && !string.Equals(tab.Profile.ProtocolId, "demo", StringComparison.OrdinalIgnoreCase))
         .Select(tab => NormalizeHost(tab.Profile.Host))
@@ -107,24 +117,17 @@ public sealed record WorkspaceSnapshot(
         ActiveTabId is Guid id ? Tabs.FirstOrDefault(t => t.Id == id) : null;
 
     /// <summary>Profiles matching the current search text, newest first.</summary>
-    public IReadOnlyList<SessionProfile> FilteredProfiles
-    {
-        get
-        {
-            if (string.IsNullOrWhiteSpace(SearchText))
-            {
-                return Profiles.OrderByDescending(p => p.LastUsedUtc ?? DateTimeOffset.MinValue).ThenBy(p => p.Name, StringComparer.CurrentCulture).ToList();
-            }
+    public IReadOnlyList<SessionProfile> FilteredProfiles => DerivedValues.GetValue(this, static snapshot => new(snapshot)).Profiles.Value;
 
-            var query = SearchText.Trim();
-            return Profiles
-                .Where(p => p.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-                            || p.Host.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-                            || p.Username.Contains(query, StringComparison.CurrentCultureIgnoreCase))
-                .OrderByDescending(p => p.LastUsedUtc ?? DateTimeOffset.MinValue)
-                .ThenBy(p => p.Name, StringComparer.CurrentCulture)
-                .ToList();
-        }
+    private IReadOnlyList<SessionProfile> GetFilteredProfiles()
+    {
+        var query = SearchText.Trim();
+        var candidates = query.Length == 0 ? Profiles : Profiles.Where(p =>
+            p.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+            || p.Host.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+            || p.Username.Contains(query, StringComparison.CurrentCultureIgnoreCase));
+        return candidates.OrderByDescending(p => p.LastUsedUtc ?? DateTimeOffset.MinValue)
+            .ThenBy(p => p.Name, StringComparer.CurrentCulture).ToArray();
     }
 }
 

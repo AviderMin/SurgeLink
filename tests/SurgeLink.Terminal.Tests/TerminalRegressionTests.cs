@@ -10,6 +10,22 @@ namespace SurgeLink.Terminal.Tests;
 public sealed class TerminalRegressionTests
 {
     [Fact]
+    public void PrintableRunsMatchByteWiseOutputAcrossWideOverwriteWrapAndSgr()
+    {
+        byte[] input = System.Text.Encoding.UTF8.GetBytes(
+            "甲乙丙\r\u001b[44mabcdefghijk\u001b[3b\r\n\u001b(0lqk\u001b(B─🙂\u001b[0m tail");
+        var batched = new TerminalEmulator(8, 6, 40);
+        var incremental = new TerminalEmulator(8, 6, 40);
+        batched.Feed(input);
+        for (var i = 0; i < input.Length; i++) { incremental.Feed(input.AsSpan(i, 1)); }
+
+        Assert.Equal(incremental.Cursor, batched.Cursor);
+        Assert.Equal(incremental.ScrollbackLength, batched.ScrollbackLength);
+        for (var row = 0; row < batched.Rows; row++)
+            for (var col = 0; col < batched.Columns; col++)
+                Assert.Equal(incremental.GetCell(row, col), batched.GetCell(row, col));
+    }
+    [Fact]
     public void RepeatPrecedingCharacterRepeatsTheLastGraphic()
     {
         var terminal = new TestTerminal(20, 3);

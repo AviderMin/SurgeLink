@@ -5,6 +5,24 @@ namespace SurgeLink.Core.Tests;
 
 public sealed class AppSettingsStoreTests
 {
+    [Fact]
+    public void FontZoomIsImmediatelyVisibleAndFlushMergesOtherDiskSettings()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("settings.json");
+        using var store = new AppSettingsStore(path);
+        store.UpdateTerminalFontSize(18);
+        store.UpdateTerminalFontSize(20);
+        Assert.Equal(20, store.Current.TerminalFontSize);
+        using var other = new AppSettingsStore(path);
+        other.Update(settings => settings with { PrivacyMode = true });
+
+        store.FlushPendingChanges();
+
+        using var saved = new AppSettingsStore(path);
+        Assert.Equal(20, saved.Current.TerminalFontSize);
+        Assert.True(saved.Current.PrivacyMode);
+    }
     [Theory]
     [InlineData("null")]
     [InlineData("{invalid")]

@@ -21,9 +21,11 @@ internal sealed class FileEditorSurface : Grid
     private readonly Dictionary<int, Rect> _lineRects = new();
     private readonly ColumnDefinition _gutterColumn = new();
     private readonly double _lineHeight;
-    private EditorLineIndex _lines = new(string.Empty);
-    private string _documentText = string.Empty;
+    private readonly EditorLineIndex _lines = new(string.Empty);
+    private string _savedText = string.Empty;
     private string _editorText = string.Empty;
+    private int _documentRevision = -1;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _statisticsTimer;
     private ScrollViewer? _scroll;
     private bool _settingText;
     private bool _gutterQueued;
@@ -39,7 +41,11 @@ internal sealed class FileEditorSurface : Grid
         VerticalAlignment = VerticalAlignment.Stretch,
     };
 
-    public Action<string>? TextEdited { get; set; }
+    public Action? TextEdited { get; set; }
+    public Action<bool, int, int>? StatisticsChanged { get; set; }
+    public string ReadDocument() => EditorTextBuffer.ToDocumentText(Editor.Text);
+    public bool HasUnsavedChanges() => !EditorTextBuffer.MatchesDocument(Editor.Text, _savedText);
+    public void SetBaseline(string text) => _savedText = text;
 
     public FileEditorSurface()
     {
@@ -53,22 +59,20 @@ internal sealed class FileEditorSurface : Grid
         Children.Add(Editor);
         ScrollViewer.SetVerticalScrollBarVisibility(Editor, ScrollBarVisibility.Auto);
         ScrollViewer.SetHorizontalScrollBarVisibility(Editor, ScrollBarVisibility.Auto);
+        _statisticsTimer = DispatcherQueue.CreateTimer();
+        _statisticsTimer.IsRepeating = false;
+        _statisticsTimer.Interval = TimeSpan.FromMilliseconds(150);
+        _statisticsTimer.Tick += (_, _) => RefreshStatistics();
         Editor.TextChanged += (_, _) =>
         {
             if (_settingText) { return; }
-            var buffer = Editor.Text;
-            // TextChanged may be delivered after a programmatic Text assignment.
-            // Preserve the loaded document's original newline format in that case.
-            if (string.Equals(buffer, _editorText, StringComparison.Ordinal)) { return; }
-            _editorText = buffer;
-            _documentText = EditorTextBuffer.ToDocumentText(buffer);
-            _lines = new EditorLineIndex(buffer);
-            _lineRects.Clear();
-            QueueGutter();
-            TextEdited?.Invoke(_documentText);
+            _statisticsTimer.Stop();
+            _statisticsTimer.Start();
+            TextEdited?.Invoke();
         };
         Loaded += (_, _) =>
         {
+            _statisticsTimer.Start();
             var scroll = FindScrollViewer(Editor);
             if (!ReferenceEquals(_scroll, scroll))
             {
@@ -82,6 +86,7 @@ internal sealed class FileEditorSurface : Grid
         {
             if (_scroll is not null) { _scroll.ViewChanged -= OnViewChanged; }
             _scroll = null;
+            _statisticsTimer.Stop();
             CompositionTarget.Rendering -= OnGutterRendering;
             _gutterQueued = false;
         };
@@ -90,7 +95,7 @@ internal sealed class FileEditorSurface : Grid
         ActualThemeChanged += (_, _) => QueueGutter();
     }
 
-    public void Update(string text, bool wrap, string automationName)
+    public void Update(string text, int documentRevision, bool wrap, string automationName)
     {
         AutomationProperties.SetName(Editor, automationName);
         var wrapping = wrap ? TextWrapping.Wrap : TextWrapping.NoWrap;
@@ -102,22 +107,30 @@ internal sealed class FileEditorSurface : Grid
         }
         // A user edit already lives in the native buffer. Only load/reload writes
         // Text, so toolbar/find/status updates cannot reset undo or scroll/caret.
-        if (!string.Equals(_documentText, text, StringComparison.Ordinal))
+        if (_documentRevision != documentRevision)
         {
-            _documentText = text;
+            _documentRevision = documentRevision;
+            _savedText = text;
+            _statisticsTimer.Stop();
             _settingText = true;
             try
             {
                 Editor.Text = EditorTextBuffer.ToEditorText(text);
-                // Use the buffer actually retained by WinUI, whose newline
-                // representation may differ from the assigned CRLF string.
-                _editorText = Editor.Text;
             }
             finally { _settingText = false; }
-            _lines = new EditorLineIndex(_editorText);
-            _lineRects.Clear();
-            QueueGutter();
+            _statisticsTimer.Start();
         }
+    }
+
+    private void RefreshStatistics()
+    {
+        var buffer = Editor.Text;
+        _editorText = buffer;
+        _lines.Update(buffer);
+        _lineRects.Clear();
+        QueueGutter();
+        StatisticsChanged?.Invoke(!EditorTextBuffer.MatchesDocument(buffer, _savedText), _lines.Count,
+            EditorTextBuffer.ToDocumentOffset(buffer, buffer.Length));
     }
 
     private void OnViewChanged(object? sender, ScrollViewerViewChangedEventArgs args) => QueueGutter();
@@ -133,7 +146,7 @@ internal sealed class FileEditorSurface : Grid
     {
         CompositionTarget.Rendering -= OnGutterRendering;
         _gutterQueued = false;
-        if (IsLoaded) { PaintGutter(); }
+        if (IsLoaded && !_statisticsTimer.IsRunning) { PaintGutter(); }
     }
 
     private void PaintGutter()

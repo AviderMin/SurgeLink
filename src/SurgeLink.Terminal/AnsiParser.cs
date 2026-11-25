@@ -64,8 +64,17 @@ internal sealed class AnsiParser
     /// <summary>Consumes a chunk of bytes, running sequences as they complete.</summary>
     public void Feed(ReadOnlySpan<byte> data)
     {
-        foreach (byte value in data)
+        for (int offset = 0; offset < data.Length;)
         {
+            if (_state == ParserState.Ground && !_utf8.HasPending && data[offset] is >= 0x20 and <= 0x7E)
+            {
+                int length = data[offset..].IndexOfAnyExceptInRange((byte)0x20, (byte)0x7E);
+                if (length < 0) { length = data.Length - offset; }
+                _terminal.PrintAsciiRun(data.Slice(offset, length));
+                offset += length;
+                continue;
+            }
+            byte value = data[offset++];
             switch (_state)
             {
                 case ParserState.Ground:

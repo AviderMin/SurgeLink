@@ -28,6 +28,12 @@ public sealed class TerminalOutputEventArgs : EventArgs
     public ReadOnlyMemory<byte> Data { get; }
 }
 
+/// <summary>A synchronous view of terminal bytes, valid only during the callback.</summary>
+public interface IBorrowedTerminalOutput
+{
+    event Action<ReadOnlySpan<byte>>? BorrowedOutputReceived;
+}
+
 /// <summary>
 /// The byte stream side of a terminal: no parsing, no rendering. The emulator
 /// in <c>SurgeLink.Terminal</c> consumes these bytes.
