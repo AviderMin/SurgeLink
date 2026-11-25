@@ -9,12 +9,15 @@ internal struct SgrState
 
     public TerminalColor Background;
 
+    public TerminalColor UnderlineColor;
+
     /// <summary>Restores the default pen.</summary>
     public void Reset()
     {
         Attributes = CellAttributes.None;
         Foreground = TerminalColor.Default;
         Background = TerminalColor.Default;
+        UnderlineColor = TerminalColor.Default;
     }
 
     /// <summary>
@@ -94,6 +97,7 @@ internal struct SgrState
             case >= 50 and <= 55:
                 return true;
             case 59:
+                UnderlineColor = TerminalColor.Default;
                 return true;
             case >= 90 and <= 97:
                 Foreground = TerminalColor.FromIndex((byte)(8 + code - 90));

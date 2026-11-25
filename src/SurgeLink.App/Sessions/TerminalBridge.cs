@@ -62,6 +62,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
             };
             _remoteSize = (columns, rows);
         }
+        ApplyTerminalTheme();
         if (settings is not null) settings.Changed += OnSettingsChanged;
         Emulator.ResponseRequested += OnResponseRequested;
         _remote.OutputReceived += OnOutputReceived;
@@ -81,7 +82,16 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
     {
         if (IsClosed || _settings is null) return;
         Emulator.SetScrollbackLimit(_settings.Current.TerminalScrollbackLines);
+        ApplyTerminalTheme();
         RaiseInvalidated();
+    }
+
+    private void ApplyTerminalTheme()
+    {
+        var name = _settings?.Current.TerminalPalette;
+        var palette = TerminalThemes.All.FirstOrDefault(theme =>
+            string.Equals(theme.Name, name, StringComparison.OrdinalIgnoreCase)).Palette;
+        Emulator.SetBasePalette(palette ?? TerminalThemes.Campbell);
     }
 
     /// <summary>Raised on the UI thread after new output was parsed; coalesced per frame.</summary>

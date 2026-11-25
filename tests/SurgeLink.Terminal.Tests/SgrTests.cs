@@ -145,13 +145,43 @@ public sealed class SgrTests
         Assert.Equal(TerminalColor.FromIndex(1), cell.Foreground);
     }
 
-    [Fact]
-    public void UnderlineColourIsConsumedWithoutBecomingBlink()
+    [Theory]
+    [InlineData("\u001b[58;5;1m", TerminalColorKind.Indexed, 1)]
+    [InlineData("\u001b[58:2::16:32:48m", TerminalColorKind.Rgb, 0x102030)]
+    [InlineData("\u001b[58;2::16:32:48m", TerminalColorKind.Rgb, 0x102030)]
+    public void UnderlineColourIsIndependentOfTextColours(string sequence, TerminalColorKind kind, int value)
     {
-        TerminalCell cell = CellAfter("\u001b[58;5;1m");
-        Assert.Equal(CellAttributes.None, cell.Attributes);
-        Assert.Equal(TerminalColor.Default, cell.Foreground);
-        Assert.Equal(TerminalColor.Default, cell.Background);
+        TerminalCell cell = CellAfter("\u001b[4;32;43m" + sequence);
+        Assert.Equal(CellAttributes.Underline, cell.Attributes);
+        Assert.Equal(TerminalColor.FromIndex(2), cell.Foreground);
+        Assert.Equal(TerminalColor.FromIndex(3), cell.Background);
+        Assert.Equal(kind, cell.UnderlineColor.Kind);
+        Assert.Equal((uint)value, kind == TerminalColorKind.Indexed ? cell.UnderlineColor.Index : cell.UnderlineColor.Rgb);
+    }
+
+    [Fact]
+    public void UnderlineColorSurvivesWideCellsAndFollowsReset59AndReset0()
+    {
+        var terminal = new TestTerminal(20, 4);
+        terminal.Feed("\u001b[4;58;2;8;9;10m界\u001b[59mX\u001b[58;5;1;0mY");
+        Assert.Equal(TerminalColor.FromRgb(0x08090A), terminal.Cell(0, 0).UnderlineColor);
+        Assert.Equal(terminal.Cell(0, 0).UnderlineColor, terminal.Cell(0, 1).UnderlineColor);
+        Assert.Equal(TerminalColor.Default, terminal.Cell(0, 2).UnderlineColor);
+        Assert.Equal(CellAttributes.Underline, terminal.Cell(0, 2).Attributes);
+        Assert.Equal(TerminalColor.Default, terminal.Cell(0, 3).UnderlineColor);
+        Assert.Equal(CellAttributes.None, terminal.Cell(0, 3).Attributes);
+    }
+
+    [Fact]
+    public void BoldBrightensBasicAnsiForegroundButPreservesExplicitIndex()
+    {
+        var basic = CellAfter("\u001b[1;31;41m");
+        var indexed = CellAfter("\u001b[1;38;5;1m");
+        var palette = TerminalPalette.Default;
+
+        Assert.Equal(palette.ResolveIndexed(9), palette.Resolve(basic.Foreground, false, basic.Attributes));
+        Assert.Equal(palette.ResolveIndexed(1), palette.Resolve(basic.Background, true, basic.Attributes));
+        Assert.Equal(palette.ResolveIndexed(1), palette.Resolve(indexed.Foreground, false, indexed.Attributes));
     }
 
     [Fact]

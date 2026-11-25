@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Renci.SshNet;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Terminal;
+using SurgeLink.Protocols.Ssh.Internal;
 
 namespace SurgeLink.Protocols.Ssh;
 
@@ -63,8 +64,7 @@ public sealed class SshTerminal : IRemoteTerminal
 
     /// <summary>
     /// Opens the shell channel with a pseudo terminal of the requested size.
-    /// The SSH protocol has no portable way to request environment variables, so
-    /// <see cref="TerminalStartOptions.Environment"/> is not forwarded.
+    /// Requests the truecolor capability for modern TERM profiles before starting the shell.
     /// </summary>
     /// <param name="options">Initial terminal size and TERM value.</param>
     /// <param name="cancellationToken">Token checked before the channel is opened.</param>
@@ -98,7 +98,7 @@ public sealed class SshTerminal : IRemoteTerminal
 
         ShellStream stream;
         var opening = Task.Run(
-            () => _client.CreateShellStream(terminalType, (uint)columns, (uint)rows, 0, 0, _options.ShellBufferSize),
+            () => SshTrueColorShell.Create(_client, terminalType, (uint)columns, (uint)rows, _options.ShellBufferSize, _logger),
             CancellationToken.None);
         try
         {

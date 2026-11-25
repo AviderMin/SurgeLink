@@ -35,7 +35,8 @@ public readonly record struct TerminalCell(
     TerminalColor Background,
     CellAttributes Attributes,
     CellWidth Width,
-    string? Hyperlink = null)
+    string? Hyperlink = null,
+    TerminalColor UnderlineColor = default)
 {
     /// <summary>A blank cell using default colours.</summary>
     public static TerminalCell Blank { get; } =

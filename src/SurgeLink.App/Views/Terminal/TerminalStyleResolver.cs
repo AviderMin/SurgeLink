@@ -64,15 +64,6 @@ internal sealed class TerminalStyleResolver
         uint foreground = Palette.Resolve(cell.Foreground, forBackground: false, attributes);
         uint background = Palette.Resolve(cell.Background, forBackground: true, attributes);
 
-        // Classic xterm behaviour: bold promotes the eight base colours to their
-        // bright counterparts. True colour and 256 colour cells keep their own value.
-        if ((attributes & CellAttributes.Bold) != 0
-            && cell.Foreground.Kind == TerminalColorKind.Indexed
-            && cell.Foreground.Index < 8)
-        {
-            foreground = Palette.Ansi[cell.Foreground.Index + 8];
-        }
-
         if ((attributes & CellAttributes.Dim) != 0)
         {
             foreground = Blend(foreground, background, 0.5);
@@ -83,7 +74,10 @@ internal sealed class TerminalStyleResolver
             (foreground, background) = (background, foreground);
         }
 
-        return new TerminalCellStyle(foreground & 0xFFFFFFu, background & 0xFFFFFFu, attributes);
+        uint underline = cell.UnderlineColor.Kind == TerminalColorKind.Default
+            ? foreground
+            : Palette.Resolve(cell.UnderlineColor, forBackground: false, CellAttributes.None);
+        return new TerminalCellStyle(foreground & 0xFFFFFFu, background & 0xFFFFFFu, attributes, underline & 0xFFFFFFu);
     }
 
     /// <summary>Returns a cached brush for an 0xRRGGBB colour.</summary>

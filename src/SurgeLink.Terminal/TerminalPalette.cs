@@ -21,6 +21,8 @@ public sealed record TerminalPalette
     /// <summary>The 16 ANSI colours, normal 0-7 then bright 8-15.</summary>
     public IReadOnlyList<uint> Ansi { get; init; } = DefaultAnsi;
 
+    internal IReadOnlyDictionary<byte, uint>? Overrides { get; init; }
+
     /// <summary>Campbell style palette used when the user has not chosen a theme.</summary>
     public static IReadOnlyList<uint> DefaultAnsi { get; } = new uint[]
     {
@@ -45,7 +47,10 @@ public sealed record TerminalPalette
                 return color.Rgb & 0xFFFFFFu;
 
             case TerminalColorKind.Indexed:
-                return ResolveIndexed(color.Index, attributes);
+                var index = color.Index;
+                if (!forBackground && !color.IsExplicitIndex && index < 8 && (attributes & CellAttributes.Bold) != 0)
+                    index += 8;
+                return ResolveIndexed(index);
 
             default:
                 return forBackground ? Background : Foreground;
@@ -55,6 +60,7 @@ public sealed record TerminalPalette
     /// <summary>Resolves an xterm 256 palette index to RGB.</summary>
     public uint ResolveIndexed(byte index, CellAttributes attributes = CellAttributes.None)
     {
+        if (Overrides?.TryGetValue(index, out var rgb) == true) { return rgb; }
         if (index < 16)
         {
             return Ansi[index];

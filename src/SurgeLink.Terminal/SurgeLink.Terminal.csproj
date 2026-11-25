@@ -5,5 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Content Include="Licenses\Unicode-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Licenses\Xorg-rgb-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <EmbeddedResource Include="XorgRgb.txt" LogicalName="SurgeLink.Terminal.XorgRgb.txt" />
   </ItemGroup>
 </Project>

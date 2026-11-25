@@ -304,7 +304,8 @@ internal sealed class ScreenBuffer
         CellAttributes attributes,
         bool autoWrap,
         bool insertMode,
-        string? hyperlink = null)
+        string? hyperlink = null,
+        TerminalColor underlineColor = default)
     {
         if (_columns < 1)
         {
@@ -378,7 +379,8 @@ internal sealed class ScreenBuffer
             background,
             attributes,
             width == 2 ? CellWidth.Wide : CellWidth.Narrow,
-            hyperlink);
+            hyperlink,
+            underlineColor);
         if (width == 2)
         {
             cells[_cursorColumn + 1] = new TerminalCell(
@@ -387,7 +389,8 @@ internal sealed class ScreenBuffer
                 background,
                 attributes,
                 CellWidth.Continuation,
-                hyperlink);
+                hyperlink,
+                underlineColor);
         }
 
         _cursorColumn += width;
@@ -881,7 +884,8 @@ internal sealed class ScreenBuffer
                         cell.Background,
                         cell.Attributes,
                         CellWidth.Continuation,
-                        cell.Hyperlink);
+                        cell.Hyperlink,
+                        cell.UnderlineColor);
                 }
 
                 col += width;

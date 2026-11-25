@@ -29,6 +29,9 @@ public readonly record struct TerminalColor
     /// <summary>Palette index, valid when <see cref="Kind"/> is <see cref="TerminalColorKind.Indexed"/>.</summary>
     public byte Index { get; init; }
 
+    /// <summary>True when an extended SGR requested this exact palette index.</summary>
+    public bool IsExplicitIndex { get; init; }
+
     /// <summary>0xRRGGBB value, valid when <see cref="Kind"/> is <see cref="TerminalColorKind.Rgb"/>.</summary>
     public uint Rgb { get; init; }
 

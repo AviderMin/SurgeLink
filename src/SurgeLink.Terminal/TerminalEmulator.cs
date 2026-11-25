@@ -9,7 +9,7 @@ namespace SurgeLink.Terminal;
 /// not thread safe unless callers serialise access through
 /// <see cref="SyncRoot"/>.
 /// </summary>
-public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
+public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
 {
     private const int MaxWindowTitleLength = 256;
     private const int LinePoolLimit = 64;
@@ -268,6 +268,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             {
                 _primaryScreen.ResetShellState();
                 _alternateScreen.Reset();
+                ClearColorOverrides();
                 ResetSessionState();
             }
             finally { EndBatch(); }
@@ -589,7 +590,8 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             _sgr.Attributes,
             _modes.AutoWrap,
             _modes.InsertMode,
-            _activeHyperlink);
+            _activeHyperlink,
+            _sgr.UnderlineColor);
     }
 
     private static string? MapDecSpecialGraphics(byte value) => value switch
@@ -669,7 +671,8 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
             _sgr.Attributes,
             _modes.AutoWrap,
             _modes.InsertMode,
-            _activeHyperlink);
+            _activeHyperlink,
+            _sgr.UnderlineColor);
     }
 
     /// <summary>Executes a C0 control character.</summary>
@@ -860,7 +863,8 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                             _sgr.Attributes,
                             _modes.AutoWrap,
                             _modes.InsertMode,
-                            _activeHyperlink);
+                            _activeHyperlink,
+                            _sgr.UnderlineColor);
                     }
                 }
                 break;
@@ -975,6 +979,9 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                 break;
             case 52 when complete:
                 HandleOsc52Clipboard(rest);
+                break;
+            case 4 or 10 or 11 or 12 or 104 or 110 or 111 or 112 when complete:
+                HandleOscColor(command, rest);
                 break;
         }
     }
@@ -1551,7 +1558,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                 case 38:
                 case 48:
                 case 58:
-                    index = ApplyExtendedColor(code, parameters, start, end);
+                    index = ApplyExtendedColor(code, parameters, parameterIsSub, start, end);
                     break;
                 default:
                     _sgr.TryApplySimple(code);
@@ -1563,9 +1570,19 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         MarkDirty();
     }
 
-    private int ApplyExtendedColor(int code, ReadOnlySpan<int> parameters, int start, int end)
+    private int ApplyExtendedColor(int code, ReadOnlySpan<int> parameters, ReadOnlySpan<bool> parameterIsSub, int start, int end)
     {
-        if (end > start + 1)
+        int modeIndex = start + 1;
+        if (modeIndex >= parameters.Length) { return end; }
+
+        // xterm also accepts a semicolon before the first colon-separated subparameter.
+        if (end == modeIndex && modeIndex + 1 < parameters.Length && parameterIsSub[modeIndex + 1])
+        {
+            end = modeIndex + 2;
+            while (end < parameters.Length && parameterIsSub[end]) { end++; }
+        }
+
+        if (end > modeIndex)
         {
             int mode = parameters[start + 1];
             if (mode == 5)
@@ -1580,7 +1597,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
 
             if (mode == 2)
             {
-                int values = end - (start + 2);
+                int values = end - (modeIndex + 1);
                 if (values >= 3)
                 {
                     SetRgbColor(code, parameters[end - 3], parameters[end - 2], parameters[end - 1]);
@@ -1589,12 +1606,6 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                 return end;
             }
 
-            return end;
-        }
-
-        int modeIndex = start + 1;
-        if ((uint)modeIndex >= (uint)parameters.Length)
-        {
             return end;
         }
 
@@ -1616,19 +1627,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
 
     private void SetIndexedColor(int code, int index)
     {
-        byte paletteIndex = (byte)Math.Clamp(index, 0, 255);
-        switch (code)
-        {
-            case 38:
-                _sgr.Foreground = TerminalColor.FromIndex(paletteIndex);
-                break;
-            case 48:
-                _sgr.Background = TerminalColor.FromIndex(paletteIndex);
-                break;
-            default:
-                // 58 (underline colour) has no representation in TerminalCell.
-                break;
-        }
+        SetColor(code, TerminalColor.FromIndex((byte)Math.Clamp(index, 0, 255)) with { IsExplicitIndex = true });
     }
 
     private void SetRgbColor(int code, int red, int green, int blue)
@@ -1636,15 +1635,21 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
         uint rgb = (uint)((Math.Clamp(red, 0, 255) << 16)
             | (Math.Clamp(green, 0, 255) << 8)
             | Math.Clamp(blue, 0, 255));
+        SetColor(code, TerminalColor.FromRgb(rgb));
+    }
+
+    private void SetColor(int code, TerminalColor color)
+    {
         switch (code)
         {
             case 38:
-                _sgr.Foreground = TerminalColor.FromRgb(rgb);
+                _sgr.Foreground = color;
                 break;
             case 48:
-                _sgr.Background = TerminalColor.FromRgb(rgb);
+                _sgr.Background = color;
                 break;
-            default:
+            case 58:
+                _sgr.UnderlineColor = color;
                 break;
         }
     }

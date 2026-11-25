@@ -45,6 +45,11 @@ internal sealed partial class TerminalSurface
         if (!_searchRunning) { System.Threading.Monitor.Enter(emulator.SyncRoot); }
         try
         {
+            if (!ReferenceEquals(resolver.Palette, emulator.Palette))
+            {
+                resolver = ApplyPalette(emulator.Palette);
+                repaintAll = true;
+            }
             visibleColumns = Math.Max(1, Math.Min(emulator.Columns, _requestedColumns > 0 ? _requestedColumns : emulator.Columns));
             visibleRows = Math.Min(emulator.Rows, _scratchRows.Length);
             version = emulator.Version;
@@ -215,6 +220,7 @@ internal sealed partial class TerminalSurface
                 while (col < columns
                     && snapshot.Width[col] == CellWidth.Narrow
                     && snapshot.Style[col].Foreground == style.Foreground
+                    && snapshot.Style[col].Underline == style.Underline
                     && SameTextStyle(snapshot.Style[col].Attributes, style.Attributes)
                     && snapshot.HasHyperlink[col] == hasLink)
                 {
@@ -284,18 +290,17 @@ internal sealed partial class TerminalSurface
         bool strike = (style.Attributes & CellAttributes.Strikethrough) != 0;
         if (!underline && !strike) return;
 
-        Color color = ToColor(style.Foreground);
         float x0 = startCol * cellWidth;
         float x1 = (startCol + spanCols) * cellWidth;
         if (underline)
         {
             float y = top + cellHeight - 1.5f;
-            ds.DrawLine(new Vector2(x0, y), new Vector2(x1, y), color, 1f);
+            ds.DrawLine(new Vector2(x0, y), new Vector2(x1, y), ToColor(style.Underline), 1f);
         }
         if (strike)
         {
             float y = top + cellHeight * 0.55f;
-            ds.DrawLine(new Vector2(x0, y), new Vector2(x1, y), color, 1f);
+            ds.DrawLine(new Vector2(x0, y), new Vector2(x1, y), ToColor(style.Foreground), 1f);
         }
     }
 

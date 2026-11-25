@@ -80,6 +80,7 @@ jobs:
             -o PasswordAuthentication=no \
             -o KbdInteractiveAuthentication=no \
             -o PubkeyAuthentication=yes \
+            -o AcceptEnv=COLORTERM \
             -o StrictModes=no \
             -o UsePAM=yes
           for _ in $(seq 1 50); do
@@ -94,6 +95,7 @@ jobs:
           echo "SURGELINK_SSH_TEST_PORT=2222" >> "$GITHUB_ENV"
           echo "SURGELINK_SSH_TEST_USER=$(whoami)" >> "$GITHUB_ENV"
           echo "SURGELINK_SSH_TEST_KEY=$RUNNER_TEMP/client_key" >> "$GITHUB_ENV"
+          echo "SURGELINK_SSH_TEST_EXPECT_COLORTERM=truecolor" >> "$GITHUB_ENV"
       - name: Real-server SSH integration tests
         run: >
           dotnet test tests/SurgeLink.Protocols.Ssh.Tests/SurgeLink.Protocols.Ssh.Tests.csproj

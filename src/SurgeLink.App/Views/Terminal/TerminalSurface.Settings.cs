@@ -15,7 +15,7 @@ internal sealed partial class TerminalSurface
 {
     private void ApplySettings(AppSettings settings, bool initial)
     {
-        TerminalPalette palette = ResolvePalette(settings.TerminalPalette);
+        TerminalPalette palette = _bridge.Emulator.Palette;
         string fontFamily = string.IsNullOrWhiteSpace(settings.TerminalFontFamily)
             ? AppTheme.MonospaceFamilyName
             : settings.TerminalFontFamily;
@@ -33,16 +33,7 @@ internal sealed partial class TerminalSurface
 
         if (paletteChanged)
         {
-            _resolver = new TerminalStyleResolver(palette);
-            var brush = _resolver.Brush(_resolver.DefaultBackground);
-            Background = brush;
-            _root.Background = brush;
-            StyleSearchBar();
-            // Terminal colours can differ from the shell theme. Keep the native
-            // thumb legible on the terminal background in either colour scheme.
-            var rgb = _resolver.DefaultBackground;
-            var brightness = ((rgb >> 16) & 0xFF) * 299 + ((rgb >> 8) & 0xFF) * 587 + (rgb & 0xFF) * 114;
-            _scrollBar.RequestedTheme = brightness < 128000 ? ElementTheme.Dark : ElementTheme.Light;
+            ApplyPalette(palette);
         }
 
         if (fontChanged)
@@ -64,20 +55,19 @@ internal sealed partial class TerminalSurface
         InvalidatePaint(force: true);
     }
 
-    private static TerminalPalette ResolvePalette(string? name)
+    private TerminalStyleResolver ApplyPalette(TerminalPalette palette)
     {
-        if (!string.IsNullOrWhiteSpace(name))
-        {
-            foreach (var (themeName, palette) in TerminalThemes.All)
-            {
-                if (string.Equals(themeName, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    return palette;
-                }
-            }
-        }
-
-        return TerminalThemes.Campbell;
+        var resolver = _resolver = new TerminalStyleResolver(palette);
+        var brush = resolver.Brush(resolver.DefaultBackground);
+        Background = brush;
+        _root.Background = brush;
+        StyleSearchBar();
+        // Terminal colours can differ from the shell theme. Keep the native
+        // thumb legible on the terminal background in either colour scheme.
+        var rgb = resolver.DefaultBackground;
+        var brightness = ((rgb >> 16) & 0xFF) * 299 + ((rgb >> 8) & 0xFF) * 587 + (rgb & 0xFF) * 114;
+        _scrollBar.RequestedTheme = brightness < 128000 ? ElementTheme.Dark : ElementTheme.Light;
+        return resolver;
     }
 
     private void ApplyRunFont(TerminalMetrics metrics)

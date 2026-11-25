@@ -1,5 +1,7 @@
+using System.Text;
 using SurgeLink.Core.Files;
 using SurgeLink.Core.Protocols;
+using SurgeLink.Core.Terminal;
 using Xunit;
 
 namespace SurgeLink.Protocols.Ssh.Tests;
@@ -12,6 +14,33 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 /// </summary>
 public sealed class SshIntegrationTests
 {
+    [SshIntegrationFact]
+    public async Task InteractiveShellStartsAndReportsItsColorCapability()
+    {
+        await using var session = await SshIntegration.ConnectSessionAsync();
+        var terminal = Assert.IsAssignableFrom<IRemoteTerminal>(session.Terminal);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var reported = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var output = new StringBuilder();
+        const string marker = "surge-colorterm=";
+        terminal.OutputReceived += (_, args) =>
+        {
+            output.Append(Encoding.ASCII.GetString(args.Data.Span));
+            var text = output.ToString();
+            var start = text.IndexOf(marker, StringComparison.Ordinal);
+            if (start < 0) { return; }
+            start += marker.Length;
+            var end = text.IndexOf('\n', start);
+            if (end >= 0) { reported.TrySetResult(text[start..end].TrimEnd('\r')); }
+        };
+
+        await terminal.StartAsync(new TerminalStartOptions(), timeout.Token);
+        await terminal.WriteAsync("printf 'surge-%s=%s\\n' colorterm \"${COLORTERM:-none}\"\n"u8.ToArray(), timeout.Token);
+        var capability = await reported.Task.WaitAsync(timeout.Token);
+        if (Environment.GetEnvironmentVariable("SURGELINK_SSH_TEST_EXPECT_COLORTERM") is { Length: > 0 } expected)
+            Assert.Equal(expected, capability);
+    }
+
     [SshIntegrationFact]
     public async Task CopyRefusesToOverwriteAnExistingRemoteFile()
     {

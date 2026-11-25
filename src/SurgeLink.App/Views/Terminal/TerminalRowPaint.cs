@@ -3,7 +3,7 @@ using SurgeLink.Terminal;
 namespace SurgeLink.App.Views.Terminal;
 
 /// <summary>Colours of one cell after palette resolution: what the renderer actually draws.</summary>
-internal readonly record struct TerminalCellStyle(uint Foreground, uint Background, CellAttributes Attributes);
+internal readonly record struct TerminalCellStyle(uint Foreground, uint Background, CellAttributes Attributes, uint Underline);
 
 /// <summary>One highlighted search range on a viewport row.</summary>
 internal readonly record struct TerminalSearchSpan(int StartColumn, int EndColumn, bool Current);
