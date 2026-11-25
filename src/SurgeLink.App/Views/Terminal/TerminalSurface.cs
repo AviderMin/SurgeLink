@@ -239,6 +239,7 @@ internal sealed partial class TerminalSurface : ContentControl
 
         UpdateGridSize();
         StartBlink();
+        if (IsSearchVisible) { RefreshSearch(resetCurrent: false, ensureVisible: false); }
         InvalidatePaint(force: true);
         _logger?.LogInformation(
             "Terminal surface loaded: size={Width}x{Height}, grid={Columns}x{Rows}",
@@ -270,6 +271,7 @@ internal sealed partial class TerminalSurface : ContentControl
         _settings.Changed -= OnSettingsChanged;
         _searchRefreshTimer?.Stop();
         _searchInputTimer?.Stop();
+        DiscardPendingSearch();
         StopBlink();
     }
 

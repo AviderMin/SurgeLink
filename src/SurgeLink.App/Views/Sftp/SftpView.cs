@@ -159,6 +159,8 @@ internal sealed class SftpView : Component<SftpViewProps>
                 void OnFinished(TransferItem item)
                 {
                     if (token.IsCancellationRequested) { return; }
+                    var published = SftpTransferRow.PublishedSummary(item);
+                    var detail = published.Length == 0 ? item.Name : item.Name + " · " + published;
                     setBanner(item.Status switch
                     {
                         TransferStatus.Completed => new SftpBanner(
@@ -170,9 +172,9 @@ internal sealed class SftpView : Component<SftpViewProps>
                         TransferStatus.Failed => new SftpBanner(
                             InfoBarSeverity.Error,
                             Str.T("sftp.banner.transferFailed", "Transfer failed"),
-                            item.Name + " · " + (item.Error ?? Str.T("sftp.transfers.unknownError", "unknown error"))),
+                            detail + " · " + (item.Error ?? Str.T("sftp.transfers.unknownError", "unknown error"))),
                         TransferStatus.Cancelled => new SftpBanner(InfoBarSeverity.Informational,
-                            Str.T("sftp.transfers.cancelled", "Transfer cancelled"), item.Name),
+                            Str.T("sftp.transfers.cancelled", "Transfer cancelled"), detail),
                         _ => null,
                     });
                     // Uploads can also leave completed children after failure or

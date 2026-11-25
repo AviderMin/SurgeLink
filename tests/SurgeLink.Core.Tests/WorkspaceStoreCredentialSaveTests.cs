@@ -79,6 +79,42 @@ public sealed class WorkspaceStoreCredentialSaveTests
         Assert.Null(credentials.Get(original.Id));
     }
 
+    [Theory]
+    [InlineData("replace")]
+    [InlineData("forget")]
+    [InlineData("delete")]
+    [InlineData("new")]
+    public async Task CredentialWriteFailureRestoresPreviousProfile(string operation)
+    {
+        using var temp = new TempDirectory();
+        var profiles = new JsonSessionStore(temp.File("sessions.json"));
+        var secret = new StoredCredential { Password = "remembered" };
+        var credentials = new RejectingCredentialStore { FailWrites = true };
+        var original = SessionProfile.New("fake", "old.test", 22, "alice");
+        if (operation != "new")
+        {
+            profiles.Upsert(original);
+            credentials.Seed(original.Id, secret);
+        }
+        await using var manager = new SessionManager(new ProtocolCatalog(), credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, profiles, credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var edited = original with { Username = "bob" };
+        if (operation == "delete")
+            Assert.Throws<IOException>(() => workspace.DeleteProfile(original.Id));
+        else
+            Assert.Throws<IOException>(() => workspace.SaveProfile(edited,
+                operation == "forget" ? null : new StoredCredential { Password = "replacement" }));
+
+        if (operation == "new") { Assert.Empty(profiles.Load()); }
+        else
+        {
+            Assert.Equal("alice", Assert.Single(profiles.Load()).Username);
+            Assert.Equal("alice", Assert.Single(workspace.Snapshot.Profiles).Username);
+            Assert.Same(secret, credentials.Get(original.Id));
+        }
+    }
+
     /// <summary>Mimics <see cref="EncryptedCredentialStore"/>: Save of a DecryptionFailed value throws.</summary>
     private sealed class RejectingCredentialStore : ICredentialStore
     {
@@ -87,6 +123,7 @@ public sealed class WorkspaceStoreCredentialSaveTests
         public int SaveCalls { get; private set; }
 
         public int DeleteCalls { get; private set; }
+        public bool FailWrites { get; init; }
 
         public void Seed(string profileId, StoredCredential credential) => _items[profileId] = credential;
 
@@ -96,6 +133,7 @@ public sealed class WorkspaceStoreCredentialSaveTests
         public void Save(string profileId, StoredCredential credential)
         {
             SaveCalls++;
+            if (FailWrites) { throw new IOException("disk full"); }
             if (credential.DecryptionFailed)
             {
                 throw new IOException("A saved credential could not be decrypted. Re-enter it or explicitly turn off Remember before saving.");
@@ -107,6 +145,7 @@ public sealed class WorkspaceStoreCredentialSaveTests
         public void Delete(string profileId)
         {
             DeleteCalls++;
+            if (FailWrites) { throw new IOException("disk full"); }
             _items.Remove(profileId);
         }
     }

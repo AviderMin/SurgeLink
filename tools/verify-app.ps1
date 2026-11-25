@@ -1,7 +1,8 @@
 param(
   [switch]$NoBuild,
   [switch]$SkipTests,
-  [int]$WaitSeconds = 9
+  [int]$WaitSeconds = 9,
+  [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -93,8 +94,8 @@ function AssertEnabled($name, [bool]$expected, $label) {
 }
 function Start-App {
   $candidates = @(
-    (Join-Path $root "src\SurgeLink.App\bin\x64\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe"),
-    (Join-Path $root "src\SurgeLink.App\bin\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe")
+    (Join-Path $root "src\SurgeLink.App\bin\x64\$Configuration\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe"),
+    (Join-Path $root "src\SurgeLink.App\bin\$Configuration\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe")
   )
   $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
   if (-not $exe) { throw ("missing exe: " + ($candidates -join " or ")) }
@@ -114,7 +115,7 @@ if (-not $NoBuild) {
   Step "Build (solution, x64)"
   Push-Location $root
   try {
-    $out = & dotnet build SurgeLink.slnx -c Debug -p:Platform=x64 -v q -nologo 2>&1 | Out-String
+    $out = & dotnet build SurgeLink.slnx -c $Configuration -p:Platform=x64 -v q -nologo 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
       Fail "solution build" (($out -split "`n" | Where-Object { $_ -match "error" } | Select-Object -First 12) -join "`n")
       Write-Output $out
@@ -127,7 +128,7 @@ if (-not $NoBuild) {
 if (-not $SkipTests) {
   Step "Tests"
   foreach ($proj in @("tests/SurgeLink.Terminal.Tests", "tests/SurgeLink.Protocols.Ssh.Tests", "tests/SurgeLink.Core.Tests", "tests/SurgeLink.Protocols.Conformance")) {
-    $out = & dotnet test (Join-Path $root ($proj + "/" + (Split-Path $proj -Leaf) + ".csproj")) -v q -nologo 2>&1 | Out-String
+    $out = & dotnet test (Join-Path $root ($proj + "/" + (Split-Path $proj -Leaf) + ".csproj")) -c $Configuration -v q -nologo 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0) { Pass ("tests " + (Split-Path $proj -Leaf)) } else { Fail ("tests " + (Split-Path $proj -Leaf)) ($out | Select-Object -Last 8 | Out-String) }
   }
 }

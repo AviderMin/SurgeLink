@@ -7,7 +7,7 @@ public static class UploadConflicts
         string remotePath, bool isDirectory, CancellationToken cancellationToken)
     {
         var conflicts = new List<string>();
-        var listings = new Dictionary<string, IReadOnlyList<RemoteFileEntry>>(StringComparer.Ordinal);
+        var listings = new Dictionary<string, Dictionary<string, RemoteFileEntry>>(StringComparer.Ordinal);
         await VisitAsync(localPath, remotePath, isDirectory).ConfigureAwait(false);
         return conflicts;
 
@@ -20,11 +20,12 @@ public static class UploadConflicts
             var parent = separator <= 0 ? "/" : remote[..separator];
             if (!listings.TryGetValue(parent, out var siblings))
             {
-                siblings = await fileSystem.ListAsync(parent, cancellationToken).ConfigureAwait(false);
+                var entries = await fileSystem.ListAsync(parent, cancellationToken).ConfigureAwait(false);
+                siblings = new Dictionary<string, RemoteFileEntry>(StringComparer.Ordinal);
+                foreach (var entry in entries) { siblings.TryAdd(entry.Name, entry); }
                 listings.Add(parent, siblings);
             }
-            var existing = siblings.FirstOrDefault(entry => entry.Name == remote[(separator + 1)..]);
-            if (existing is null) { return; }
+            if (!siblings.TryGetValue(remote[(separator + 1)..], out var existing)) { return; }
             if (!directory || existing.Kind != RemoteEntryKind.Directory)
             {
                 conflicts.Add(remote);

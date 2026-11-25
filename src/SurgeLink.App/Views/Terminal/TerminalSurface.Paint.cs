@@ -36,7 +36,14 @@ internal sealed partial class TerminalSurface
         var selection = TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret);
         Dictionary<int, List<TerminalSearchSpan>>? searchRows = null;
 
-        lock (emulator.SyncRoot)
+        // A background search will retry the frame after releasing the emulator.
+        if (_searchRunning && !System.Threading.Monitor.TryEnter(emulator.SyncRoot))
+        {
+            _searchPaintDeferred = true;
+            return;
+        }
+        if (!_searchRunning) { System.Threading.Monitor.Enter(emulator.SyncRoot); }
+        try
         {
             visibleColumns = Math.Max(1, Math.Min(emulator.Columns, _requestedColumns > 0 ? _requestedColumns : emulator.Columns));
             visibleRows = Math.Min(emulator.Rows, _scratchRows.Length);
@@ -69,6 +76,7 @@ internal sealed partial class TerminalSurface
                 _scratchRows[row].Capture(emulator, row, visibleColumns, resolver, selection, spans);
             }
         }
+        finally { System.Threading.Monitor.Exit(emulator.SyncRoot); }
 
         repaintAll |= visibleColumns != _paintedColumns || visibleRows != _paintedRowCount;
         bool anyRowChanged = repaintAll;

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -13,9 +14,7 @@ namespace SurgeLink.App.Views.Terminal;
 
 /// <summary>
 /// Search half of <see cref="TerminalSurface"/>: the in-terminal find bar, the
-/// match model and the highlighting contract consumed by the painter. Search runs
-/// against the emulator under its normal lock so it sees the same cells as the
-/// renderer and never blocks output for longer than one snapshot.
+/// match model and the highlighting contract consumed by the painter.
 /// </summary>
 internal sealed partial class TerminalSurface
 {
@@ -36,6 +35,13 @@ internal sealed partial class TerminalSurface
     private IReadOnlyList<TerminalSearchMatch> _searchMatches = Array.Empty<TerminalSearchMatch>();
     private int _searchIndex = -1;
     private bool _searchTruncated;
+    private bool _searchRunning;
+    private bool _searchPaintDeferred;
+    private bool _searchPending;
+    private bool _searchResetPending;
+    private bool _searchRevealPending;
+    private int _searchNavigationPending;
+    private int _searchRevision;
 
     /// <summary>True while the find bar is visible.</summary>
     private bool IsSearchVisible => _searchBar.Visibility == Visibility.Visible;
@@ -83,8 +89,8 @@ internal sealed partial class TerminalSurface
         ToolTipService.SetToolTip(_searchCase, Str.T("terminal.find.case", "Match case"));
         AutomationProperties.SetName(_searchCase, Str.T("terminal.find.case", "Match case"));
         AutomationProperties.SetAutomationId(_searchCase, "TerminalSearchCase");
-        _searchCase.Checked += (_, _) => { _searchMatchCase = true; RefreshSearch(resetCurrent: false, ensureVisible: false); };
-        _searchCase.Unchecked += (_, _) => { _searchMatchCase = false; RefreshSearch(resetCurrent: false, ensureVisible: false); };
+        _searchCase.Checked += (_, _) => ChangeSearchCase(true);
+        _searchCase.Unchecked += (_, _) => ChangeSearchCase(false);
 
         ConfigureSearchButton(_searchPrevious, "\uE70E", Str.T("terminal.find.previous", "Previous match (Shift+Enter)"),
             "TerminalSearchPrevious", () => NavigateSearch(-1));
@@ -250,6 +256,7 @@ internal sealed partial class TerminalSurface
     {
         _searchRefreshTimer?.Stop();
         _searchInputTimer?.Stop();
+        DiscardPendingSearch();
         _searchBar.Visibility = Visibility.Collapsed;
         _searchMatches = Array.Empty<TerminalSearchMatch>();
         _searchIndex = -1;
@@ -277,6 +284,12 @@ internal sealed partial class TerminalSurface
     private void OnSearchTextChanged()
     {
         _searchQuery = _searchBox.Text ?? string.Empty;
+        DiscardPendingSearch();
+        _searchMatches = [];
+        _searchIndex = -1;
+        _searchTruncated = false;
+        UpdateSearchStatus();
+        InvalidatePaint(force: true);
         if (_searchInputTimer is { } timer)
         {
             timer.Stop();
@@ -297,16 +310,23 @@ internal sealed partial class TerminalSurface
         }
         else if (e.Key == VirtualKey.Enter || e.Key == VirtualKey.F3)
         {
-            // Flush a pending debounce so Enter always acts on the current query.
-            if (_searchInputTimer is { IsRunning: true } timer)
-            {
-                timer.Stop();
-                RefreshSearch(resetCurrent: true);
-            }
-
             NavigateSearch(shift ? -1 : 1);
             e.Handled = true;
         }
+    }
+
+    private void ChangeSearchCase(bool matchCase)
+    {
+        _searchMatchCase = matchCase;
+        DiscardPendingSearch();
+        RefreshSearch(resetCurrent: false, ensureVisible: false);
+    }
+
+    private void DiscardPendingSearch()
+    {
+        _searchRevision++;
+        _searchPending = _searchResetPending = _searchRevealPending = false;
+        _searchNavigationPending = 0;
     }
 
     private void RefreshSearch(bool resetCurrent, bool ensureVisible = true)
@@ -321,15 +341,57 @@ internal sealed partial class TerminalSurface
             return;
         }
 
-        var emulator = _bridge.Emulator;
-        IReadOnlyList<TerminalSearchMatch> found;
-        lock (emulator.SyncRoot)
-        {
-            // One extra result distinguishes "exactly at the cap" from "more than
-            // the cap" without rescanning the scrollback.
-            found = emulator.FindText(_searchQuery, _searchMatchCase, MaxSearchMatches + 1);
-        }
+        _searchPending = true;
+        _searchResetPending |= resetCurrent;
+        _searchRevealPending |= ensureVisible;
+        StartPendingSearch();
+    }
 
+    private void StartPendingSearch()
+    {
+        if (_searchRunning || !_searchPending || !_loaded) { return; }
+        var dispatcher = DispatcherQueue;
+        if (dispatcher is null) { return; }
+        _searchRunning = true;
+        _searchPending = false;
+        var revision = _searchRevision;
+        var reset = _searchResetPending;
+        var reveal = _searchRevealPending;
+        _searchResetPending = _searchRevealPending = false;
+        var query = _searchQuery;
+        var matchCase = _searchMatchCase;
+        var emulator = _bridge.Emulator;
+        _ = Task.Run(() =>
+        {
+            IReadOnlyList<TerminalSearchMatch> found = [];
+            try
+            {
+                // One extra result distinguishes an exact cap from a truncated result.
+                found = emulator.FindText(query, matchCase, MaxSearchMatches + 1);
+            }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Terminal search failed."); }
+            dispatcher.TryEnqueue(() =>
+            {
+                _searchRunning = false;
+                if (_searchPaintDeferred)
+                {
+                    _searchPaintDeferred = false;
+                    InvalidatePaint(force: true);
+                }
+                if (_loaded && IsSearchVisible && revision == _searchRevision)
+                {
+                    ApplySearchResults(found, reset, reveal);
+                    var delta = _searchNavigationPending;
+                    _searchNavigationPending = 0;
+                    if (delta != 0) { MoveSearchSelection(delta); }
+                }
+                StartPendingSearch();
+            });
+        });
+    }
+
+    private void ApplySearchResults(IReadOnlyList<TerminalSearchMatch> found, bool resetCurrent, bool ensureVisible)
+    {
         _searchTruncated = found.Count > MaxSearchMatches;
         _searchMatches = _searchTruncated
             ? found.Take(MaxSearchMatches).ToArray()
@@ -345,6 +407,7 @@ internal sealed partial class TerminalSurface
 
         if (resetCurrent)
         {
+            var emulator = _bridge.Emulator;
             int top;
             lock (emulator.SyncRoot)
             {
@@ -376,6 +439,21 @@ internal sealed partial class TerminalSurface
     }
 
     private void NavigateSearch(int delta)
+    {
+        if (_searchInputTimer is { IsRunning: true } timer)
+        {
+            timer.Stop();
+            RefreshSearch(resetCurrent: true);
+        }
+        if (_searchRunning || _searchPending)
+        {
+            _searchNavigationPending += delta;
+            return;
+        }
+        MoveSearchSelection(delta);
+    }
+
+    private void MoveSearchSelection(int delta)
     {
         if (_searchMatches.Count == 0)
         {

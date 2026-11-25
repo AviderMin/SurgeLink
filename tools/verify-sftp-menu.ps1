@@ -1,6 +1,7 @@
 param(
   [switch]$NoBuild,
-  [int]$WaitSeconds = 9
+  [int]$WaitSeconds = 9,
+  [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug'
 )
 # Regression check for the SFTP context menu: right clicks must work on a file
 # row, on the blank space below the last row and inside an empty folder. A
@@ -123,7 +124,7 @@ try {
 
 if (-not $NoBuild) {
   Step "Build (app, x64)"
-  $out = & dotnet build (Join-Path $root "src/SurgeLink.App/SurgeLink.App.csproj") -c Debug -p:Platform=x64 -v q -nologo 2>&1 | Out-String
+  $out = & dotnet build (Join-Path $root "src/SurgeLink.App/SurgeLink.App.csproj") -c $Configuration -p:Platform=x64 -v q -nologo 2>&1 | Out-String
   if ($LASTEXITCODE -eq 0) { Pass "app build" } else { Fail "app build" (($out -split "\r?\n" | Where-Object { $_ -match "error" } | Select-Object -First 5) -join " | "); exit 1 }
 }
 
@@ -131,7 +132,7 @@ Step "Launch (English UI)"
 New-Item -ItemType Directory -Force -Path $appData | Out-Null
 $settingsJson = '{"language":1}'
 [System.IO.File]::WriteAllText($settingsPath, $settingsJson)
-$exe = Join-Path $root "src\SurgeLink.App\bin\x64\Debug\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe"
+$exe = Join-Path $root "src\SurgeLink.App\bin\x64\$Configuration\net10.0-windows10.0.22621.0\win-x64\SurgeLink.exe"
 if (-not (Test-Path $exe)) { throw "missing exe: $exe" }
 Get-Process SurgeLink -ErrorAction SilentlyContinue | ForEach-Object { try { if ($_.Path -eq $exe) { Stop-Process -Id $_.Id -Force } } catch { } }
 Start-Sleep -Milliseconds 500

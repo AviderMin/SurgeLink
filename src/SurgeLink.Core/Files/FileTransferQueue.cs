@@ -284,7 +284,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
     }
 
     private async Task UploadAsync(TransferItem item, IRemoteFileSystem fileSystem, CancellationToken token,
-        string? localPath = null, string? remotePath = null, long offset = 0)
+        string? localPath = null, string? remotePath = null, long offset = 0, bool stagedFolder = false)
     {
         if (item.LocalPath is null)
         {
@@ -306,16 +306,19 @@ public sealed class FileTransferQueue : IAsyncDisposable
                     done += read;
                     SetDone(item, offset + done);
                 }
-            }, token).ConfigureAwait(false);
+            }, token, destinationKnownAbsent: stagedFolder).ConfigureAwait(false);
     }
 
     private async Task UploadDirectoryAsync(TransferItem item, IRemoteFileSystem fileSystem, CancellationToken token)
     {
         if (item.LocalPath is null) { throw new InvalidOperationException("Upload has no local source."); }
-        var directories = new List<(string Local, string Remote)>();
-        var files = new List<(string Local, string Remote, long Size)>();
+        var destination = item.RemotePath.TrimEnd('/');
+        if (!destination.StartsWith('/') || destination.Split('/').Any(segment => segment is "." or ".."))
+            throw new IOException("Folder upload requires an absolute, normalized destination.");
+        var directories = new List<string>();
+        var files = new List<(string Local, string Remote)>();
         var pending = new Stack<(string Local, string Remote, int Depth)>();
-        pending.Push((item.LocalPath, item.RemotePath, 0));
+        pending.Push((item.LocalPath, destination, 0));
         long total = 0;
         while (pending.TryPop(out var directory))
         {
@@ -328,7 +331,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
             {
                 throw new IOException("Folder uploads cannot include symbolic links or junctions.");
             }
-            directories.Add((directory.Local, directory.Remote));
+            directories.Add(directory.Remote);
             foreach (var entry in new DirectoryInfo(directory.Local).EnumerateFileSystemInfos())
             {
                 token.ThrowIfCancellationRequested();
@@ -340,36 +343,86 @@ public sealed class FileTransferQueue : IAsyncDisposable
                 if (entry is DirectoryInfo) { pending.Push((entry.FullName, remote, directory.Depth + 1)); }
                 else if (entry is FileInfo file)
                 {
-                    files.Add((file.FullName, remote, file.Length));
+                    files.Add((file.FullName, remote));
                     total += file.Length;
                 }
             }
         }
         item.TotalBytes = total;
         Publish(force: true);
-        var listedParents = new Dictionary<string, IReadOnlyList<RemoteFileEntry>>(StringComparer.Ordinal);
-        foreach (var directory in directories)
+        var existingRoot = await fileSystem.TryStatAsync(destination, token).ConfigureAwait(false);
+        if (existingRoot is { IsDirectory: false })
+            throw new IOException("Destination is not a directory: " + destination);
+        var stage = existingRoot is null
+            ? destination[..(destination.LastIndexOf('/') + 1)] + ".surge-" + Guid.NewGuid().ToString("N") + ".tmp"
+            : null;
+        var published = new List<string>();
+        var folderPublished = false;
+        try
         {
-            token.ThrowIfCancellationRequested();
-            var split = directory.Remote.LastIndexOf('/');
-            var parent = split <= 0 ? "/" : directory.Remote[..split];
-            var name = directory.Remote[(split + 1)..];
-            if (!listedParents.TryGetValue(parent, out var listing))
+            if (stage is not null)
             {
-                listing = await fileSystem.ListAsync(parent, token).ConfigureAwait(false);
-                listedParents[parent] = listing;
+                await fileSystem.CreateDirectoryAsync(stage, token).ConfigureAwait(false);
+                if (fileSystem.SupportsPermissions)
+                    await fileSystem.SetPermissionsAsync(stage, 0x1C0, token).ConfigureAwait(false);
             }
-            var existing = listing.FirstOrDefault(entry => string.Equals(entry.Name, name, StringComparison.Ordinal));
-            if (existing is null) { await fileSystem.CreateDirectoryAsync(directory.Remote, token).ConfigureAwait(false); }
-            else if (!existing.IsDirectory) { throw new IOException("Destination is not a directory: " + directory.Remote); }
+            var listedParents = new Dictionary<string, Dictionary<string, RemoteFileEntry>>(StringComparer.Ordinal);
+            foreach (var directory in directories)
+            {
+                token.ThrowIfCancellationRequested();
+                if (stage is not null)
+                {
+                    await fileSystem.CreateDirectoryAsync(StagePath(directory), token).ConfigureAwait(false);
+                    continue;
+                }
+                var split = directory.LastIndexOf('/');
+                var parent = split <= 0 ? "/" : directory[..split];
+                if (!listedParents.TryGetValue(parent, out var listing))
+                {
+                    var entries = await fileSystem.ListAsync(parent, token).ConfigureAwait(false);
+                    listedParents[parent] = listing = new(StringComparer.Ordinal);
+                    foreach (var entry in entries) { listing.TryAdd(entry.Name, entry); }
+                }
+                if (!listing.TryGetValue(directory[(split + 1)..], out var existing))
+                    await fileSystem.CreateDirectoryAsync(directory, token).ConfigureAwait(false);
+                else if (!existing.IsDirectory)
+                    throw new IOException("Destination is not a directory: " + directory);
+            }
+            foreach (var file in files)
+            {
+                token.ThrowIfCancellationRequested();
+                await UploadAsync(item, fileSystem, token, file.Local, StagePath(file.Remote), item.DoneBytes,
+                    stagedFolder: stage is not null).ConfigureAwait(false);
+                if (stage is null) { published.Add(file.Remote); }
+            }
+            if (stage is not null)
+            {
+                token.ThrowIfCancellationRequested();
+                await fileSystem.RenameAsync(StagePath(destination), destination, token).ConfigureAwait(false);
+                folderPublished = true;
+            }
         }
-        long offset = 0;
-        foreach (var file in files)
+        catch
         {
-            token.ThrowIfCancellationRequested();
-            await UploadAsync(item, fileSystem, token, file.Local, file.Remote, offset).ConfigureAwait(false);
-            offset = item.DoneBytes;
+            item.PublishedFiles = published;
+            throw;
         }
+        finally
+        {
+            if (stage is not null)
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                try
+                {
+                    if (!folderPublished)
+                        await fileSystem.DeleteAsync(StagePath(destination), recursive: true, cleanup.Token).ConfigureAwait(false);
+                    await fileSystem.DeleteAsync(stage, recursive: false, cleanup.Token).ConfigureAwait(false);
+                }
+                catch (Exception ex) { _logger?.LogWarning(ex, "Could not clean up upload staging folder {Path}", stage); }
+            }
+        }
+
+        string StagePath(string path) => stage is null ? path : stage + "/payload" + path[destination.Length..];
     }
 
     private async Task DownloadAsync(TransferItem item, IRemoteFileSystem fileSystem, CancellationToken token)

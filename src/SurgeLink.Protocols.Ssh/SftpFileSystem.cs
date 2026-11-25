@@ -491,17 +491,17 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (!entry.IsDirectory || entry.IsSymbolicLink)
+        {
+            await DeleteEntryIgnoringMissingAsync(entry, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (depth > MaximumDeleteDepth)
         {
             throw new ProtocolException(
                 $"Refusing to delete '{entry.FullName}': the directory tree is deeper than {MaximumDeleteDepth} levels.",
                 ProtocolFailureKind.Configuration);
-        }
-
-        if (!entry.IsDirectory || entry.IsSymbolicLink)
-        {
-            await DeleteEntryIgnoringMissingAsync(entry, cancellationToken).ConfigureAwait(false);
-            return;
         }
 
         var children = new List<ISftpFile>();

@@ -51,7 +51,7 @@ public sealed class WorkspaceFailureTests
     }
 
     [Fact]
-    public async Task CancellationDuringUnresponsiveHostProbeReleasesSessionAndBusyState()
+    public async Task UnresponsiveHostProbeDoesNotBlockOpeningOrClosing()
     {
         var plugin = new FakeProtocolPlugin();
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -67,12 +67,14 @@ public sealed class WorkspaceFailureTests
             new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
         var workspace = new WorkspaceStore(manager, new FailingStore(), credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
         using var cancellation = new CancellationTokenSource();
-        var opening = workspace.OpenAsync(SessionProfile.New("fake", "example.test", 22, "alice"), null, cancellation.Token);
+        var tab = await workspace.OpenAsync(SessionProfile.New("fake", "example.test", 22, "alice"), null, cancellation.Token)
+            .WaitAsync(TimeSpan.FromSeconds(5));
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.True(workspace.Snapshot.IsConnecting);
         cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => opening.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.False(workspace.Snapshot.IsConnecting);
+        Assert.Same(tab, Assert.Single(workspace.Snapshot.Tabs));
+        Assert.False(probe.Task.IsCompleted);
+        await workspace.CloseAsync(tab.Id).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Empty(workspace.Snapshot.Tabs);
         Assert.Empty(manager.Sessions);
         Assert.Equal(1, session.DisposeCount);
@@ -82,7 +84,7 @@ public sealed class WorkspaceFailureTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task FailedInitializationReleasesConnectionAndTerminal(bool terminalFails)
+    public async Task OnlyTerminalInitializationFailureClosesTheConnection(bool terminalFails)
     {
         var plugin = new FakeProtocolPlugin();
         var terminal = new FailingTerminal(terminalFails);
@@ -93,9 +95,20 @@ public sealed class WorkspaceFailureTests
         await using var manager = new SessionManager(catalog, credentials,
             new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
         var profile = SessionProfile.New("fake", "example.test", 22, "alice");
-        var workspace = new WorkspaceStore(manager, new FailingStore(profile), credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
-        await Assert.ThrowsAsync<IOException>(() => workspace.OpenAsync(
-            profile, null, CancellationToken.None));
+        var store = new FailingStore(profile);
+        var workspace = new WorkspaceStore(manager, store, credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        if (terminalFails)
+            await Assert.ThrowsAsync<IOException>(() => workspace.OpenAsync(profile, null, CancellationToken.None));
+        else
+        {
+            var tab = await workspace.OpenAsync(profile, null, CancellationToken.None);
+            await store.WriteAttempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Same(tab, Assert.Single(workspace.Snapshot.Tabs));
+            Assert.Single(manager.Sessions);
+            Assert.False(tab.Terminal!.IsClosed);
+            Assert.Equal(0, terminal.DisposeCount);
+            await workspace.CloseAsync(tab.Id);
+        }
         Assert.Empty(manager.Sessions);
         Assert.Empty(workspace.Snapshot.Tabs);
         Assert.False(workspace.Snapshot.IsConnecting);
@@ -173,8 +186,13 @@ public sealed class WorkspaceFailureTests
 
     private sealed class FailingStore(SessionProfile? profile = null) : ISessionStore
     {
+        public TaskCompletionSource WriteAttempted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public IReadOnlyList<SessionProfile> Load() => profile is null ? [] : [profile];
-        public void Upsert(SessionProfile profile) => throw new IOException("disk full");
+        public void Upsert(SessionProfile profile)
+        {
+            WriteAttempted.TrySetResult();
+            throw new IOException("disk full");
+        }
         public bool Delete(string profileId) => false;
     }
 

@@ -8,13 +8,21 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.13**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.14**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.14** 集中修复终端渲染与行重排回归、原地重连、本地/远端文件安全与 Agent 控制边界：
+
+- 终端与 Win2D 修复：`CanvasControl` 按加载生命周期创建并在卸载时移除与释放 `CanvasTextFormat` 资源；修正 Reflow 宽字符光标映射与备用屏保存光标同步；移除重复变暗效果并屏蔽光标下隐藏文本。
+- 原地重连闭环：主窗口重连接入 `WorkspaceStore.ReconnectAsync`，失败时保留原标签页与历史记录，并在替换连接时妥善处理传输与端口状态。
+- SSH／文件传输安全加固：默认移除弱旧 SSH 算法、仅在开启兼容选项时置底兜底；SFTP 暂存提交改为无 `REALPATH` 跟随重命名并完善异常映射；SCP 读取补齐 `test ! -L`；`DeferredUploadStream` 改为显式提交，避免源读取失败时上传截断文件；本地文件安全检查按 `ReparseTag` 放行 OneDrive 云占位符，拒绝符号链接与目录联接。
+- Agent 安全与稳定性：`files.*` 写操作纳入 `input_outcome_unknown` 锁定与速率限制，并在传输与提交前复查人工接管；本地上传／下载确认弹窗展示目标会话与覆盖状态；`terminal.exec` 使用加密随机哨兵并修正人工接管错误状态上报。
+- 工程校验增强：`check-version.py` 覆盖多处文档版本号校验，`check-repository.py` 增加 UTF-16 及 Markdown 敏感信息检查。
 
 **1.0.3.13** 升级终端渲染引擎与 SSH 高级连接能力：
 

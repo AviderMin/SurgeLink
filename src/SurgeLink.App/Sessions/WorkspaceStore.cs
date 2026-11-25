@@ -214,12 +214,10 @@ public sealed class WorkspaceStore
 
             var tab = new WorkspaceTab(Guid.NewGuid(), profile, session, terminal, new FileTransferQueue(_logger));
             openingTab = tab;
-            // Bind to the tab before the host probe. It is not published in the
-            // workspace yet, but disconnects during initialization still matter.
+            // Observe disconnects even before the tab is published.
             tab.StateChangedHandler = (_, args) => OnSessionStateChanged(tab, args);
             session.StateChanged += tab.StateChangedHandler;
             OnSessionStateChanged(tab, new SessionStateChangedEventArgs(tab.State, session.State));
-            await ProbeHostInfoAsync(tab, session, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             if (terminal is not null)
@@ -228,27 +226,10 @@ public sealed class WorkspaceStore
                 terminal.Activity += (_, _) => OnTerminalActivity(tab, terminal);
             }
 
-            // Merge only connection metadata into a still-existing, matching profile.
-            // Serialize this read/modify/write with profile edits and deletion.
-            lock (_gate)
-            {
-                var current = _profiles.Load().FirstOrDefault(p => p.Id == profile.Id);
-                if (current is not null && SameConnection(current, profile))
-                {
-                    var updated = current.MarkUsed(DateTimeOffset.UtcNow);
-                    if (!string.IsNullOrWhiteSpace(session.HostInfo.OperatingSystem))
-                    {
-                        updated = updated with { DetectedOperatingSystem = session.HostInfo.OperatingSystem };
-                    }
-                    _profiles.Upsert(updated);
-                }
-            }
-
             if (reconnecting is not null)
             {
                 if (session.State != ConnectionState.Connected)
                     throw new ProtocolException("The replacement session disconnected while reconnecting.");
-                ReloadProfiles();
                 cancellationToken.ThrowIfCancellationRequested();
                 await CloseAsync(reconnecting.Id, tab);
             }
@@ -256,7 +237,6 @@ public sealed class WorkspaceStore
             {
                 Update(s => s with
                 {
-                    Profiles = LoadProfilesFromDisk(),
                     Tabs = [.. s.Tabs, tab],
                     ActiveTabId = tab.Id,
                 });
@@ -264,6 +244,8 @@ public sealed class WorkspaceStore
 
             _logger.LogInformation("Session {Name} opened", profile.Name);
             if (terminal?.IsClosed == true) { OnTerminalClosed(tab, terminal); }
+            var connectedAt = DateTimeOffset.UtcNow;
+            _ = Task.Run(() => RefreshConnectionMetadataAsync(tab, connectedAt));
             return tab;
         }
         catch
@@ -522,42 +504,55 @@ public sealed class WorkspaceStore
     /// <summary>Adds or updates a saved profile.</summary>
     public void SaveProfile(SessionProfile profile, StoredCredential? credential = null)
     {
-        lock (_gate)
+        ChangeProfileAndCredential(profile.Id, previous =>
         {
-            var previous = _profiles.Load().FirstOrDefault(item => item.Id == profile.Id);
             if (previous is not null &&
                 (!string.Equals(previous.Host, profile.Host, StringComparison.OrdinalIgnoreCase)
                  || previous.Port != profile.Port || previous.ProtocolId != profile.ProtocolId))
             {
-                profile = profile with { DetectedOperatingSystem = null };
+                return profile with { DetectedOperatingSystem = null };
             }
-            _profiles.Upsert(profile);
-            if (credential is { DecryptionFailed: true })
-            {
-                // The stored secret could not be decrypted. Leave the existing
-                // ciphertext untouched instead of throwing or deleting the user's
-                // data: the profile edit still commits and the UI still refreshes.
-            }
-            else if (credential is not null)
-            {
-                _credentials.Save(profile.Id, credential);
-            }
-            else
-            {
-                _credentials.Delete(profile.Id);
-            }
-
-            Update(s => s with { Profiles = LoadProfilesFromDisk() });
-        }
+            return profile;
+        }, () =>
+        {
+            // Preserve ciphertext that the user could not decrypt.
+            if (credential is null) { _credentials.Delete(profile.Id); }
+            else if (!credential.DecryptionFailed) { _credentials.Save(profile.Id, credential); }
+        });
     }
 
     /// <summary>Deletes a saved profile and its stored secret.</summary>
-    public void DeleteProfile(string profileId)
+    public void DeleteProfile(string profileId) =>
+        ChangeProfileAndCredential(profileId, _ => null, () => _credentials.Delete(profileId));
+
+    private void ChangeProfileAndCredential(string profileId, Func<SessionProfile?, SessionProfile?> edit,
+        Action changeCredential)
     {
         lock (_gate)
         {
-            _profiles.Delete(profileId);
-            _credentials.Delete(profileId);
+            _profiles.WithExclusiveMutation(() =>
+            {
+                var previous = _profiles.Load().FirstOrDefault(item => item.Id == profileId);
+                var replacement = edit(previous);
+                var changed = replacement is not null;
+                if (replacement is null) { changed = _profiles.Delete(profileId); }
+                else { _profiles.Upsert(replacement); }
+                try { changeCredential(); }
+                catch (Exception error) when (changed)
+                {
+                    try
+                    {
+                        if (previous is null) { _profiles.Delete(profileId); }
+                        else { _profiles.Upsert(previous); }
+                    }
+                    catch (Exception rollbackError)
+                    {
+                        throw new IOException($"{error.Message} Profile rollback failed: {rollbackError.Message}",
+                            new AggregateException(error, rollbackError));
+                    }
+                    throw;
+                }
+            });
             Update(s => s with { Profiles = LoadProfilesFromDisk() });
         }
     }
@@ -567,18 +562,48 @@ public sealed class WorkspaceStore
 
     private IReadOnlyList<SessionProfile> LoadProfilesFromDisk() => _profiles.Load();
 
-    private async Task ProbeHostInfoAsync(WorkspaceTab tab, IProtocolSession session, CancellationToken cancellationToken)
+    private async Task RefreshConnectionMetadataAsync(WorkspaceTab tab, DateTimeOffset connectedAt)
     {
+        var profile = tab.Profile;
+        RemoteHostInfo? info = null;
         try
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(8));
-            var info = await session.LoadHostInfoAsync(cts.Token).WaitAsync(cts.Token);
-            _logger.LogInformation("Host info for {Name}: {Summary}", tab.Profile.Name, info.Summary);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            if (tab.Session.State == ConnectionState.Connected && !tab.IsClosing)
+            {
+                info = await tab.Session.LoadHostInfoAsync(cts.Token).WaitAsync(cts.Token).ConfigureAwait(false);
+                _logger.LogInformation("Host info for {Name}: {Summary}", profile.Name, info.Summary);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Host info probe failed for {Name}", tab.Profile.Name);
+            _logger.LogDebug(ex, "Host info probe failed for {Name}", profile.Name);
+        }
+
+        try
+        {
+            lock (_gate)
+            {
+                if (tab.IsClosing || !_snapshot.Tabs.Contains(tab)) { return; }
+                _profiles.WithExclusiveMutation(() =>
+                {
+                    var current = _profiles.Load().FirstOrDefault(p => p.Id == profile.Id);
+                    if (current is null || !SameConnection(current, profile) || current.LastUsedUtc > connectedAt)
+                        return;
+                    var updated = current.MarkUsed(connectedAt);
+                    if (!string.IsNullOrWhiteSpace(info?.OperatingSystem))
+                    {
+                        updated = updated with { DetectedOperatingSystem = info.OperatingSystem };
+                    }
+                    _profiles.Upsert(updated);
+                });
+                Update(s => s with { Profiles = LoadProfilesFromDisk() });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not save connection metadata for {Name}", profile.Name);
+            Update(s => s, force: true);
         }
     }
 

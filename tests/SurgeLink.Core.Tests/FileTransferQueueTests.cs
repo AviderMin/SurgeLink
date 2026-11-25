@@ -310,6 +310,11 @@ public sealed class FileTransferQueueTests
             Id = Guid.NewGuid().ToString("n"), Direction = TransferDirection.Upload,
             Name = "folder", LocalPath = root, RemotePath = "/remote/folder", IsDirectory = true,
         };
+        fileSystem.BeforeRename = () =>
+        {
+            if (fileSystem.Directories.ContainsKey(item.RemotePath))
+                throw new IOException("The destination appeared before the whole upload finished.");
+        };
         queue.Enqueue(item, fileSystem);
         Assert.True(await WaitAsync(() => !item.IsActive), "upload did not finish");
         Assert.Equal(TransferStatus.Completed, item.Status);
@@ -318,6 +323,65 @@ public sealed class FileTransferQueueTests
         Assert.Equal("hello", Encoding.UTF8.GetString(fileSystem.Files["/remote/folder/nested/second.txt"]));
         Assert.Equal(8, item.TotalBytes);
         Assert.Equal(8, item.DoneBytes);
+        Assert.DoesNotContain(fileSystem.Directories.Keys, path => path.Contains(".surge-", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task InterruptedFolderUploadKeepsOnlyAlreadyPublishedMergeFiles(bool merge, bool cancel)
+    {
+        using var temp = new TempDirectory();
+        var root = Directory.CreateDirectory(temp.File("folder")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(root, "one"), "one");
+        await File.WriteAllTextAsync(Path.Combine(root, "two"), "two");
+        var fileSystem = new FakeFileSystem();
+        const string destination = "/remote/folder";
+        if (merge)
+        {
+            fileSystem.Directories[destination] = true;
+            fileSystem.Listings["/remote"] =
+                [new() { Name = "folder", FullPath = destination, Kind = RemoteEntryKind.Directory }];
+        }
+        var item = new TransferItem
+        {
+            Id = "folder", Direction = TransferDirection.Upload, Name = "folder",
+            LocalPath = root, RemotePath = destination, IsDirectory = true,
+        };
+        var writes = 0;
+        string? firstFile = null;
+        fileSystem.BeforeCommit = path =>
+        {
+            if (++writes == 1) { firstFile = path; return; }
+            if (cancel)
+            {
+                item.Cancellation.Cancel();
+                item.Cancellation.Token.ThrowIfCancellationRequested();
+            }
+            throw new IOException("Connection interrupted.");
+        };
+
+        await using var queue = new FileTransferQueue();
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        queue.TransferFinished += _ => completed.TrySetResult();
+        queue.Enqueue(item, fileSystem);
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(cancel ? TransferStatus.Cancelled : TransferStatus.Failed, item.Status);
+        Assert.Equal(merge, fileSystem.Directories.ContainsKey(destination));
+        if (merge)
+        {
+            Assert.Equal(firstFile, Assert.Single(item.PublishedFiles));
+            Assert.Equal(firstFile, Assert.Single(fileSystem.Files.Keys));
+        }
+        else
+        {
+            Assert.Empty(item.PublishedFiles);
+            Assert.Empty(fileSystem.Directories);
+            Assert.Empty(fileSystem.Files);
+        }
     }
 
     [Fact]
@@ -573,6 +637,8 @@ public sealed class FileTransferQueueTests
         public Func<string, Task>? ReadGate { get; set; }
 
         public Func<string, RemoteFileEntry?>? StatOverride { get; init; }
+        public Action<string>? BeforeCommit { get; set; }
+        public Action? BeforeRename { get; set; }
 
         public ConcurrentQueue<string> ListCalls { get; } = new();
 
@@ -650,15 +716,34 @@ public sealed class FileTransferQueueTests
 
         public Task CommitWriteAsync(string temporaryPath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
         {
+            BeforeCommit?.Invoke(destinationPath);
             if (!overwrite && Files.ContainsKey(destinationPath)) { throw new IOException("Destination already exists"); }
             Files[destinationPath] = Files[temporaryPath];
             Files.TryRemove(temporaryPath, out _);
             return Task.CompletedTask;
         }
 
-        public Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken)
+        {
+            foreach (var file in Files.Keys.Where(key => Matches(key, path, recursive))) { Files.TryRemove(file, out _); }
+            foreach (var directory in Directories.Keys.Where(key => Matches(key, path, recursive))) { Directories.TryRemove(directory, out _); }
+            return Task.CompletedTask;
+        }
 
-        public Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)
+        {
+            BeforeRename?.Invoke();
+            if (Directories.ContainsKey(destinationPath) || Files.ContainsKey(destinationPath))
+                throw new IOException("Destination already exists");
+            foreach (var file in Files.Keys.Where(key => Matches(key, sourcePath, recursive: true)))
+                if (Files.TryRemove(file, out var bytes)) { Files[destinationPath + file[sourcePath.Length..]] = bytes; }
+            foreach (var directory in Directories.Keys.Where(key => Matches(key, sourcePath, recursive: true)))
+                if (Directories.TryRemove(directory, out _)) { Directories[destinationPath + directory[sourcePath.Length..]] = true; }
+            return Task.CompletedTask;
+        }
+
+        private static bool Matches(string candidate, string path, bool recursive) =>
+            candidate == path || (recursive && candidate.StartsWith(path + "/", StringComparison.Ordinal));
 
         public Task SetPermissionsAsync(string path, int unixMode, CancellationToken cancellationToken) => Task.CompletedTask;
     }

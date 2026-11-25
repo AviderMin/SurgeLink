@@ -79,6 +79,8 @@ internal static class SftpTransferRow
         var failed = item.Status == TransferStatus.Failed;
         var glyph = item.Direction == TransferDirection.Upload ? "\uE898" : "\uE896";
         var status = DescribeStatus(item);
+        var published = PublishedSummary(item);
+        if (published.Length > 0) { status += " · " + published; }
 
         Element cancelButton = item.IsActive
             ? Button(Icon(FontIcon("\uE711", fontSize: 12)), () => cancel(item.Id))
@@ -102,6 +104,11 @@ internal static class SftpTransferRow
                 .Margin(AppTheme.SpacingS, 0, AppTheme.SpacingS, 0),
             cancelButton.Grid(row: 0, column: 3));
     }
+
+    internal static string PublishedSummary(TransferItem item) => item.PublishedFiles.Count == 0
+        ? string.Empty
+        : Str.F("sftp.transfers.published", "{0} files already uploaded: {1}",
+            item.PublishedFiles.Count, string.Join(", ", item.PublishedFiles.Take(5)));
 
     private static string DescribeStatus(TransferItem item) => item.Status switch
     {

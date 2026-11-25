@@ -8,6 +8,7 @@ public sealed class JsonSessionStore : ISessionStore
     private readonly object _gate = new();
     private readonly string _path;
     private List<SessionProfile> _profiles;
+    private bool _mutating;
 
     /// <summary>Creates a store backed by <paramref name="path"/>.</summary>
     public JsonSessionStore(string path)
@@ -30,7 +31,7 @@ public sealed class JsonSessionStore : ISessionStore
     {
         lock (_gate)
         {
-            _profiles = ReadProfiles();
+            _profiles = ReadProfiles(tolerateErrors: !_mutating);
             return _profiles.ToList();
         }
     }
@@ -38,44 +39,57 @@ public sealed class JsonSessionStore : ISessionStore
     /// <inheritdoc />
     public void Upsert(SessionProfile profile)
     {
-        lock (_gate)
+        WithExclusiveMutation(() =>
         {
-            AtomicJsonFile.WithExclusiveAccess(_path, () =>
+            var next = ReadProfiles(tolerateErrors: false);
+            var index = next.FindIndex(p => string.Equals(p.Id, profile.Id, StringComparison.Ordinal));
+            if (index >= 0)
             {
-                var next = ReadProfiles(tolerateErrors: false);
-                var index = next.FindIndex(p => string.Equals(p.Id, profile.Id, StringComparison.Ordinal));
-                if (index >= 0)
-                {
-                    next[index] = profile;
-                }
-                else
-                {
-                    next.Add(profile);
-                }
+                next[index] = profile;
+            }
+            else
+            {
+                next.Add(profile);
+            }
 
-                AtomicJsonFile.Write(_path, next);
-                _profiles = next;
-                return true;
-            });
-        }
+            AtomicJsonFile.Write(_path, next);
+            _profiles = next;
+        });
     }
 
     /// <inheritdoc />
     public bool Delete(string profileId)
     {
+        var removed = false;
+        WithExclusiveMutation(() =>
+        {
+            var next = ReadProfiles(tolerateErrors: false);
+            removed = next.RemoveAll(p => string.Equals(p.Id, profileId, StringComparison.Ordinal)) > 0;
+            if (removed)
+            {
+                AtomicJsonFile.Write(_path, next);
+                _profiles = next;
+            }
+        });
+        return removed;
+    }
+
+    /// <inheritdoc />
+    public void WithExclusiveMutation(Action change)
+    {
         lock (_gate)
         {
-            return AtomicJsonFile.WithExclusiveAccess(_path, () =>
+            if (_mutating)
             {
-                var next = ReadProfiles(tolerateErrors: false);
-                var removed = next.RemoveAll(p => string.Equals(p.Id, profileId, StringComparison.Ordinal)) > 0;
-                if (removed)
-                {
-                    AtomicJsonFile.Write(_path, next);
-                    _profiles = next;
-                }
-
-                return removed;
+                change();
+                return;
+            }
+            AtomicJsonFile.WithExclusiveAccess(_path, () =>
+            {
+                _mutating = true;
+                try { change(); }
+                finally { _mutating = false; }
+                return true;
             });
         }
     }

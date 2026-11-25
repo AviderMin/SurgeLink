@@ -160,6 +160,7 @@ public static class ZhData
         ["sftp.transfers.running"] = "{0} · {1} / {2}",
         ["sftp.transfers.completed"] = "已完成 · {0}",
         ["sftp.transfers.cancelled"] = "已取消",
+        ["sftp.transfers.published"] = "已上传 {0} 个文件：{1}",
         ["sftp.transfers.failed"] = "失败 · {0}",
         ["sftp.transfers.unknownError"] = "未知错误",
         ["sftp.transfers.cancel"] = "取消传输",

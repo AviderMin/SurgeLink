@@ -56,6 +56,9 @@ public sealed class TransferItem
     /// <summary>Failure message when <see cref="Status"/> is <see cref="TransferStatus.Failed"/>.</summary>
     public string? Error { get; set; }
 
+    /// <summary>Files already published when a folder merge was interrupted.</summary>
+    public IReadOnlyList<string> PublishedFiles { get; internal set; } = [];
+
     /// <summary>Cancellation source owned by this transfer.</summary>
     public CancellationTokenSource Cancellation { get; } = new();
 

@@ -13,4 +13,7 @@ public interface ISessionStore
 
     /// <summary>Removes one profile by id.</summary>
     bool Delete(string profileId);
+
+    /// <summary>Serializes a synchronous read/change/rollback with other profile writers.</summary>
+    void WithExclusiveMutation(Action change) => change();
 }

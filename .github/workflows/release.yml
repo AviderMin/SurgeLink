@@ -7,6 +7,10 @@ on:
         description: 'Version/tag (e.g. 1.0.2.5); empty uses Directory.Build.props'
         required: false
         type: string
+      desktop_smoke:
+        description: 'Require desktop smoke tests on a dedicated interactive Windows runner'
+        type: boolean
+        default: false
   push:
     tags:
       - 'v*'
@@ -87,9 +91,39 @@ jobs:
     with:
       version: ${{ needs.prepare.outputs.version }}
 
+  desktop-smoke:
+    name: Desktop smoke tests
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.desktop_smoke }}
+    needs: prepare
+    # Use a dedicated runner started in a signed-in, unlocked desktop session.
+    runs-on: [self-hosted, Windows, X64, surgelink-desktop]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and exercise the Release desktop app
+        run: |
+          if (-not [Environment]::UserInteractive -or (Get-Process -Id $PID).SessionId -eq 0) {
+            throw 'Desktop smoke tests require a signed-in Windows session.'
+          }
+          if (Get-Process SurgeLink -ErrorAction SilentlyContinue) {
+            throw 'Close any existing SurgeLink instance on the dedicated runner.'
+          }
+          dotnet build src/SurgeLink.App -c Release -p:Platform=x64 --nologo -warnaserror
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed.' }
+          ./tools/verify-app.ps1 -NoBuild -SkipTests -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop smoke tests failed.' }
+          ./tools/verify-sftp-menu.ps1 -NoBuild -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'File menu smoke tests failed.' }
+
   publish:
     name: Publish
-    needs: [prepare, installer, appx]
+    needs: [prepare, installer, appx, desktop-smoke]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.installer.result == 'success' && needs.appx.result == 'success' && (!inputs.desktop_smoke || needs.desktop-smoke.result == 'success') }}
     runs-on: windows-2025
     timeout-minutes: 15
     permissions:

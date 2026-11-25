@@ -158,13 +158,15 @@ public sealed class WorkspaceRegressionTests
         var workspace = new WorkspaceStore(manager, store, credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
         var profile = SessionProfile.New("fake", "old.test", 22, "alice");
         workspace.SaveProfile(profile);
-        var opening = workspace.OpenAsync(profile, null, CancellationToken.None);
+        var tab = await workspace.OpenAsync(profile, null, CancellationToken.None);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var edited = profile with { Host = renameOnly ? profile.Host : "new.test", Name = "New name" };
         if (delete) { workspace.DeleteProfile(profile.Id); }
         else { workspace.SaveProfile(edited); }
+        var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        workspace.Changed += (_, _) => refreshed.TrySetResult();
         probe.SetResult(RemoteHostInfo.Empty);
-        var tab = await opening;
+        await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         if (delete) { Assert.Empty(store.Load()); }
         else
         {
