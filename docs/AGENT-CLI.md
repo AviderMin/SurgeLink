@@ -417,10 +417,10 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   The same rule applies to control expiry: approval is re-checked after it returns,
   and a permission-denied file operation is rejected before the confirmation dialog.
   Only explicit Stop revokes the grant.
-- New terminal inputs are rate-limited to 60 operations per minute per grant
-  (one-minute token bucket). A throttled request returns input_rate_limited before
-  the check token is consumed, so wait and retry the same check rather than running
-  Check Sessions again. Exact operation-ID replays do not consume a new permit.
+- New terminal inputs and file changes share a limit of 60 operations per minute
+  per grant (one-minute token bucket). A throttled terminal request returns
+  input_rate_limited before consuming its check token. Exact operation-ID replays
+  do not consume a new permit.
 - Operation IDs are 1–128 ASCII letters/digits/dots/dashes/underscores. Exact retries
   under the same shared handle replay the acknowledgement; different arguments
   with the same ID return operation_conflict. The gateway retains at most 1,024
@@ -432,10 +432,9 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   outputCursor, acceptedBytes, submitted and commandCompletionKnown=false.
   Its outputCursor is captured before the PTY write to avoid skipping a fast reply.
   This acknowledges a transport write, not remote completion or an exit code.
-- If a write may have partially happened, input_outcome_unknown is remembered
-  for that operation. Observe the terminal; do not automatically resend under a
-  new ID. Terminal mode, shell prompts and incremental output remain observations,
-  never a guaranteed command boundary.
+- If a PTY write may have been partial, input_outcome_unknown is remembered for
+  that operation. The grant blocks further terminal inputs and file changes until
+  the user renews control. Observe the terminal before continuing.
 - sessions.activate takes view=terminal/files/monitor and requires control access.
   Input also selects its target terminal automatically. Real terminal dimensions
   are managed by the visible UI, rather than an independent Agent resize.

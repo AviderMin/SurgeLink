@@ -247,7 +247,7 @@ public sealed partial class AgentGateway
                     break;
                 case "terminal.screen": result = ReadScreenResponse(grant, request); break;
                 case "terminal.output": result = ReadOutputResponse(grant, request); break;
-                case "terminal.wait": result = await WaitOutputAsync(grant, request, ct).ConfigureAwait(false); break;
+                case "terminal.wait": (result, _) = await WaitOutputAsync(grant, request, ct).ConfigureAwait(false); break;
                 case "monitor.snapshot":
                     result = AgentResponse.Ok(await (grant.Session.Monitor ?? throw new NotSupportedException()).SampleAsync(ct).ConfigureAwait(false));
                     break;
@@ -268,13 +268,19 @@ public sealed partial class AgentGateway
                         else
                             return localPathError!;
                     }
+                    if (IsFileMutation(request.Method) && !grant.InputRate.TryAcquire())
+                        return AgentResponse.Error("input_rate_limited", "Too many control operations in a short period. Wait before retrying.");
                     // Evaluate the host policy for every exact path and operation. The desktop
                     // explicitly allows reads within a shared connection; this is not a path sandbox
                     // or a per-read prompt. Local upload/download paths are included so the host
                     // can make the Agent's local file access visible to the user.
                     var approved = await _confirmFile(
                         new AgentFileAccess(grant.Info.Label, request.Method, request.Path,
-                            request.LocalPath, request.Destination), ct).ConfigureAwait(false);
+                            request.LocalPath, request.Destination)
+                        {
+                            Target = grant.Info.Target,
+                            Overwrite = request.Overwrite,
+                        }, ct).ConfigureAwait(false);
                     ThrowIfCancelled(grant, ct);
                     // The host may hold this request while a human decides. If the user takes
                     // the terminal in that window, the approval must not run behind their back:
@@ -352,10 +358,11 @@ public sealed partial class AgentGateway
         }
     }
 
-    private async Task<AgentResponse> WaitOutputAsync(Grant grant, AgentRequest request, CancellationToken ct, string? expectText = null)
+    private async Task<(AgentResponse Response, int? ExitCode)> WaitOutputAsync(
+        Grant grant, AgentRequest request, CancellationToken ct, string? expectText = null)
     {
         if (grant.Terminal is null) throw new NotSupportedException();
-        if (request.Cursor is < 0) return AgentResponse.Error("invalid_cursor", "The output cursor must be non-negative.");
+        if (request.Cursor is < 0) return (AgentResponse.Error("invalid_cursor", "The output cursor must be non-negative."), null);
         var idleMilliseconds = Math.Clamp(request.IdleMilliseconds ?? 500, 50, 5000);
         var timeoutMilliseconds = Math.Clamp(request.TimeoutMilliseconds ?? 30000, 100, 55000);
         var fromCursor = request.Cursor ?? grant.Terminal.ReadScreen().OutputCursor;
@@ -367,16 +374,17 @@ public sealed partial class AgentGateway
         var gap = false;
         var hasMore = false;
         var capped = false;
+        int? exitCode = null;
         var total = Stopwatch.StartNew();
         var sinceOutput = Stopwatch.StartNew();
 
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            if (IsHumanOperating(grant)) return HumanOperatingError();
+            if (IsHumanOperating(grant)) return (HumanOperatingError(), null);
             TerminalOutputPage page;
             try { page = grant.Terminal.ReadOutput(cursor); }
-            catch (ArgumentOutOfRangeException) { return AgentResponse.Error("invalid_cursor", "The cursor is ahead of this terminal's output."); }
+            catch (ArgumentOutOfRangeException) { return (AgentResponse.Error("invalid_cursor", "The cursor is ahead of this terminal's output."), null); }
             oldestCursor = page.OldestCursor;
             latestCursor = page.LatestCursor;
             gap |= page.Gap;
@@ -390,11 +398,19 @@ public sealed partial class AgentGateway
                     break;
                 }
                 if (text.Length == 0) pageStart = page.Cursor - page.Text.Length;
+                // An Int32 status can use 11 characters, followed by CRLF.
+                var scanStart = Math.Max(0, text.Length - (expectText?.Length ?? 0) - 13);
                 text.Append(page.Text);
                 cursor = page.Cursor;
                 hasMore = page.HasMore;
                 sinceOutput.Restart();
-                if (expectText is not null && ContainsMarkerValue(text.ToString(), expectText)) break;
+                if (expectText is not null
+                    && FindExecMarker(text.ToString(scanStart, text.Length - scanStart), expectText) is { } completion)
+                {
+                    exitCode = completion.ExitCode;
+                    text.Remove(scanStart + completion.Start, completion.Length);
+                    break;
+                }
                 if (text.Length > 512 * 1024) { capped = true; break; }
                 if (page.HasMore) continue;
             }
@@ -407,11 +423,10 @@ public sealed partial class AgentGateway
 
         // For an exec wait the marker is the only completion signal, so reaching the
         // deadline without it is a timeout no matter how recently output arrived.
-        var timedOut = total.ElapsedMilliseconds >= timeoutMilliseconds
+        var timedOut = exitCode is null && total.ElapsedMilliseconds >= timeoutMilliseconds
             && (expectText is not null || text.Length == 0 || sinceOutput.ElapsedMilliseconds < idleMilliseconds);
         var rawText = text.ToString();
-        // A command result needs its sentinel and final output, so exec keeps the
-        // tail. Incremental waits keep the head and report the cursor just after
+        // A command result keeps the final output. Incremental waits keep the head and report the cursor just after
         // the returned characters, which makes repeated pages lossless. Trimming
         // accepts ANSI-aware limits so a page never ends inside an escape.
         var trimmed = expectText is not null
@@ -426,7 +441,7 @@ public sealed partial class AgentGateway
         var nextCursor = expectText is not null ? cursor : pageStart + trimmed.KeptCharacters;
         var screen = grant.Terminal.ReadScreen();
         var screenTail = AgentText.TrimTail(screen.Text, request.StripAnsi, 4096, 4);
-        return AgentResponse.Ok(new
+        return (AgentResponse.Ok(new
         {
             text = visible,
             cursor = nextCursor,
@@ -444,10 +459,10 @@ public sealed partial class AgentGateway
                 Text = screenTail.Text,
                 Truncated = screen.Truncated || screenTail.Truncated,
             },
-        });
+        }), exitCode);
     }
 
-    private static bool ContainsMarkerValue(string text, string marker)
+    private static (int Start, int Length, int ExitCode)? FindExecMarker(string text, string marker)
     {
         var index = 0;
         while ((index = text.IndexOf(marker, index, StringComparison.Ordinal)) >= 0)
@@ -459,11 +474,15 @@ public sealed partial class AgentGateway
             if (cursor > digitsStart)
             {
                 if (cursor < text.Length && text[cursor] == '\r') cursor++;
-                if (cursor < text.Length && text[cursor] == '\n') return true;
+                if (cursor < text.Length && text[cursor] == '\n'
+                    && int.TryParse(text.AsSpan(index + marker.Length, cursor - index - marker.Length).TrimEnd(),
+                        System.Globalization.NumberStyles.AllowLeadingSign,
+                        System.Globalization.CultureInfo.InvariantCulture, out var code))
+                    return (index, cursor + 1 - index, code);
             }
             index += marker.Length;
         }
-        return false;
+        return null;
     }
 
     private async Task<AgentResponse> ExecuteFileAsync(Grant grant, AgentRequest request, CancellationToken ct)
@@ -502,7 +521,8 @@ public sealed partial class AgentGateway
                 try
                 {
                     await RemoteFileWrite.WriteAsync(files, request.Path, bytes.Length, null, request.Overwrite,
-                        async (stream, token) => await stream.WriteAsync(bytes, token).ConfigureAwait(false), ct).ConfigureAwait(false);
+                        async (stream, token) => await stream.WriteAsync(bytes, token).ConfigureAwait(false), ct,
+                        validateDestination: token => CheckTransferControlAsync(grant, token)).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -522,9 +542,9 @@ public sealed partial class AgentGateway
                 await files.CreateDirectoryAsync(request.Path!, ct).ConfigureAwait(false);
                 return AgentResponse.Ok(new { path = request.Path, created = true });
             case "files.upload":
-                return await UploadFileAsync(files, request, ct).ConfigureAwait(false);
+                return await UploadFileAsync(grant, files, request, ct).ConfigureAwait(false);
             case "files.download":
-                return await DownloadFileAsync(files, request, ct).ConfigureAwait(false);
+                return await DownloadFileAsync(grant, files, request, ct).ConfigureAwait(false);
             default:
                 throw new NotSupportedException();
         }
@@ -594,7 +614,7 @@ public sealed partial class AgentGateway
         return false;
     }
 
-    private static async Task<AgentResponse> UploadFileAsync(IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
+    private async Task<AgentResponse> UploadFileAsync(Grant grant, IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
     {
         if (!TryNormalizeLocalPath(request.LocalPath, upload: true, out var localPath, out var pathError))
             return pathError!;
@@ -620,7 +640,7 @@ public sealed partial class AgentGateway
                 {
                     source.Position = 0;
                     await source.CopyToAsync(stream, 81920, token).ConfigureAwait(false);
-                }, ct).ConfigureAwait(false);
+                }, ct, validateDestination: token => CheckTransferControlAsync(grant, token)).ConfigureAwait(false);
             return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = length, overwrite = request.Overwrite });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -629,7 +649,7 @@ public sealed partial class AgentGateway
         }
     }
 
-    private static async Task<AgentResponse> DownloadFileAsync(IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
+    private async Task<AgentResponse> DownloadFileAsync(Grant grant, IRemoteFileSystem files, AgentRequest request, CancellationToken ct)
     {
         if (!TryNormalizeLocalPath(request.LocalPath, upload: false, out var localPath, out var pathError))
             return pathError!;
@@ -680,13 +700,14 @@ public sealed partial class AgentGateway
                         int read;
                         while ((read = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
                         {
+                            await CheckTransferControlAsync(grant, ct).ConfigureAwait(false);
                             await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
                             written += read;
                         }
                         await target.FlushAsync(ct).ConfigureAwait(false);
                     }
                 }
-                ct.ThrowIfCancellationRequested();
+                await CheckTransferControlAsync(grant, ct).ConfigureAwait(false);
                 try
                 {
                     // Same directory, so publishing is atomic on the local volume. A
@@ -773,7 +794,17 @@ public sealed partial class AgentGateway
         or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download";
 
     private static bool IsControlOperation(string method) => method is "terminal.text" or "terminal.key" or "terminal.exec"
-        or "sessions.activate" or "files.write" or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download";
+        or "sessions.activate" || IsFileMutation(method);
+
+    private static bool IsFileMutation(string method) => method is
+        "files.write" or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download";
+
+    private Task CheckTransferControlAsync(Grant grant, CancellationToken cancellationToken)
+    {
+        ThrowIfCancelled(grant, cancellationToken);
+        if (IsHumanOperating(grant)) throw new AgentOperationPausedException();
+        return Task.CompletedTask;
+    }
 
     private bool ExpireControlIfIdle(Grant grant)
     {
@@ -803,8 +834,14 @@ public sealed partial class AgentGateway
     {
         if ((method is "files.list" or "files.read" or "files.stat") && !grant.Info.FileRead)
             return AgentResponse.Error("file_access_required", "Allow file access in the desktop Agent panel first.");
-        if (!grant.Info.TerminalControl && method is ("files.write" or "files.delete" or "files.rename" or "files.mkdir" or "files.upload" or "files.download"))
-            return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel before changing remote files.");
+        if (IsFileMutation(method))
+        {
+            if (!grant.Info.TerminalControl)
+                return AgentResponse.Error("control_required", "Allow terminal control in the desktop Agent panel before changing files.");
+            if (grant.InputOutcomeUnknown)
+                return AgentResponse.Error("input_outcome_unknown",
+                    "A previous PTY write may be partial. Inspect the terminal and renew terminal control before changing files.");
+        }
         return null;
     }
 

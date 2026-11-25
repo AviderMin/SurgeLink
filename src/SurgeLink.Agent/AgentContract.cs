@@ -40,7 +40,11 @@ public sealed record AgentMcpPeer(string Id, string Name, DateTimeOffset LastSee
 /// explicit user decision before an Agent touches files outside the session.
 /// </summary>
 public sealed record AgentFileAccess(string Label, string Operation, string Path,
-    string? LocalPath = null, string? Destination = null);
+    string? LocalPath = null, string? Destination = null)
+{
+    public AgentSessionTarget? Target { get; init; }
+    public bool Overwrite { get; init; }
+}
 
 public sealed record AgentDesktopProcess(int ProcessId, string? ExecutablePath, DateTimeOffset? StartedUtc = null);
 

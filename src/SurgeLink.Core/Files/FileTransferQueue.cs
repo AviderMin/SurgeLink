@@ -291,7 +291,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
             throw new InvalidOperationException("Upload has no local source.");
         }
 
-        await using var source = new FileStream(localPath ?? item.LocalPath, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, useAsync: true);
+        await using var source = LocalDownloadPath.OpenExistingFileForRead(localPath ?? item.LocalPath);
 
         var destination = remotePath ?? item.RemotePath;
         await RemoteFileWrite.WriteAsync(fileSystem, destination, source.Length,

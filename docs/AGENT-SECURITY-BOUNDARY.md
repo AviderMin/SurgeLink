@@ -67,9 +67,9 @@
 | 零默认授权 | 连接可发现但空授权列表不暴露任何数据；presence 仅咨询 | AgentWorkspaceService.cs:47-48、AgentContract.cs:28 |
 | 授权粒度 | 按会话（连接）隔离，一连接一 grant，进程内存活 | AgentGateway.cs:10、29-49 |
 | 授权时效 | 撤销/重连/桌面重启即失效；撤销排水（drain）+ 双重取消检查 | AgentGateway.cs:64-98、207-213 |
-| 写操作前置 | 每次输入需 check_sessions：2 分钟单次 token + 屏幕哈希 + inputRevision | AgentGateway.Input.cs:38-42 |
+| 写操作前置 | PTY 输入需 check_sessions 的单次 token、屏幕哈希与 inputRevision。文件变更需 Control 授权，两类操作共用速率上限 | AgentGateway.Input.cs、AgentGateway.cs |
 | 重放与幂等 | operationId → SHA256 参数指纹映射，1024 条上限，同参重试只回放不重写 | AgentGateway.Input.cs:16-28 |
-| 失败安全 | input_outcome_unknown 锁死后续输入，需人工续期；不确定写不自动重发 | AgentGateway.Input.cs:29-30、65 |
+| 失败安全 | input_outcome_unknown 阻止后续 PTY 输入和文件变更，需人工续期；不确定写不自动重发 | AgentGateway.Input.cs、AgentGateway.cs |
 | 人优先 | 人工键入立即暂停 Agent 操作并返回 user_operating，显式 Stop 才撤销；授权过程中的输入竞态也转为暂停 | AgentWorkspaceService.cs:89-133 |
 | 出口有界 | 1 MiB 帧、屏幕 32K 字符、文件 128 KiB、目录 500 条、输入 16384 字符 | AgentWire.cs、AgentGateway.cs:164-197、AgentGateway.Input.cs:33 |
 | 超时有界 | 读 2s / 执行 60s / 序列化后回复 10s；连接上限 64 | AgentPipeServer.cs:9、97-112 |

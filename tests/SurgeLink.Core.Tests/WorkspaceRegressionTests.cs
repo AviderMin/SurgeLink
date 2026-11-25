@@ -219,6 +219,11 @@ public sealed class WorkspaceRegressionTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => workspace.ReconnectAsync(tab.Id,
             cancellationToken: new CancellationToken(true)));
         Assert.Same(tab, Assert.Single(workspace.Snapshot.Tabs));
+
+        plugin.Failure = new ProtocolException("Connection failed.");
+        await Assert.ThrowsAsync<ProtocolException>(() => workspace.ReconnectAsync(tab.Id));
+        Assert.Same(tab, Assert.Single(workspace.Snapshot.Tabs));
+        Assert.False(tab.IsClosing);
         await workspace.CloseAsync(tab.Id);
     }
 

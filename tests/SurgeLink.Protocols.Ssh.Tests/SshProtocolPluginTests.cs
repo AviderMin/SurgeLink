@@ -3,12 +3,37 @@ using Microsoft.Extensions.Logging.Abstractions;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
 using SurgeLink.Protocols.Ssh;
+using SurgeLink.Protocols.Ssh.Internal;
 using Xunit;
 
 namespace SurgeLink.Protocols.Ssh.Tests;
 
 public sealed class SshProtocolPluginTests
 {
+    [Fact]
+    public void LegacyCompatibilityKeepsModernAlgorithmsAndExplicitKeyExchangeAhead()
+    {
+        const string preferred = "curve25519-sha256";
+        var request = new ConnectionRequest
+        {
+            Host = "example.test",
+            Username = "alice",
+            Password = "test-only",
+            Options = new Dictionary<string, string>
+            {
+                [SshProtocolOptions.UseLegacyAlgorithmsKey] = "true",
+                [SshProtocolOptions.PreferredKeyExchangeKey] = preferred,
+            },
+        };
+        var factory = new SshConnectionFactory(request, new SshProtocolOptions(request), CreateContext(), NullLogger.Instance);
+        var info = factory.CreateConnectionInfo(CancellationToken.None);
+
+        Assert.Equal(preferred, info.KeyExchangeAlgorithms.First().Key);
+        Assert.Equal("ssh-rsa", info.HostKeyAlgorithms.Last().Key);
+        Assert.Equal("hmac-sha1-etm@openssh.com", info.HmacAlgorithms.Last().Key);
+        Assert.Equal("3des-cbc", info.Encryptions.Last().Key);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

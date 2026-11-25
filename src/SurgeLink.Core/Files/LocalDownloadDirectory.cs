@@ -10,6 +10,8 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
     private const uint OpenReparsePoint = 0x00200000;
     private const uint Overlapped = 0x40000000;
     private const uint GenericRead = 0x80000000;
+    private const uint CloudReparseTag = 0x9000001A;
+    private const uint CloudReparseTagMask = 0x0000F000;
     private readonly List<SafeFileHandle> _directories = [];
 
     internal static IDisposable Open(string path, bool create = true)
@@ -30,15 +32,16 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
                         throw new IOException("Download directories must not contain symbolic links.");
                     continue;
                 }
-                var nativePath = directory.StartsWith(@"\\?\", StringComparison.Ordinal) ? directory
-                    : directory.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + directory[2..] : @"\\?\" + directory;
+                var nativePath = ToExtendedPath(directory);
                 // Deny write/delete sharing: an ancestor cannot be renamed or
                 // converted to a junction while it owns a download destination.
                 var handle = CreateFile(nativePath, 0x80, FileShare.Read, 0, FileMode.Open, 0x02200000, 0);
                 lease._directories.Add(handle);
                 if (handle.IsInvalid || !GetFileInformationByHandleEx(handle, 9, out var info, 8))
                     throw new IOException("Cannot secure the download directory.", new Win32Exception(Marshal.GetLastPInvokeError()));
-                if (((FileAttributes)info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+                var attributes = (FileAttributes)info.Attributes;
+                if ((attributes & FileAttributes.Directory) == 0
+                    || (attributes & FileAttributes.ReparsePoint) != 0 && !IsCloudReparseTag(info.ReparseTag))
                     throw new IOException("Download directories must not contain junctions or symbolic links.");
             }
             return lease;
@@ -51,24 +54,40 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         const int bufferSize = 81920;
         var fullPath = Path.GetFullPath(path);
-        if (!OperatingSystem.IsWindows())
-            return new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.Asynchronous);
-
         var parent = Path.GetDirectoryName(fullPath)
             ?? throw new IOException("The local upload path must name a file inside a directory.");
         using var parents = Open(parent, create: false);
+        if (!OperatingSystem.IsWindows())
+        {
+            if ((File.GetAttributes(fullPath) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                throw new IOException("The local upload source must be a regular file.");
+            return new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.Asynchronous);
+        }
+
         var nativePath = ToExtendedPath(fullPath);
         var handle = CreateFile(nativePath, GenericRead, FileShare.Read, 0, FileMode.Open, OpenReparsePoint | Overlapped, 0);
         try
         {
             if (handle.IsInvalid || !GetFileInformationByHandleEx(handle, 9, out var info, 8))
                 throw new IOException("Cannot open the local upload file.", new Win32Exception(Marshal.GetLastPInvokeError()));
-            if (((FileAttributes)info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+            var attributes = (FileAttributes)info.Attributes;
+            if ((attributes & FileAttributes.Directory) != 0)
                 throw new IOException("The local upload source must be a regular file.");
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                if (!IsCloudReparseTag(info.ReparseTag))
+                    throw new IOException("The local upload source must be a regular file.");
+
+                // Keep the inspected placeholder pinned while opening it for hydration.
+                using (handle)
+                    return new FileStream(nativePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.Asynchronous);
+            }
             return new FileStream(handle, FileAccess.Read, bufferSize, isAsync: true);
         }
         catch { handle.Dispose(); throw; }
     }
+
+    private static bool IsCloudReparseTag(uint tag) => (tag & ~CloudReparseTagMask) == CloudReparseTag;
 
     private static string ToExtendedPath(string path) =>
         path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path

@@ -269,18 +269,21 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
         var client = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var source = ResolvePath(client, temporaryPath);
         var destination = ResolvePath(client, destinationPath);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (overwrite)
+        try
         {
-            RemoteFileAccess.RequireRegularFile(MapEntry(await GetEntryNoFollowAsync(client, destination, cancellationToken).ConfigureAwait(false)));
-            // OpenSSH posix-rename is an atomic replacement. If unsupported, fail
-            // without deleting the old target; never emulate with delete + rename.
-            await Task.Run(() => client.RenameFile(source, destination, isPosix: true), cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (overwrite)
+            {
+                RemoteFileAccess.RequireRegularFile(
+                    await ResolveEntryNoFollowAsync(client, destination, cancellationToken).ConfigureAwait(false));
+            }
+            // Send the literal paths. REALPATH can turn a destination symlink
+            // into its referent before the server has a chance to replace it.
+            await SftpNoFollow.RenameAsync(client, source, destination, overwrite, cancellationToken).ConfigureAwait(false);
         }
-        else
+        catch (Exception exception) when (exception is not (OperationCanceledException or ProtocolException))
         {
-            // Standard SFTP rename fails when the destination already exists.
-            await client.RenameFileAsync(source, destination, cancellationToken).ConfigureAwait(false);
+            throw SshErrorMapper.MapFileSystem(exception, destination, "commit");
         }
     }
 

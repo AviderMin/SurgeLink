@@ -8,8 +8,8 @@ public sealed class ScpReadSafetyTests
     [Fact]
     public void ReadCommandChecksTheTypeInTheSameCommand()
     {
-        Assert.Equal("test -f '/tmp/data' && cat -- '/tmp/data'", ScpFileSystem.BuildReadCommand("/tmp/data"));
-        Assert.Equal("test -f 'a'\\''b' && cat -- 'a'\\''b'", ScpFileSystem.BuildReadCommand("a'b"));
+        Assert.Equal("test -f '/tmp/data' && test ! -L '/tmp/data' && cat -- '/tmp/data'", ScpFileSystem.BuildReadCommand("/tmp/data"));
+        Assert.Equal("test -f 'a'\\''b' && test ! -L 'a'\\''b' && cat -- 'a'\\''b'", ScpFileSystem.BuildReadCommand("a'b"));
     }
 
     [Fact]

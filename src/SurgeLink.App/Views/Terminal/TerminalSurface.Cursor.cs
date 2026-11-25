@@ -73,7 +73,7 @@ internal sealed partial class TerminalSurface
             default:
                 _cursorRect.Width = cursorWidth;
                 _cursorRect.Height = metrics.CellHeight;
-                _cursorGlyph.Text = cell.Text ?? " ";
+                _cursorGlyph.Text = (cell.Attributes & CellAttributes.Hidden) != 0 ? " " : cell.Text ?? " ";
                 _cursorGlyph.Foreground = resolver.Brush(resolver.DefaultBackground);
                 Canvas.SetLeft(_cursorGlyph, left);
                 Canvas.SetTop(_cursorGlyph, top);

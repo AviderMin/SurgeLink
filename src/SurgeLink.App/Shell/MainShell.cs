@@ -162,10 +162,12 @@ internal sealed class MainShell : Component
 
                 if (reconnectTabId is Guid tabId)
                 {
-                    cancellation.Token.ThrowIfCancellationRequested();
-                    await workspace.CloseAsync(tabId);
+                    await Task.Run(() => workspace.ReconnectAsync(tabId, options, cancellation.Token));
                 }
-                await Task.Run(() => workspace.OpenAsync(profile, options, cancellation.Token));
+                else
+                {
+                    await Task.Run(() => workspace.OpenAsync(profile, options, cancellation.Token));
+                }
             }
             catch (ProtocolException) when (cancellation.IsCancellationRequested) { }
             catch (ProtocolException ex)

@@ -1,5 +1,7 @@
 using System.Reflection;
+using Renci.SshNet;
 using Renci.SshNet.Sftp;
+using SurgeLink.Protocols.Ssh.Internal;
 using Xunit;
 
 namespace SurgeLink.Protocols.Ssh.Tests;
@@ -45,6 +47,23 @@ public sealed class SftpFileNoFollowContractTests
         Assert.Equal("/canonical/moved", file.FullName);
     }
 
+    [Theory]
+    [InlineData(false, "RequestRenameAsync")]
+    [InlineData(true, "RequestPosixRename")]
+    public async Task StagedRenameSendsSourceAndDestinationWithoutCanonicalization(bool overwrite, string method)
+    {
+        var session = CreateSession();
+        using var client = new SftpClient("example.test", "user", "password");
+        typeof(SftpClient).GetField("_sftpSession", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(client, session);
+
+        await SftpNoFollow.RenameAsync(client, "/staging/file", "/target/file", overwrite, CancellationToken.None);
+
+        var call = Assert.Single(session.Calls);
+        Assert.Equal(method, call.Method);
+        Assert.Equal("/staging/file", call.Arguments[0]);
+        Assert.Equal("/target/file", call.Arguments[1]);
+    }
+
     private static RecordingSftpSessionProxy CreateSession()
     {
         var interfaceType = typeof(SftpFile).Assembly.GetType(
@@ -83,8 +102,9 @@ public class RecordingSftpSessionProxy : DispatchProxy
         Calls.Add((targetMethod.Name, args ?? []));
         return targetMethod.Name switch
         {
-            "RequestRemoveAsync" or "RequestRmDirAsync" => Task.CompletedTask,
-            "RequestRename" => null,
+            "RequestRemoveAsync" or "RequestRmDirAsync" or "RequestRenameAsync" => Task.CompletedTask,
+            "RequestRename" or "RequestPosixRename" or "Dispose" => null,
+            "get_IsOpen" => false,
             "GetCanonicalPath" => Canonicalize((string)args![0]!),
             _ => throw new NotSupportedException(targetMethod.Name),
         };

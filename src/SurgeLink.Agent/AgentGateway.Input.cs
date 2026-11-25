@@ -33,7 +33,10 @@ public sealed partial class AgentGateway
         if (request.Method == "terminal.key" && (string.IsNullOrWhiteSpace(request.Key) || request.Key.Length > 64))
             return AgentResponse.Error("invalid_arguments", "Supply a terminal key such as Enter, Tab, Ctrl+C or Up.");
         var isText = request.Method is "terminal.text" or "terminal.exec";
-        var sendText = isText ? request.Method == "terminal.exec" ? BuildExecText(request.Text!, operationId) : request.Text : null;
+        var marker = request.Method == "terminal.exec"
+            ? "__SURGELINK_EXIT_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) + "__"
+            : null;
+        var sendText = marker is null ? request.Text : BuildExecText(request.Text!, marker);
 
         // Consume a rate permit before consuming the one-time check token. A
         // throttled request must remain replayable without another Check Sessions.
@@ -60,12 +63,11 @@ public sealed partial class AgentGateway
                 : await grant.Terminal.SendCheckedKeyAsync(request.Key!, check.Screen, ct).ConfigureAwait(false);
             inputWritten = true;
             TouchControl(grant);
-            if (request.Method == "terminal.exec")
+            if (marker is not null)
             {
                 grant.LastInputText = request.Text;
-                var marker = ExecMarker(operationId);
-                var wait = await WaitOutputAsync(grant, request with { Cursor = receipt.OutputCursor }, ct, marker + ":").ConfigureAwait(false);
-                response = BuildExecResponse(operationId, receipt, wait, marker, request.Text);
+                var (wait, exitCode) = await WaitOutputAsync(grant, request with { Cursor = receipt.OutputCursor }, ct, marker + ":").ConfigureAwait(false);
+                response = BuildExecResponse(operationId, receipt, wait, exitCode, marker, request.Text);
             }
             else
             {
@@ -88,10 +90,8 @@ public sealed partial class AgentGateway
         return response;
     }
 
-    private static string ExecMarker(string operationId) => "__SURGELINK_EXIT_" + operationId + "__";
-
-    private static string BuildExecText(string command, string operationId) =>
-        command + "\n__surge_status=$?; printf '\\n" + ExecMarker(operationId) + ":%d\\n' \"$__surge_status\"";
+    private static string BuildExecText(string command, string marker) =>
+        command + "\n__surge_status=$?; printf '\\n" + marker + ":%d\\n' \"$__surge_status\"";
 
     private static string CleanExecOutput(string text, string marker, string? echoText)
     {
@@ -116,36 +116,21 @@ public sealed partial class AgentGateway
         return string.Join('\n', filtered);
     }
 
-    private static AgentResponse BuildExecResponse(string operationId, TerminalInputReceipt receipt, AgentResponse wait, string marker, string? echoText)
+    private static AgentResponse BuildExecResponse(string operationId, TerminalInputReceipt receipt, AgentResponse wait,
+        int? exitCode, string marker, string? echoText)
     {
         if (!wait.Success)
         {
-            return AgentResponse.Ok(new
+            return wait with { Data = AgentResponse.Ok(new
             {
                 operationId, receipt.InputRevision, receipt.OutputCursor, receipt.AcceptedBytes, receipt.Submitted,
-                status = "executed", commandCompletionKnown = false, exitCode = (int?)null,
+                status = "input_sent", commandCompletionKnown = false, exitCode = (int?)null,
                 waitError = wait.ErrorCode, output = wait.Data,
-            });
+            }).Data };
         }
 
         var data = wait.Data!.Value;
-        var text = data.GetProperty("text").GetString() ?? string.Empty;
-        var prefix = marker + ":";
-        int? exitCode = null;
-        // The shell echoes the sentinel command itself, including the "%d"
-        // placeholder. The real completion marker is the last one.
-        var index = text.LastIndexOf(prefix, StringComparison.Ordinal);
-        if (index >= 0)
-        {
-            var end = text.IndexOf('\n', index);
-            if (end < 0) end = text.Length;
-            var value = text[(index + prefix.Length)..end].Trim();
-            if (int.TryParse(value, System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture, out var parsed))
-                exitCode = parsed;
-            text = text.Remove(index, end - index).TrimEnd();
-        }
-        text = CleanExecOutput(text, marker, echoText);
+        var text = CleanExecOutput(data.GetProperty("text").GetString() ?? string.Empty, marker, echoText);
 
         return AgentResponse.Ok(new
         {

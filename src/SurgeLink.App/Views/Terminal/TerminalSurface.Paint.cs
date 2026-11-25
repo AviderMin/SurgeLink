@@ -105,7 +105,7 @@ internal sealed partial class TerminalSurface
 
         if (anyRowChanged)
         {
-            _canvas.Invalidate();
+            _canvas?.Invalidate();
         }
 
         PaintCursor(metrics, resolver);
@@ -256,7 +256,7 @@ internal sealed partial class TerminalSurface
         };
         if (format is null) return;
 
-        Color color = ToColor(style.Foreground, dim: (style.Attributes & CellAttributes.Dim) != 0);
+        Color color = ToColor(style.Foreground);
         ds.DrawText(text, left, top, color, format);
     }
 
@@ -276,7 +276,7 @@ internal sealed partial class TerminalSurface
         bool strike = (style.Attributes & CellAttributes.Strikethrough) != 0;
         if (!underline && !strike) return;
 
-        Color color = ToColor(style.Foreground, dim: (style.Attributes & CellAttributes.Dim) != 0);
+        Color color = ToColor(style.Foreground);
         float x0 = startCol * cellWidth;
         float x1 = (startCol + spanCols) * cellWidth;
         if (underline)
@@ -293,13 +293,13 @@ internal sealed partial class TerminalSurface
 
     private static bool SameTextStyle(CellAttributes left, CellAttributes right)
     {
-        const CellAttributes mask = CellAttributes.Bold | CellAttributes.Italic | CellAttributes.Dim
+        const CellAttributes mask = CellAttributes.Bold | CellAttributes.Italic
             | CellAttributes.Underline | CellAttributes.Strikethrough | CellAttributes.Blink;
         return (left & mask) == (right & mask);
     }
 
-    private static Color ToColor(uint rgb, bool dim = false) => Color.FromArgb(
-        dim ? (byte)153 : (byte)255,
+    private static Color ToColor(uint rgb) => Color.FromArgb(
+        255,
         (byte)((rgb >> 16) & 0xFF),
         (byte)((rgb >> 8) & 0xFF),
         (byte)(rgb & 0xFF));

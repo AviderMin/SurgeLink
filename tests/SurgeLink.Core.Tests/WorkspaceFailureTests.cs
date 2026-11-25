@@ -103,6 +103,36 @@ public sealed class WorkspaceFailureTests
         Assert.Equal(1, terminal.DisposeCount);
     }
 
+    [Fact]
+    public async Task ReconnectKeepsOldShellWhenReplacementShellCannotStart()
+    {
+        var plugin = new FakeProtocolPlugin();
+        var oldTerminal = new FailingTerminal(false);
+        var newTerminal = new FailingTerminal(true);
+        var oldSession = new FakeProtocolSession(plugin.Descriptor) { Terminal = oldTerminal };
+        var newSession = new FakeProtocolSession(plugin.Descriptor) { Terminal = newTerminal };
+        plugin.SessionFactory = _ => oldSession;
+        var catalog = new ProtocolCatalog(); catalog.Register(plugin);
+        var credentials = new FakeCredentialStore();
+        await using var manager = new SessionManager(catalog, credentials,
+            new ProtocolHostContext(NullLoggerFactory.Instance, new FakeHostKeyStore()), NullLogger<SessionManager>.Instance);
+        var workspace = new WorkspaceStore(manager, new FailingStore(), credentials, new InlineDispatcher(), NullLogger<WorkspaceStore>.Instance);
+        var tab = await workspace.OpenAsync(SessionProfile.New("fake", "example.test", 22, "alice"), null, default);
+        tab.Terminal!.Emulator.Feed("original"u8);
+        var cursor = tab.Terminal.Emulator.Cursor;
+        plugin.SessionFactory = _ => newSession;
+
+        await Assert.ThrowsAsync<IOException>(() => workspace.ReconnectAsync(tab.Id));
+
+        Assert.Same(tab, Assert.Single(workspace.Snapshot.Tabs));
+        Assert.Equal(tab.Id, workspace.Snapshot.ActiveTabId);
+        Assert.Equal(cursor, tab.Terminal.Emulator.Cursor);
+        Assert.Equal(0, oldTerminal.DisposeCount);
+        Assert.Equal(1, newTerminal.DisposeCount);
+        Assert.Single(manager.Sessions);
+        await workspace.CloseAsync(tab.Id);
+    }
+
     private sealed class InlineDispatcher : IUiDispatcher
     {
         public bool IsOnUiThread => true;

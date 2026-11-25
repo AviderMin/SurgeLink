@@ -34,6 +34,13 @@ internal sealed class CellLine
     /// </summary>
     public bool Wrapped { get; set; }
 
+    public CellLine Copy()
+    {
+        var copy = (CellLine)MemberwiseClone();
+        copy.Cells = (TerminalCell[])Cells.Clone();
+        return copy;
+    }
+
     /// <summary>Resets every cell, including hidden cells, to blank.</summary>
     public void Clear()
     {

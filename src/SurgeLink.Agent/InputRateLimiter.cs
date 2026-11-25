@@ -1,7 +1,7 @@
 namespace SurgeLink.Agent;
 
 /// <summary>
-/// Bounds a single grant's terminal-input rate. The bucket holds one minute of
+/// Bounds a single grant's terminal input and file mutation rate. The bucket holds one minute of
 /// permits, so a short burst is allowed but sustained input is throttled.
 /// </summary>
 internal sealed class InputRateLimiter

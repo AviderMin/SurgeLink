@@ -4,6 +4,8 @@ Usage: python tools/check-repository.py [--history]
 This is a heuristic check, not a guarantee that a repository contains no secrets.
 """
 import argparse
+import codecs
+import ipaddress
 from pathlib import Path
 import re
 import subprocess
@@ -25,6 +27,8 @@ rules = {
     "credential-url": rb"(?:https?|ssh)://[^\s/:]+:[^\s/@]+@",
 }
 compiled = {name: re.compile(pattern) for name, pattern in rules.items()}
+ssh_endpoint = re.compile(rb"\b[\w.-]+@((?:[0-9]{1,3}\.){3}[0-9]{1,3})(?![\d.])")
+user_path = re.compile(rb"\b[A-Za-z]:[\\/]+Users[\\/]+[^\s\\/<>`]+[\\/]", re.I)
 forbidden = re.compile(r"(?:^|/)(?:id_rsa|id_dsa|id_ecdsa|id_ed25519|credentials\.json|\.env(?:\.(?!example$).*)?)$|\.(?:pfx|p12|pem|key|snk|dmp|appx|msix|zip|pdb)$", re.I)
 findings = 0
 scanned = 0
@@ -49,11 +53,26 @@ for oid, path in entries:
     if forbidden.search(path):
         print(f"sensitive/generated filename: {label}")
         findings += 1
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        data = data.decode("utf-16", errors="replace").encode("utf-8")
     if b"\0" in data:
         continue
     for name, pattern in compiled.items():
         if pattern.search(data):
             print(f"{name}: {label}")
+            findings += 1
+    if path.lower().endswith(".md"):
+        for match in ssh_endpoint.finditer(data):
+            try:
+                address = ipaddress.IPv4Address(match.group(1).decode("ascii"))
+            except ipaddress.AddressValueError:
+                continue
+            if address.is_global and not address.is_multicast:
+                print(f"public-ssh-endpoint: {label}")
+                findings += 1
+                break
+        if user_path.search(data):
+            print(f"windows-user-path: {label}")
             findings += 1
 print(f"Scanned {scanned} {'historical blobs' if args.history else 'tracked files'}; {findings} findings.")
 sys.exit(1 if findings else 0)

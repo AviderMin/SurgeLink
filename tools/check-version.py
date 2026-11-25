@@ -6,7 +6,6 @@ reviewer noticing.
 """
 from pathlib import Path
 import re
-import sys
 
 root = Path(__file__).resolve().parent.parent
 props = (root / "Directory.Build.props").read_text(encoding="utf-8-sig")
@@ -17,17 +16,19 @@ if not match:
 version = match.group(1)
 
 checks = {
-    "README.md": r"当前版本：\*\*([^*]+)\*\*",
-    "README-FULL.md": r"当前源码版本：\*\*([^*]+)\*\*",
+    "README.md": ("当前版本", "当前源码版本"),
+    "README-FULL.md": ("当前源码版本",),
 }
 findings = []
-for name, pattern in checks.items():
+for name, labels in checks.items():
     text = (root / name).read_text(encoding="utf-8-sig")
-    found = re.search(pattern, text)
-    if not found:
-        findings.append(f"{name}: documented version line not found")
-    elif found.group(1) != version:
-        findings.append(f"{name}: documents {found.group(1)}, Directory.Build.props has {version}")
+    for label in labels:
+        found = re.findall(rf"{re.escape(label)}：\*\*([^*]+)\*\*", text)
+        if not found:
+            findings.append(f"{name}: '{label}' version line not found")
+        for documented in found:
+            if documented != version:
+                findings.append(f"{name}: '{label}' documents {documented}, Directory.Build.props has {version}")
 
 for finding in findings:
     print(finding)

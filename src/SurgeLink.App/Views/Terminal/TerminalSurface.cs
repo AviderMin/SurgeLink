@@ -52,7 +52,7 @@ internal sealed partial class TerminalSurface : ContentControl
     private readonly Microsoft.UI.Xaml.Controls.Primitives.ScrollBar _scrollBar;
     private bool _updatingScrollBar;
     private readonly Grid _root;
-    private readonly CanvasControl _canvas;
+    private CanvasControl? _canvas;
     private readonly Canvas _cursorLayer;
     private readonly Rectangle _cursorRect;
     private readonly TextBlock _cursorGlyph;
@@ -112,11 +112,6 @@ internal sealed partial class TerminalSurface : ContentControl
         BorderThickness = new Thickness(0);
         AutomationProperties.SetAutomationId(this, AutomationId);
 
-        _canvas = new CanvasControl
-        {
-            IsHitTestVisible = false,
-            Margin = new Thickness(ContentInset),
-        };
         _cursorLayer = CreateLayer();
         _cursorLayer.Margin = new Thickness(ContentInset);
         _cursorRect = new Rectangle { IsHitTestVisible = false, Visibility = Visibility.Collapsed };
@@ -156,7 +151,6 @@ internal sealed partial class TerminalSurface : ContentControl
             }
         };
         _root.Children.Add(_scrollBar);
-        _root.Children.Add(_canvas);
         _root.Children.Add(_cursorLayer);
         InitializeSearch();
         Content = _root;
@@ -229,7 +223,15 @@ internal sealed partial class TerminalSurface : ContentControl
         if (!_loaded)
         {
             _loaded = true;
+            _canvas = new CanvasControl
+            {
+                IsHitTestVisible = false,
+                Margin = new Thickness(ContentInset),
+            };
             _canvas.Draw += OnCanvasDraw;
+            _root.Children.Insert(1, _canvas);
+            ApplySettings(_settings.Current, initial: false);
+            if (_formatRegular is null && _metrics is not null) ApplyRunFont(_metrics);
             _bridge.Invalidated += OnBridgeInvalidated;
             _bridge.Emulator.ClipboardCopyRequested += OnClipboardCopyRequested;
             _settings.Changed += OnSettingsChanged;
@@ -253,7 +255,13 @@ internal sealed partial class TerminalSurface : ContentControl
     {
         if (!_loaded) return;
         _loaded = false;
-        _canvas.Draw -= OnCanvasDraw;
+        if (_canvas is { } canvas)
+        {
+            canvas.Draw -= OnCanvasDraw;
+            canvas.RemoveFromVisualTree();
+            _canvas = null;
+        }
+        DisposeRunFormats();
         _selecting = false;
         ReleasePointerCaptures();
         _paintQueued = false;
@@ -261,6 +269,7 @@ internal sealed partial class TerminalSurface : ContentControl
         _bridge.Emulator.ClipboardCopyRequested -= OnClipboardCopyRequested;
         _settings.Changed -= OnSettingsChanged;
         _searchRefreshTimer?.Stop();
+        _searchInputTimer?.Stop();
         StopBlink();
     }
 
@@ -331,7 +340,7 @@ internal sealed partial class TerminalSurface : ContentControl
     {
         _hasFocus = true;
         _blinkOn = true;
-        if (_hasBlinkingCells) _canvas.Invalidate();
+        if (_hasBlinkingCells) _canvas?.Invalidate();
         StartBlink();
         InvalidatePaint(force: true);
     }
@@ -364,6 +373,6 @@ internal sealed partial class TerminalSurface : ContentControl
 
         var emulator = _bridge.Emulator;
         lock (emulator.SyncRoot) { _cursorLayer.Opacity = !emulator.Modes.CursorBlink || _blinkOn ? 1 : 0; }
-        if (_hasBlinkingCells) _canvas.Invalidate();
+        if (_hasBlinkingCells) _canvas?.Invalidate();
     }
 }

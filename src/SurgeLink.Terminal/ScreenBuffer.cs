@@ -69,6 +69,14 @@ internal sealed class ScreenBuffer
     /// <summary>True when a glyph was written into the last column and the next glyph must wrap first.</summary>
     public bool PendingWrap => _pendingWrap;
 
+    internal void CopyContentFrom(ScreenBuffer source)
+    {
+        for (var row = 0; row < _rows; row++)
+            _lines[row] = source._lines[row].Copy();
+        _cursorRow = source._cursorRow;
+        _cursorColumn = source._cursorColumn;
+    }
+
     /// <summary>First row of the scrolling region, zero based and inclusive.</summary>
     public int ScrollTop => _scrollTop;
 
@@ -784,6 +792,7 @@ internal sealed class ScreenBuffer
 
             bool groupHasCursor = cursorAbsRow >= groupStart && cursorAbsRow <= groupEnd;
             int cursorOffsetInGroup = -1;
+            int logicalWidth = 0;
             var logicalCells = new List<TerminalCell>();
 
             for (int r = groupStart; r <= groupEnd; r++)
@@ -812,7 +821,7 @@ internal sealed class ScreenBuffer
 
                 if (groupHasCursor && r == cursorAbsRow)
                 {
-                    cursorOffsetInGroup = logicalCells.Count + Math.Min(cursorLogicalCol, copyLen);
+                    cursorOffsetInGroup = logicalWidth + Math.Min(cursorLogicalCol, copyLen);
                 }
 
                 for (int c = 0; c < copyLen; c++)
@@ -823,38 +832,44 @@ internal sealed class ScreenBuffer
                         continue;
                     }
                     logicalCells.Add(cell);
+                    logicalWidth += cell.Width == CellWidth.Wide ? 2 : 1;
                 }
             }
 
             if (groupHasCursor && cursorOffsetInGroup < 0)
             {
-                cursorOffsetInGroup = logicalCells.Count;
+                cursorOffsetInGroup = logicalWidth;
             }
 
             // Re-emit logicalCells into new physical lines of width `columns`.
-            int emittedStart = reflowed.Count;
             var currentLine = new CellLine(columns);
             int col = 0;
             int logicalPos = 0;
 
             for (int idx = 0; idx < logicalCells.Count; idx++)
             {
-                if (groupHasCursor && !cursorMapped && logicalPos == cursorOffsetInGroup)
+                TerminalCell cell = logicalCells[idx];
+                int sourceWidth = cell.Width == CellWidth.Wide ? 2 : 1;
+                int width = cell.Width == CellWidth.Wide && columns >= 2 ? 2 : 1;
+                if (groupHasCursor && !cursorMapped && _pendingWrap && col == columns && logicalPos == cursorOffsetInGroup)
                 {
                     newCursorAbsRow = reflowed.Count;
-                    newCursorCol = Math.Min(col, columns - 1);
-                    newPendingWrap = col >= columns;
+                    newCursorCol = columns - 1;
+                    newPendingWrap = true;
                     cursorMapped = true;
                 }
-
-                TerminalCell cell = logicalCells[idx];
-                int width = cell.Width == CellWidth.Wide && columns >= 2 ? 2 : 1;
                 if (col + width > columns)
                 {
                     currentLine.Wrapped = true;
                     reflowed.Add(currentLine);
                     currentLine = new CellLine(columns);
                     col = 0;
+                }
+                if (groupHasCursor && !cursorMapped && cursorOffsetInGroup < logicalPos + sourceWidth)
+                {
+                    newCursorAbsRow = reflowed.Count;
+                    newCursorCol = col + Math.Clamp(cursorOffsetInGroup - logicalPos, 0, width - 1);
+                    cursorMapped = true;
                 }
 
                 currentLine.Cells[col] = width == 2 ? cell : (cell.Width == CellWidth.Wide ? cell with { Width = CellWidth.Narrow } : cell);
@@ -870,7 +885,7 @@ internal sealed class ScreenBuffer
                 }
 
                 col += width;
-                logicalPos += cell.Width == CellWidth.Wide ? 2 : 1;
+                logicalPos += sourceWidth;
             }
 
             if (groupHasCursor && !cursorMapped)
@@ -890,7 +905,6 @@ internal sealed class ScreenBuffer
             }
 
             reflowed.Add(currentLine);
-            _ = emittedStart;
         }
 
         // Split reflowed lines between scrollback and the visible primary screen.

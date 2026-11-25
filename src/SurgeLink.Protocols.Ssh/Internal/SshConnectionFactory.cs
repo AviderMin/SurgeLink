@@ -275,6 +275,17 @@ internal sealed class SshConnectionFactory
 
     private void ApplyAlgorithmPreferences(ConnectionInfo info)
     {
+        if (_options.UseLegacyAlgorithms)
+        {
+            _logger.LogWarning(
+                "Legacy SSH algorithms are enabled for {Endpoint}; this weakens transport security.",
+                Endpoint);
+            MoveToBack(info.KeyExchangeAlgorithms, LegacyKeyExchangeAlgorithms);
+            MoveToBack(info.HostKeyAlgorithms, LegacyHostKeyAlgorithms);
+            MoveToBack(info.HmacAlgorithms, LegacyHmacAlgorithms);
+            MoveToBack(info.Encryptions, LegacyEncryptionAlgorithms);
+        }
+
         var preferred = _options.PreferredKeyExchange;
         if (!string.IsNullOrWhiteSpace(preferred))
         {
@@ -287,29 +298,15 @@ internal sealed class SshConnectionFactory
                 _logger.LogWarning("Preferred key exchange {Algorithm} is not offered by this SSH client.", preferred);
             }
         }
-
-        if (!_options.UseLegacyAlgorithms)
-        {
-            return;
-        }
-
-        _logger.LogWarning(
-            "Legacy SSH algorithms are enabled for {Endpoint}; this weakens transport security.",
-            Endpoint);
-        MoveToFront(info.KeyExchangeAlgorithms, LegacyKeyExchangeAlgorithms);
-        MoveToFront(info.HostKeyAlgorithms, LegacyHostKeyAlgorithms);
-        MoveToFront(info.HmacAlgorithms, LegacyHmacAlgorithms);
-        MoveToFront(info.Encryptions, LegacyEncryptionAlgorithms);
     }
 
-    private static void MoveToFront<TValue>(IOrderedDictionary<string, TValue> algorithms, IReadOnlyList<string> names)
+    private static void MoveToBack<TValue>(IOrderedDictionary<string, TValue> algorithms, IReadOnlyList<string> names)
     {
-        for (var i = names.Count - 1; i >= 0; i--)
+        foreach (var name in names)
         {
-            var name = names[i];
             if (algorithms.ContainsKey(name))
             {
-                algorithms.SetPosition(name, 0);
+                algorithms.SetPosition(name, algorithms.Count - 1);
             }
         }
     }

@@ -411,8 +411,10 @@ public sealed class AgentErgonomicsTests
         Assert.True(response.Data.Value.GetProperty("minimal").GetBoolean());
     }
 
-    [Fact]
-    public async Task TerminalExecReturnsTheShellExitCode()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    public async Task TerminalExecReturnsTheShellExitCode(int? maxBytes)
     {
         var terminal = new ExecTerminal();
         var gateway = new AgentGateway();
@@ -423,7 +425,7 @@ public sealed class AgentErgonomicsTests
         var checkData = check.Data!.Value;
 
         var response = await gateway.ExecuteAsync(new("terminal.exec", handle,
-            Text: "echo hi", OperationId: "exec-1", StripAnsi: true,
+            Text: "echo hi", OperationId: "exec-1", StripAnsi: true, MaxBytes: maxBytes,
             ExpectedInputRevision: checkData.GetProperty("screen").GetProperty("inputRevision").GetInt64(),
             CheckToken: checkData.GetProperty("checkToken").GetString()), default);
 
@@ -434,6 +436,24 @@ public sealed class AgentErgonomicsTests
         var outputText = data.GetProperty("output").GetProperty("text").GetString()!;
         Assert.DoesNotContain("__SURGELINK_EXIT_", outputText);
         Assert.DoesNotContain("echo hi", outputText);
+        Assert.Equal(1, terminal.Writes);
+    }
+
+    [Fact]
+    public async Task TerminalExecReportsHumanTakeoverAsFailureAfterSendingInput()
+    {
+        var terminal = new ExecTerminal();
+        var gateway = new AgentGateway();
+        terminal.AfterWrite = () => gateway.SuspendForHuman("tab");
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+        var input = await TerminalControlTests.CheckedInputAsync(gateway, handle);
+
+        var response = await gateway.ExecuteAsync(input with { Method = "terminal.exec", Text = "echo hi" }, default);
+
+        Assert.False(response.Success);
+        Assert.Equal("user_operating", response.ErrorCode);
         Assert.Equal(1, terminal.Writes);
     }
 
@@ -539,12 +559,21 @@ public sealed class AgentErgonomicsTests
             Task.FromResult(new TerminalInputReceipt(expectedRevision + 1, cursor, 1, true));
     }
 
+    private static string ReadExecMarker(string text)
+    {
+        const string prefix = "__SURGELINK_EXIT_";
+        var start = text.LastIndexOf(prefix, StringComparison.Ordinal);
+        var end = text.IndexOf(":%d", start, StringComparison.Ordinal);
+        return text[start..end];
+    }
+
     private sealed class ExecTerminal : ITerminalAutomation
     {
         private string _screen = "test";
         private string _output = string.Empty;
         private long _revision;
         public int Writes { get; private set; }
+        public Action? AfterWrite { get; set; }
         public TerminalScreenSnapshot ReadScreen() => new(_screen, 80, 24, 0, 0, true, false, false, false, _revision, _output.Length, false, false);
         public TerminalOutputPage ReadOutput(long? cursor)
         {
@@ -558,7 +587,10 @@ public sealed class AgentErgonomicsTests
             Writes++;
             _revision++;
             _screen = "hi\n";
-            _output = "\u001b[?2004l\recho hi\r\n__surge_status=$?; printf '\n__SURGELINK_EXIT_exec-1__:%d\n' \"$__surge_status\"\r\nhi\r\n__SURGELINK_EXIT_exec-1__:0\r\n";
+            var marker = ReadExecMarker(text);
+            Assert.NotEqual("__SURGELINK_EXIT_exec-1__", marker);
+            _output = "\u001b[?2004l\recho hi\r\n" + text[(text.IndexOf('\n') + 1)..] + "\r\nhi\r\n" + marker + ":0\r\nprompt> ";
+            AfterWrite?.Invoke();
             return Task.FromResult(new TerminalInputReceipt(_revision, 0, text.Length, submit));
         }
         public Task<TerminalInputReceipt> SendKeyAsync(string key, long expectedRevision, CancellationToken ct) =>
@@ -572,13 +604,14 @@ public sealed class AgentErgonomicsTests
         private readonly System.Diagnostics.Stopwatch _elapsed = new();
         private long _revision;
         private bool _sentinel;
+        private string _marker = string.Empty;
         public TerminalScreenSnapshot ReadScreen() =>
             new(_output.ToString(), 80, 24, 0, 0, true, false, false, false, _revision, _output.Length, false, false);
         public TerminalOutputPage ReadOutput(long? cursor)
         {
             if (!_sentinel && _elapsed.ElapsedMilliseconds >= delayMilliseconds)
             {
-                _output.Append("__SURGELINK_EXIT_exec-slow__:0\n");
+                _output.Append(_marker.AsSpan(_marker.Length / 2)).Append(":0\n");
                 _sentinel = true;
             }
             var start = (int)(cursor ?? 0);
@@ -590,7 +623,8 @@ public sealed class AgentErgonomicsTests
             if (_revision != expectedRevision) throw new TerminalInputConflictException();
             _revision++;
             _output.Clear();
-            _output.Append("working\n");
+            _marker = ReadExecMarker(text);
+            _output.Append("working\n").Append(_marker.AsSpan(0, _marker.Length / 2));
             _elapsed.Restart();
             return Task.FromResult(new TerminalInputReceipt(_revision, 0, text.Length, submit));
         }

@@ -50,6 +50,7 @@ public sealed class TerminalControlTests
         Assert.Equal("input_outcome_unknown", (await gateway.ExecuteAsync(input, default)).ErrorCode);
         var next = await CheckedInputAsync(gateway, handle);
         Assert.Equal("input_outcome_unknown", (await gateway.ExecuteAsync(next with { OperationId = "next" }, default)).ErrorCode);
+        Assert.Equal("input_outcome_unknown", (await gateway.ExecuteAsync(new("files.mkdir", handle, "/new"), default)).ErrorCode);
         Assert.Equal(1, terminal.Writes);
     }
 
@@ -63,6 +64,7 @@ public sealed class TerminalControlTests
         var first = await CheckedInputAsync(gateway, handle);
         Assert.True((await gateway.ExecuteAsync(first, default)).Success);
         Assert.Equal(1, terminal.Writes);
+        Assert.Equal("input_rate_limited", (await gateway.ExecuteAsync(new("files.mkdir", handle, "/new"), default)).ErrorCode);
 
         var second = (await CheckedInputAsync(gateway, handle)) with { OperationId = "command-2" };
         var limited = await gateway.ExecuteAsync(second, default);

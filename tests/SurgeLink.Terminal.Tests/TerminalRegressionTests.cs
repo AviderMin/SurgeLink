@@ -401,6 +401,34 @@ public sealed class TerminalRegressionTests
     }
 
     [Fact]
+    public void ReflowKeepsCursorOnTheSameCellAfterAWideWrappedRow()
+    {
+        var terminal = new TestTerminal(4, 4);
+        terminal.Emulator.ReflowOnResize = true;
+        terminal.Feed("中abxyz\u001b[2;2H");
+
+        terminal.Emulator.Resize(5, 4);
+        terminal.Feed("!");
+
+        Assert.Equal("中abx", terminal.Line(0));
+        Assert.Equal("!z", terminal.Line(1));
+    }
+
+    [Fact]
+    public void ReflowKeepsSavedPrimaryCursorWhileAlternateScreenIsActive()
+    {
+        var terminal = new TestTerminal(4, 4);
+        terminal.Emulator.ReflowOnResize = true;
+        terminal.Feed("abcdef\u001b[?1049h");
+
+        terminal.Emulator.Resize(8, 4);
+        terminal.Feed("\u001b[?1049l!");
+
+        Assert.Equal("abcdef!", terminal.Line(0));
+        Assert.Equal(string.Empty, terminal.Line(1));
+    }
+
+    [Fact]
     public void ReflowOnResizePreservesScrollbackAndDoesNotReflowAlternateScreen()
     {
         var terminal = new TestTerminal(10, 3);

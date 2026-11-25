@@ -30,20 +30,31 @@ internal static class AgentFilePolicy
 
         var localPath = DiagnosticText.Escape(string.IsNullOrWhiteSpace(access.LocalPath) ? "(missing)" : access.LocalPath);
         var remotePath = DiagnosticText.Escape(access.Path ?? string.Empty);
+        var label = DiagnosticText.Escape(access.Label);
+        var session = access.Target is { } target
+            ? $"{label} ({DiagnosticText.Escape(target.Username)}@{DiagnosticText.Escape(target.Server)})"
+            : label;
+        var overwrite = access.Overwrite
+            ? Str.T("shell.agent.overwriteAllowed", "Overwrite permitted")
+            : Str.T("shell.agent.overwriteForbidden", "Overwrite disabled");
         var title = access.Operation == "files.upload"
             ? Str.T("shell.agent.localUploadTitle", "Allow the Agent to read a local file?")
             : Str.T("shell.agent.localDownloadTitle", "Allow the Agent to write a local file?");
         var message = access.Operation == "files.upload"
             ? Str.F(
                 "shell.agent.localUploadBody",
-                "The Agent wants to upload this file from your computer:\n\n{0}\n\nRemote destination: {1}\n\nAllow this once?",
+                "The Agent wants to upload this file from your computer:\n\n{0}\n\nSession: {2}\nRemote destination: {1}\n{3}\n\nAllow this once?",
                 localPath,
-                remotePath)
+                remotePath,
+                session,
+                overwrite)
             : Str.F(
                 "shell.agent.localDownloadBody",
-                "The Agent wants to save remote content to this file on your computer:\n\n{0}\n\nRemote source: {1}\n\nAllow this once?",
+                "The Agent wants to save remote content to this file on your computer:\n\n{0}\n\nSession: {2}\nRemote source: {1}\n{3}\n\nAllow this once?",
                 localPath,
-                remotePath);
+                remotePath,
+                session,
+                overwrite);
         return await interaction.RequestConfirmationAsync(
             new ConfirmationRequest(
                 title,

@@ -4,7 +4,6 @@ using SurgeLink.Core.Files;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
 using SurgeLink.Core.Sessions;
-using SurgeLink.Terminal;
 using SurgeLink.Core.Storage;
 
 namespace SurgeLink.App.Sessions;
@@ -188,9 +187,7 @@ public sealed class WorkspaceStore
         SessionProfile profile,
         ConnectOptions? options,
         CancellationToken cancellationToken,
-        TerminalEmulator? existingEmulator = null,
-        string? banner = null,
-        int? insertIndex = null)
+        WorkspaceTab? reconnecting = null)
     {
         Update(s => s with { IsConnecting = true }, force: true);
         IProtocolSession? session = null;
@@ -203,7 +200,9 @@ public sealed class WorkspaceStore
             if (session.Terminal is { } remoteTerminal)
             {
                 terminal = new TerminalBridge(remoteTerminal, _dispatcher, _logger, settings: _settings,
-                    terminalType: TerminalTypeFor(profile), existingEmulator: existingEmulator, banner: banner);
+                    terminalType: TerminalTypeFor(profile),
+                    existingEmulator: reconnecting?.Terminal?.Emulator.CopyHistoryForNewShell(),
+                    banner: reconnecting is null ? null : "--- Reconnected ---");
                 await terminal.StartAsync(cancellationToken);
             }
 
@@ -239,18 +238,23 @@ public sealed class WorkspaceStore
                 }
             }
 
-            Update(s =>
+            if (reconnecting is not null)
             {
-                var tabs = s.Tabs.ToList();
-                var position = insertIndex is { } idx ? Math.Clamp(idx, 0, tabs.Count) : tabs.Count;
-                tabs.Insert(position, tab);
-                return s with
+                if (session.State != ConnectionState.Connected)
+                    throw new ProtocolException("The replacement session disconnected while reconnecting.");
+                ReloadProfiles();
+                cancellationToken.ThrowIfCancellationRequested();
+                await CloseAsync(reconnecting.Id, tab);
+            }
+            else
+            {
+                Update(s => s with
                 {
                     Profiles = LoadProfilesFromDisk(),
-                    Tabs = tabs.ToArray(),
+                    Tabs = [.. s.Tabs, tab],
                     ActiveTabId = tab.Id,
-                };
-            });
+                });
+            }
 
             _logger.LogInformation("Session {Name} opened", profile.Name);
             if (terminal?.IsClosed == true) { OnTerminalClosed(tab, terminal); }
@@ -282,27 +286,30 @@ public sealed class WorkspaceStore
     }
 
     /// <summary>Closes a tab and disposes its connection.</summary>
-    public Task CloseAsync(Guid tabId)
+    public Task CloseAsync(Guid tabId) => CloseAsync(tabId, null);
+
+    private Task CloseAsync(Guid tabId, WorkspaceTab? replacement)
     {
         WorkspaceTab? tab;
         TaskCompletionSource completion;
         lock (_gate)
         {
-            if (_closing.TryGetValue(tabId, out var existing)) return existing.Task;
+            if (_closing.TryGetValue(tabId, out var existing))
+                return replacement is null ? existing.Task : Task.FromCanceled(new CancellationToken(canceled: true));
             tab = _snapshot.Tabs.FirstOrDefault(t => t.Id == tabId);
             if (tab is null)
             {
-                return Task.CompletedTask;
+                return replacement is null ? Task.CompletedTask : Task.FromCanceled(new CancellationToken(canceled: true));
             }
             completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             _closing.Add(tabId, completion);
             tab.IsClosing = true;
         }
-        _ = CloseTabCoreAsync(tab, completion);
+        _ = CloseTabCoreAsync(tab, completion, replacement);
         return completion.Task;
     }
 
-    private async Task CloseTabCoreAsync(WorkspaceTab tab, TaskCompletionSource completion)
+    private async Task CloseTabCoreAsync(WorkspaceTab tab, TaskCompletionSource completion, WorkspaceTab? replacement)
     {
         try
         {
@@ -321,8 +328,16 @@ public sealed class WorkspaceStore
 
             Update(s =>
             {
-                var remaining = s.Tabs.Where(t => t.Id != tab.Id).ToList();
                 _closing.Remove(tab.Id);
+                if (replacement is not null)
+                {
+                    return s with
+                    {
+                        Tabs = s.Tabs.Select(item => item.Id == tab.Id ? replacement : item).ToArray(),
+                        ActiveTabId = s.ActiveTabId == tab.Id ? replacement.Id : s.ActiveTabId,
+                    };
+                }
+                var remaining = s.Tabs.Where(t => t.Id != tab.Id).ToList();
                 var activeTabId = s.ActiveTabId == tab.Id ? remaining.LastOrDefault()?.Id : s.ActiveTabId;
                 // Closing the active tab activates another one implicitly; it must
                 // not keep an indicator that only applies to background tabs.
@@ -354,38 +369,12 @@ public sealed class WorkspaceStore
     /// </summary>
     public async Task ReconnectAsync(Guid tabId, ConnectOptions? options = null, CancellationToken cancellationToken = default)
     {
-        WorkspaceTab? tab;
-        int tabIndex;
-        TerminalEmulator? previousEmulator;
-        lock (_gate)
-        {
-            tabIndex = -1;
-            tab = null;
-            for (var i = 0; i < _snapshot.Tabs.Count; i++)
-            {
-                if (_snapshot.Tabs[i].Id == tabId)
-                {
-                    tab = _snapshot.Tabs[i];
-                    tabIndex = i;
-                    break;
-                }
-            }
-            previousEmulator = tab?.Terminal?.Emulator;
-        }
-
-        if (tab is null)
-        {
-            return;
-        }
-
+        var tab = Snapshot.Tabs.FirstOrDefault(item => item.Id == tabId);
+        if (tab is null || tab.IsClosing) { return; }
         var profile = GetReconnectProfile(tabId);
         if (profile is null) { return; }
         cancellationToken.ThrowIfCancellationRequested();
-        await CloseAsync(tabId);
-        await OpenCoreAsync(profile, options, cancellationToken,
-            existingEmulator: previousEmulator,
-            banner: "--- Reconnected ---",
-            insertIndex: tabIndex >= 0 ? tabIndex : null);
+        await OpenCoreAsync(profile, options, cancellationToken, reconnecting: tab);
     }
 
     /// <summary>Replaces only the exited shell, retaining the connection, files, monitor and transfers.</summary>

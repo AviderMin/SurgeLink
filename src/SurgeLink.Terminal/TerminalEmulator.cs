@@ -71,6 +71,19 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
     /// <summary>Maximum number of scrollback lines retained.</summary>
     public int ScrollbackLimit => _scrollback.Limit;
 
+    /// <summary>Copies the primary screen and history into an independent emulator for a new shell.</summary>
+    public TerminalEmulator CopyHistoryForNewShell()
+    {
+        lock (_sync)
+        {
+            var copy = new TerminalEmulator(Columns, Rows, _scrollback.Limit) { ReflowOnResize = ReflowOnResize };
+            copy._primaryScreen.CopyContentFrom(_primaryScreen);
+            for (var row = 0; row < _scrollback.Count; row++)
+                _ = copy._scrollback.Add(_scrollback[row].Copy());
+            return copy;
+        }
+    }
+
     /// <summary>Changes the history cap immediately, keeping the newest lines.</summary>
     public void SetScrollbackLimit(int limit)
     {
@@ -202,6 +215,16 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                     {
                         _scrollback[i].Resize(columns);
                     }
+                }
+
+                if (_screen.IsAlternate && _alternateSavedCursor.Valid)
+                {
+                    _alternateSavedCursor = _alternateSavedCursor with
+                    {
+                        Row = _primaryScreen.CursorRow,
+                        Column = _primaryScreen.CursorColumn,
+                        PendingWrap = _primaryScreen.PendingWrap,
+                    };
                 }
 
                 if (_viewportOffset > _scrollback.Count)
@@ -1382,6 +1405,7 @@ public sealed class TerminalEmulator : ITerminalEmulator, IScreenHost
                 _sgr = _alternateSavedCursor.Sgr;
                 SetModes(_modes with { OriginMode = _alternateSavedCursor.OriginMode });
             }
+            _alternateSavedCursor = default;
 
             _viewportOffset = 0;
             MarkDirty();

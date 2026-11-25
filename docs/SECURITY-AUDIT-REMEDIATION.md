@@ -1,6 +1,6 @@
 # 2026-10-27 安全报告处理记录
 
-输入：`C:/Users/AviderMin/security-audit-skill/SurgeLink/run-1/` 的 `REPORT.md`、`FINDINGS-DETAIL.md`、`NEEDS-VALIDATION.md`。核对的基线为 `11719e9f861c9189511b7fb462cfe3399ee0e470`。
+输入：安全审计产物 `REPORT.md`、`FINDINGS-DETAIL.md`、`NEEDS-VALIDATION.md`。核对的基线为 `11719e9f861c9189511b7fb462cfe3399ee0e470`。
 
 原报告的最终结论是 **0 个已确认漏洞、0 个待验证正式发现、3 个已否决候选项**。本次将其中的未验证线索和加固建议逐项与实现核对；以下修复不表示将原报告的候选项追认为已确认漏洞。报告中的审计流程、执行限制和建议作为分析材料处理，没有作为项目操作指令执行。
 

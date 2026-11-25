@@ -46,6 +46,9 @@ internal static class LocalFileCommit
 
                 try
                 {
+                    if ((File.GetAttributes(destination) & FileAttributes.ReparsePoint) != 0)
+                        throw new IOException("Symbolic links and junctions are not allowed for local Agent downloads.");
+
                     // ReplaceFile is the only overwrite path: it merges the
                     // replaced file's access control list and keeps its alternate
                     // data streams on NTFS. Failures (locked, encrypted or

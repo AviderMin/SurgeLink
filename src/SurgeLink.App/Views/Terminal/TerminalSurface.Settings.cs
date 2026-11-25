@@ -50,7 +50,7 @@ internal sealed partial class TerminalSurface
             _fontFamilyName = fontFamily;
             _fontSize = fontSize;
             _metrics = TerminalMetrics.Measure(fontFamily, fontSize);
-            ApplyRunFont(_metrics);
+            if (_loaded) ApplyRunFont(_metrics);
             _logger?.LogInformation(
                 "Terminal metrics: family={Family}, size={Size}, cell={CellWidth}x{CellHeight}",
                 _metrics.FontFamilyName,
@@ -82,17 +82,22 @@ internal sealed partial class TerminalSurface
 
     private void ApplyRunFont(TerminalMetrics metrics)
     {
-        _formatRegular?.Dispose();
-        _formatBold?.Dispose();
-        _formatItalic?.Dispose();
-        _formatBoldItalic?.Dispose();
-
+        DisposeRunFormats();
         _formatRegular = CreateCanvasTextFormat(metrics, FontWeights.Normal, FontStyle.Normal);
         _formatBold = CreateCanvasTextFormat(metrics, FontWeights.SemiBold, FontStyle.Normal);
         _formatItalic = CreateCanvasTextFormat(metrics, FontWeights.Normal, FontStyle.Italic);
         _formatBoldItalic = CreateCanvasTextFormat(metrics, FontWeights.SemiBold, FontStyle.Italic);
 
         StyleRun(_cursorGlyph, metrics);
+    }
+
+    private void DisposeRunFormats()
+    {
+        _formatRegular?.Dispose();
+        _formatBold?.Dispose();
+        _formatItalic?.Dispose();
+        _formatBoldItalic?.Dispose();
+        _formatRegular = _formatBold = _formatItalic = _formatBoldItalic = null;
     }
 
     private static CanvasTextFormat CreateCanvasTextFormat(TerminalMetrics metrics, FontWeight weight, FontStyle style) => new()

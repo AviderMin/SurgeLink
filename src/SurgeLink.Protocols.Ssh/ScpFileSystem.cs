@@ -271,7 +271,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
     /// <summary>Re-validates the regular-file type in the same command that reads it.</summary>
     internal static string BuildReadCommand(string path) =>
-        "test -f " + Quote(path) + " && cat -- " + Quote(path);
+        "test -f " + Quote(path) + " && test ! -L " + Quote(path) + " && cat -- " + Quote(path);
 
     /// <inheritdoc />
     public async Task SetPermissionsAsync(string path, int unixMode, CancellationToken cancellationToken)

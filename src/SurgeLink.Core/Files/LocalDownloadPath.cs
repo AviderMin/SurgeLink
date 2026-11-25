@@ -6,7 +6,7 @@ public static class LocalDownloadPath
     /// <summary>Creates and secures the destination directory for the entire write/publish/cleanup lifetime.</summary>
     public static IDisposable LockDirectory(string directory) => LocalDownloadDirectory.Open(directory);
 
-    /// <summary>Opens a validated absolute local file path without following Windows reparse points.</summary>
+    /// <summary>Opens a local file without following Windows symbolic links or junctions.</summary>
     public static FileStream OpenExistingFileForRead(string path) => LocalDownloadDirectory.OpenExistingFileForRead(path);
 
     public static string Resolve(string directory, string name)
