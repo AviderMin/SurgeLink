@@ -21,6 +21,7 @@ internal sealed class AnsiParser
         Escape,
         Csi,
         Osc,
+        Dcs,
         ConsumeString,
     }
 
@@ -30,6 +31,7 @@ internal sealed class AnsiParser
     private readonly bool[] _parameterIsSub = new bool[MaxParameters];
     private readonly char[] _intermediates = new char[MaxIntermediates];
     private readonly byte[] _oscBytes = new byte[MaxOscBytes];
+    private readonly byte[] _dcsBytes = new byte[256];
 
     private ParserState _state;
     private int _parameterCount;
@@ -43,6 +45,7 @@ internal sealed class AnsiParser
     private bool _oscEscape;
     private bool _oscOverflow;
     private bool _stringEscape;
+    private int _dcsLength;
 
     public AnsiParser(TerminalEmulator terminal) => _terminal = terminal;
 
@@ -175,6 +178,11 @@ internal sealed class AnsiParser
                     _state = ParserState.Osc;
                     return;
                 case (byte)'P':
+                    ResetSequence();
+                    _dcsLength = 0;
+                    _stringEscape = false;
+                    _state = ParserState.Dcs;
+                    return;
                 case (byte)'X':
                 case (byte)'^':
                 case (byte)'_':
@@ -312,7 +320,7 @@ internal sealed class AnsiParser
 
         if (value == 0x07)
         {
-            FinishOsc();
+            FinishOsc(bellTerminated: true);
             return;
         }
 
@@ -334,7 +342,7 @@ internal sealed class AnsiParser
         }
     }
 
-    private void FinishOsc(bool terminated = true)
+    private void FinishOsc(bool terminated = true, bool bellTerminated = false)
     {
         int length = _oscLength;
         bool complete = terminated && !_oscOverflow;
@@ -344,7 +352,7 @@ internal sealed class AnsiParser
         _oscOverflow = false;
         if (length > 0)
         {
-            _terminal.HandleOsc(_oscBytes.AsSpan(0, length), complete);
+            _terminal.HandleOsc(_oscBytes.AsSpan(0, length), complete, bellTerminated);
         }
     }
 
@@ -356,7 +364,10 @@ internal sealed class AnsiParser
             if (value == (byte)'\\')
             {
                 // ESC \ is ST: the control string is complete.
+                var isDcs = _state == ParserState.Dcs;
                 _state = ParserState.Ground;
+                if (isDcs && _dcsLength <= _dcsBytes.Length)
+                    _terminal.HandleDcs(_dcsBytes.AsSpan(0, _dcsLength));
                 return;
             }
 
@@ -378,6 +389,13 @@ internal sealed class AnsiParser
         {
             _stringEscape = false;
             _state = ParserState.Ground;
+            return;
+        }
+
+        if (_state == ParserState.Dcs && _dcsLength <= _dcsBytes.Length)
+        {
+            if (_dcsLength < _dcsBytes.Length) { _dcsBytes[_dcsLength] = value; }
+            _dcsLength++;
         }
     }
 

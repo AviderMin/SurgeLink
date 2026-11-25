@@ -127,6 +127,44 @@ public sealed class SgrTests
         Assert.Equal(0x010203u, cell.Foreground.Rgb);
     }
 
+    [Theory]
+    [InlineData("38:2::10:20:30::")]
+    [InlineData("38:2:0:10:20:30:0:0")]
+    [InlineData("38;2::10:20:30::")]
+    public void ColonTrueColorDoesNotReadTrailingToleranceFields(string sgr)
+    {
+        var cell = CellAfter($"\u001b[{sgr};44m");
+        Assert.Equal(TerminalColor.FromRgb(0x0A141E), cell.Foreground);
+        Assert.Equal(TerminalColor.FromIndex(4), cell.Background);
+    }
+
+    [Fact]
+    public void IncompleteExtendedColorDoesNotSwallowFollowingUnderlineGroup()
+    {
+        var cell = CellAfter("\u001b[32;38;4:3m");
+        Assert.Equal(CellAttributes.Underline, cell.Attributes);
+        Assert.Equal(TerminalColor.FromIndex(2), cell.Foreground);
+    }
+
+    [Fact]
+    public void LightThemeBrightWhiteIsVisibleOnAnsiBlack()
+    {
+        var cell = CellAfter("\u001b[97;40m");
+        var palette = TerminalThemes.Light;
+        Assert.Equal(0xF2F2F2u, palette.Resolve(cell.Foreground, false, cell.Attributes));
+        Assert.Equal(0x000000u, palette.Resolve(cell.Background, true, cell.Attributes));
+        Assert.Equal(0xF2F2F2u, palette.Resolve(CellAfter("\u001b[107m").Background, true, CellAttributes.None));
+    }
+
+    [Theory]
+    [InlineData(0x222222, 0x111111, 0xFFFFFF)]
+    [InlineData(0xEEEEEE, 0xF1F1F1, 0x000000)]
+    [InlineData(0xFFFF00, 0x000000, 0xFFFF00)]
+    public void OverlayForegroundMaintainsContrast(uint foreground, uint background, uint expected)
+    {
+        Assert.Equal(expected, TerminalPalette.LegibleOverlayForeground(foreground, background));
+    }
+
     [Fact]
     public void ResetCodeRestoresDefaults()
     {

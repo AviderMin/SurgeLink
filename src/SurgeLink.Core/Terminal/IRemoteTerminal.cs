@@ -12,6 +12,12 @@ public sealed record TerminalStartOptions
 
     /// <summary>Extra environment variables requested from the server.</summary>
     public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>Whether the requested terminal type is suitable for advertising true color.</summary>
+    public static bool AdvertisesTrueColor(string terminalType) =>
+        terminalType.StartsWith("xterm", StringComparison.OrdinalIgnoreCase)
+        || terminalType.EndsWith("-256color", StringComparison.OrdinalIgnoreCase)
+        || terminalType.EndsWith("-direct", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>Raw bytes received from the remote shell.</summary>

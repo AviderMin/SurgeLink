@@ -1,5 +1,7 @@
 using System.Text;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using SurgeLink.Core.Terminal;
 
 namespace SurgeLink.Protocols.Telnet;
 
@@ -10,11 +12,13 @@ namespace SurgeLink.Protocols.Telnet;
 internal sealed class TelnetCodec
 {
     private const byte Iac = 255, Will = 251, Wont = 252, Do = 253, Dont = 254, Sb = 250, Se = 240;
-    private const byte Binary = 0, Echo = 1, SuppressGoAhead = 3, TerminalType = 24, WindowSize = 31;
+    private const byte Binary = 0, Echo = 1, SuppressGoAhead = 3, TerminalType = 24, WindowSize = 31, NewEnviron = 39;
+    private const byte EnvironIs = 0, EnvironSend = 1, Var = 0, Value = 1, Esc = 2, UserVar = 3;
     private readonly OptionState[] _local = new OptionState[256];
     private readonly OptionState[] _remote = new OptionState[256];
     private readonly List<byte> _subnegotiation = new();
     private readonly string _terminalType;
+    private readonly bool _advertiseTrueColor;
     private ParserState _state;
     private byte _command;
     private bool _subnegotiationOverflow;
@@ -29,6 +33,7 @@ internal sealed class TelnetCodec
         _terminalType = string.IsNullOrWhiteSpace(terminalType) ? "xterm-256color" : terminalType;
         if (_terminalType.Length > 128 || _terminalType.Any(c => c is < ' ' or > '~'))
             throw new ArgumentException("Terminal type must contain at most 128 printable ASCII characters.", nameof(terminalType));
+        _advertiseTrueColor = TerminalStartOptions.AdvertisesTrueColor(_terminalType);
     }
 
     public int Columns { get; private set; }
@@ -41,6 +46,11 @@ internal sealed class TelnetCodec
         {
             _local[option] = OptionState.WantYes;
             reply.AddRange([Iac, Will, option]);
+        }
+        if (_advertiseTrueColor)
+        {
+            _local[NewEnviron] = OptionState.WantYes;
+            reply.AddRange([Iac, Will, NewEnviron]);
         }
         foreach (byte option in new[] { Binary, Echo, SuppressGoAhead })
         {
@@ -91,6 +101,12 @@ internal sealed class TelnetCodec
                             _local[TerminalType] == OptionState.Yes)
                         {
                             SendSubnegotiation(TerminalType, [0, .. Encoding.ASCII.GetBytes(_terminalType)], reply);
+                        }
+                        else if (!_subnegotiationOverflow && _subnegotiation.Count >= 2
+                            && _subnegotiation[0] == NewEnviron && _subnegotiation[1] == EnvironSend
+                            && _local[NewEnviron] == OptionState.Yes)
+                        {
+                            ReplyEnvironment(CollectionsMarshal.AsSpan(_subnegotiation)[2..], reply);
                         }
                         _state = ParserState.Data;
                     }
@@ -157,7 +173,7 @@ internal sealed class TelnetCodec
         {
             if (states[option] == OptionState.Yes) return; // Acknowledge changes only, never loop.
             bool supported = local
-                ? option is Binary or SuppressGoAhead or TerminalType or WindowSize
+                ? option is Binary or SuppressGoAhead or TerminalType or WindowSize || (option == NewEnviron && _advertiseTrueColor)
                 : option is Binary or Echo or SuppressGoAhead;
             if (!supported) { reply.AddRange([Iac, negative, option]); return; }
             if (states[option] == OptionState.No) reply.AddRange([Iac, positive, option]);
@@ -187,6 +203,37 @@ internal sealed class TelnetCodec
 
     private void SendWindowSize(List<byte> reply) => SendSubnegotiation(WindowSize,
         [(byte)(Columns >> 8), (byte)Columns, (byte)(Rows >> 8), (byte)Rows], reply);
+
+    private static void ReplyEnvironment(ReadOnlySpan<byte> requests, List<byte> reply)
+    {
+        List<byte> payload = [EnvironIs];
+        if (requests.IsEmpty) { AddColorTerm(); }
+        for (var i = 0; i < requests.Length;)
+        {
+            byte kind = requests[i++];
+            if (kind is not (Var or UserVar)) { return; }
+            int start = i;
+            while (i < requests.Length && requests[i] is not (Var or UserVar))
+            {
+                byte part = requests[i++];
+                if (part == Value) { return; }
+                if (part == Esc && (i >= requests.Length || requests[i++] > UserVar)) { return; }
+            }
+
+            var name = requests[start..i];
+            if (kind == UserVar && (name.IsEmpty || name.SequenceEqual("COLORTERM"u8)))
+                AddColorTerm();
+            else if (!name.IsEmpty)
+            {
+                // Return explicitly requested variables as undefined. Never read local environment values.
+                payload.Add(kind);
+                foreach (byte part in name) { payload.Add(part); }
+            }
+        }
+        SendSubnegotiation(NewEnviron, CollectionsMarshal.AsSpan(payload), reply);
+
+        void AddColorTerm() => payload.AddRange([UserVar, .. "COLORTERM"u8, Value, .. "truecolor"u8]);
+    }
 
     private static void SendSubnegotiation(byte option, ReadOnlySpan<byte> payload, List<byte> reply)
     {

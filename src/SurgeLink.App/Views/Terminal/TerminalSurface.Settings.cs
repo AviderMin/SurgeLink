@@ -33,7 +33,7 @@ internal sealed partial class TerminalSurface
 
         if (paletteChanged)
         {
-            ApplyPalette(palette);
+            ApplyPalette(new TerminalStyleResolver(palette));
         }
 
         if (fontChanged)
@@ -55,9 +55,9 @@ internal sealed partial class TerminalSurface
         InvalidatePaint(force: true);
     }
 
-    private TerminalStyleResolver ApplyPalette(TerminalPalette palette)
+    private void ApplyPalette(TerminalStyleResolver resolver)
     {
-        var resolver = _resolver = new TerminalStyleResolver(palette);
+        _resolver = resolver;
         var brush = resolver.Brush(resolver.DefaultBackground);
         Background = brush;
         _root.Background = brush;
@@ -67,7 +67,6 @@ internal sealed partial class TerminalSurface
         var rgb = resolver.DefaultBackground;
         var brightness = ((rgb >> 16) & 0xFF) * 299 + ((rgb >> 8) & 0xFF) * 587 + (rgb & 0xFF) * 114;
         _scrollBar.RequestedTheme = brightness < 128000 ? ElementTheme.Dark : ElementTheme.Light;
-        return resolver;
     }
 
     private void ApplyRunFont(TerminalMetrics metrics)

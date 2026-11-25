@@ -33,6 +33,24 @@ public sealed record TerminalPalette
     /// <summary>The default theme.</summary>
     public static TerminalPalette Default { get; } = new();
 
+    private static readonly double[] LinearRgb = Enumerable.Range(0, 256).Select(channel =>
+    {
+        double s = channel / 255.0;
+        return s <= 0.04045 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
+    }).ToArray();
+
+    /// <summary>Preserves the text color when it has at least 4.5:1 contrast against an overlay.</summary>
+    public static uint LegibleOverlayForeground(uint foreground, uint background)
+    {
+        double fg = Luminance(foreground) + 0.05;
+        double bg = Luminance(background) + 0.05;
+        if (Math.Max(fg, bg) >= 4.5 * Math.Min(fg, bg)) { return foreground; }
+        return bg * bg >= 0.05 * 1.05 ? 0x000000u : 0xFFFFFFu;
+    }
+
+    private static double Luminance(uint rgb) =>
+        0.2126 * LinearRgb[(rgb >> 16) & 255] + 0.7152 * LinearRgb[(rgb >> 8) & 255] + 0.0722 * LinearRgb[rgb & 255];
+
     /// <summary>
     /// Resolves a requested colour to a concrete 0xRRGGBB value.
     /// </summary>

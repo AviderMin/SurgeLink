@@ -85,13 +85,23 @@ internal sealed class TerminalRowSnapshot
         {
             TerminalCell cell = emulator.GetCell(row, column);
             TerminalCellStyle style = resolver.Resolve(cell);
+            uint? highlight = null;
             if (selection.Contains(row, column))
             {
-                style = style with { Background = resolver.SelectionBackground };
+                highlight = resolver.SelectionBackground;
             }
             else if (search is { Count: > 0 } && TryFindSearchSpan(search, column, out bool current))
             {
-                style = style with { Background = current ? resolver.SearchCurrentBackground : resolver.SearchBackground };
+                highlight = current ? resolver.SearchCurrentBackground : resolver.SearchBackground;
+            }
+            if (highlight is uint background)
+            {
+                style = style with
+                {
+                    Background = background,
+                    Foreground = TerminalPalette.LegibleOverlayForeground(style.Foreground, background),
+                    Underline = TerminalPalette.LegibleOverlayForeground(style.Underline, background),
+                };
             }
 
             Text[column] = (cell.Attributes & CellAttributes.Hidden) != 0 ? " " : cell.Text ?? " ";

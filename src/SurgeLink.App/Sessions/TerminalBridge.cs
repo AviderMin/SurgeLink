@@ -62,6 +62,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
             };
             _remoteSize = (columns, rows);
         }
+        Emulator.TerminalType = _terminalType;
         ApplyTerminalTheme();
         if (settings is not null) settings.Changed += OnSettingsChanged;
         Emulator.ResponseRequested += OnResponseRequested;
@@ -261,11 +262,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
 
     private void OnOutputReceived(object? sender, TerminalOutputEventArgs e)
     {
-        lock (Emulator.SyncRoot)
-        {
-            _output.Append(e.Data.Span);
-            Emulator.Feed(e.Data.Span);
-        }
+        Emulator.Feed(e.Data.Span, _output.Append);
 
         ScheduleRepaint();
         ScheduleActivity();

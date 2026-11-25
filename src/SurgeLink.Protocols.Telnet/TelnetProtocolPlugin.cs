@@ -15,6 +15,7 @@ public sealed class TelnetProtocolPlugin : IProtocolPlugin
         Glyph = "\uE774",
         Description = "Telnet terminal over TCP (unencrypted)",
         AuthenticatesInTerminal = true,
+        ConnectionOptions = [new("terminalType", "Terminal type", "xterm-256color")],
     };
 
     public ProtocolDescriptor Descriptor => DefaultDescriptor;

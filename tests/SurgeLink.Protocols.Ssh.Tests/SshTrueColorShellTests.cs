@@ -1,3 +1,4 @@
+using SurgeLink.Core.Terminal;
 using SurgeLink.Protocols.Ssh.Internal;
 using Xunit;
 
@@ -13,12 +14,13 @@ public sealed class SshTrueColorShellTests
 
     [Theory]
     [InlineData("xterm-256color", true)]
+    [InlineData("XTERM-256COLOR", true)]
     [InlineData("xterm-direct", true)]
     [InlineData("screen-256color", true)]
     [InlineData("vt100", false)]
     [InlineData("dumb", false)]
     public void OnlyModernTerminalTypesAdvertiseTrueColor(string terminalType, bool expected)
     {
-        Assert.Equal(expected, SshTrueColorShell.AdvertisesTrueColor(terminalType));
+        Assert.Equal(expected, TerminalStartOptions.AdvertisesTrueColor(terminalType));
     }
 }

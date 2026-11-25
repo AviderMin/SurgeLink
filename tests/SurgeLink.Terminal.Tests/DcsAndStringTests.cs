@@ -3,6 +3,34 @@ namespace SurgeLink.Terminal.Tests;
 public sealed class DcsAndStringTests
 {
     [Fact]
+    public void XtgettcapRespondsToSplitTrueColorQueriesWithoutWritingOnScreen()
+    {
+        var terminal = new TestTerminal();
+        terminal.Emulator.TerminalType = "xterm-direct";
+        var responses = new List<string>();
+        terminal.Emulator.ResponseRequested += responses.Add;
+        terminal.Feed("\u001bP+q524");
+        terminal.Feed("742;5463;544e;436f\u001b");
+        Assert.Empty(responses);
+        terminal.Feed("\\X");
+
+        Assert.Equal("\u001bP1+r524742=38;5463=31;544E=787465726D2D646972656374;436F=323536\u001b\\", Assert.Single(responses));
+        Assert.Equal("X", terminal.Line(0));
+    }
+
+    [Fact]
+    public void XtgettcapHandlesUnsupportedCancelledAndOversizedQueries()
+    {
+        var terminal = new TestTerminal();
+        var responses = new List<string>();
+        terminal.Emulator.ResponseRequested += responses.Add;
+        terminal.Feed("\u001bP+qFFFF;524742\u001b\\");
+        terminal.Feed("\u001bP+q524742\u0018");
+        terminal.Feed("\u001bP+q" + new string('0', 300) + "\u001b\\");
+        Assert.Equal("\u001bP0+r\u001b\\", Assert.Single(responses));
+    }
+
+    [Fact]
     public void DcsPayloadIsConsumedWithoutScreenChange()
     {
         var terminal = new TestTerminal(20, 5);

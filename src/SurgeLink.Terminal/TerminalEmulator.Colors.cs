@@ -5,12 +5,17 @@ namespace SurgeLink.Terminal;
 
 public sealed partial class TerminalEmulator
 {
+    private const int MaxPaletteQueries = 32;
     private TerminalPalette _basePalette = TerminalPalette.Default;
+    private volatile TerminalPalette _palette = TerminalPalette.Default;
     private readonly Dictionary<byte, uint> _indexedOverrides = new();
     private readonly uint?[] _dynamicColors = new uint?[3];
 
     /// <summary>The configured theme with the live shell's color overrides applied.</summary>
-    public TerminalPalette Palette { get; private set; } = TerminalPalette.Default;
+    public TerminalPalette Palette => _palette;
+
+    /// <summary>Terminal type reported to applications querying capabilities.</summary>
+    public string TerminalType { get; set; } = "xterm-256color";
 
     /// <summary>Sets the theme used for defaults and for subsequent color resets.</summary>
     public void SetBasePalette(TerminalPalette palette)
@@ -33,12 +38,12 @@ public sealed partial class TerminalEmulator
     {
         _indexedOverrides.Clear();
         Array.Clear(_dynamicColors);
-        Palette = _basePalette;
+        _palette = _basePalette;
     }
 
     private void RefreshPalette()
     {
-        Palette = _indexedOverrides.Count == 0 && !_dynamicColors.Any(color => color.HasValue)
+        _palette = _indexedOverrides.Count == 0 && !_dynamicColors.Any(color => color.HasValue)
             ? _basePalette
             : _basePalette with
             {
@@ -50,13 +55,14 @@ public sealed partial class TerminalEmulator
         MarkDirty();
     }
 
-    private void HandleOscColor(int command, ReadOnlySpan<byte> payload)
+    private void HandleOscColor(int command, ReadOnlySpan<byte> payload, bool bellTerminated)
     {
-        var parts = Encoding.ASCII.GetString(payload).Split(';');
+        var parts = Encoding.ASCII.GetString(payload).Split(';', StringSplitOptions.TrimEntries);
         var changed = false;
         switch (command)
         {
             case 4:
+                var queries = 0;
                 for (var i = 0; i + 1 < parts.Length; i += 2)
                 {
                     if (!byte.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out var index))
@@ -64,8 +70,9 @@ public sealed partial class TerminalEmulator
                     var spec = parts[i + 1];
                     if (spec == "?")
                     {
+                        if (queries++ >= MaxPaletteQueries) { continue; }
                         var rgb = _indexedOverrides.TryGetValue(index, out var value) ? value : _basePalette.ResolveIndexed(index);
-                        ReplyColor(FormattableString.Invariant($"4;{index}"), rgb);
+                        ReplyColor(FormattableString.Invariant($"4;{index}"), rgb, bellTerminated);
                     }
                     else if (TryParseOscColor(spec, out var rgb))
                     {
@@ -99,7 +106,7 @@ public sealed partial class TerminalEmulator
                             1 => _basePalette.Background,
                             _ => _basePalette.Cursor,
                         });
-                        ReplyColor((command + i).ToString(CultureInfo.InvariantCulture), rgb);
+                        ReplyColor((command + i).ToString(CultureInfo.InvariantCulture), rgb, bellTerminated);
                     }
                     else if (TryParseOscColor(parts[i], out var rgb))
                     {
@@ -116,12 +123,35 @@ public sealed partial class TerminalEmulator
         if (changed) { RefreshPalette(); }
     }
 
-    private void ReplyColor(string command, uint rgb)
+    private void ReplyColor(string command, uint rgb, bool bellTerminated)
     {
         var red = ((rgb >> 16) & 255) * 257;
         var green = ((rgb >> 8) & 255) * 257;
         var blue = (rgb & 255) * 257;
-        ResponseRequested?.Invoke(FormattableString.Invariant($"\x1b]{command};rgb:{red:x4}/{green:x4}/{blue:x4}\x1b\\"));
+        var terminator = bellTerminated ? "\a" : "\x1b\\";
+        QueueResponse(FormattableString.Invariant($"\x1b]{command};rgb:{red:x4}/{green:x4}/{blue:x4}{terminator}"));
+    }
+
+    internal void HandleDcs(ReadOnlySpan<byte> payload)
+    {
+        if (!payload.StartsWith("+q"u8)) { return; }
+        var reply = new StringBuilder();
+        foreach (var rawName in Encoding.ASCII.GetString(payload[2..]).Split(';'))
+        {
+            var name = rawName.ToUpperInvariant();
+            var value = name switch
+            {
+                "524742" => "8",                 // RGB
+                "5463" => "1",                   // Tc
+                "544E" or "6E616D65" => TerminalType, // TN or name
+                "436F" or "636F6C6F7273" => "256", // Co or colors
+                _ => null,
+            };
+            if (value is null) { break; }
+            if (reply.Length != 0) { reply.Append(';'); }
+            reply.Append(name).Append('=').Append(Convert.ToHexString(Encoding.UTF8.GetBytes(value)));
+        }
+        QueueResponse(reply.Length == 0 ? "\x1bP0+r\x1b\\" : $"\x1bP1+r{reply}\x1b\\");
     }
 
     private static bool TryParseOscColor(string spec, out uint rgb)

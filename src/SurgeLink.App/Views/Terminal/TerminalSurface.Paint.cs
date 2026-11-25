@@ -32,6 +32,10 @@ internal sealed partial class TerminalSurface
         int visibleColumns;
         int visibleRows;
         long version;
+        int scrollback;
+        int viewportOffset;
+        int rows;
+        bool captureRows;
         bool repaintAll = _allRowsDirty;
         var selection = TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret);
         Dictionary<int, List<TerminalSearchSpan>>? searchRows = null;
@@ -47,30 +51,20 @@ internal sealed partial class TerminalSurface
         {
             if (!ReferenceEquals(resolver.Palette, emulator.Palette))
             {
-                resolver = ApplyPalette(emulator.Palette);
+                resolver = new TerminalStyleResolver(emulator.Palette);
                 repaintAll = true;
             }
             visibleColumns = Math.Max(1, Math.Min(emulator.Columns, _requestedColumns > 0 ? _requestedColumns : emulator.Columns));
             visibleRows = Math.Min(emulator.Rows, _scratchRows.Length);
             version = emulator.Version;
             searchRows = BuildSearchHighlights(emulator, visibleRows);
-            _updatingScrollBar = true;
-            try
-            {
-                _scrollBar.Maximum = emulator.ScrollbackLength;
-                _scrollBar.ViewportSize = emulator.Rows;
-                _scrollBar.LargeChange = Math.Max(1, emulator.Rows - 1);
-                _scrollBar.Value = emulator.ScrollbackLength - emulator.ViewportOffset;
-                _scrollBar.IsEnabled = emulator.ScrollbackLength > 0;
-            }
-            finally { _updatingScrollBar = false; }
+            scrollback = emulator.ScrollbackLength;
+            viewportOffset = emulator.ViewportOffset;
+            rows = emulator.Rows;
+            captureRows = _forcePaint || repaintAll || version != _paintedVersion
+                || visibleColumns != _paintedColumns || visibleRows != _paintedRowCount;
 
-            if (!_forcePaint && !repaintAll && version == _paintedVersion && visibleColumns == _paintedColumns && visibleRows == _paintedRowCount)
-            {
-                return;
-            }
-
-            for (int row = 0; row < visibleRows; row++)
+            for (int row = 0; captureRows && row < visibleRows; row++)
             {
                 IReadOnlyList<TerminalSearchSpan>? spans = null;
                 if (searchRows is not null && searchRows.TryGetValue(row, out List<TerminalSearchSpan>? rowSpans))
@@ -82,6 +76,20 @@ internal sealed partial class TerminalSurface
             }
         }
         finally { System.Threading.Monitor.Exit(emulator.SyncRoot); }
+
+        if (!ReferenceEquals(resolver, _resolver)) { ApplyPalette(resolver); }
+        _updatingScrollBar = true;
+        try
+        {
+            _scrollBar.Maximum = scrollback;
+            _scrollBar.ViewportSize = rows;
+            _scrollBar.LargeChange = Math.Max(1, rows - 1);
+            _scrollBar.Value = scrollback - viewportOffset;
+            _scrollBar.IsEnabled = scrollback > 0;
+        }
+        finally { _updatingScrollBar = false; }
+
+        if (!captureRows) { return; }
 
         repaintAll |= visibleColumns != _paintedColumns || visibleRows != _paintedRowCount;
         bool anyRowChanged = repaintAll;

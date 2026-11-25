@@ -8,8 +8,7 @@ namespace SurgeLink.App.Views.Terminal;
 internal sealed partial class TerminalSurface
 {
     /// <summary>
-    /// Draws the cursor. A block cursor repaints the glyph underneath in the
-    /// background colour instead of covering it, which is what a real terminal does.
+    /// Draws the cursor and keeps the glyph visible inside a block cursor.
     /// </summary>
     private void PaintCursor(TerminalMetrics metrics, TerminalStyleResolver resolver)
     {
@@ -74,7 +73,7 @@ internal sealed partial class TerminalSurface
                 _cursorRect.Width = cursorWidth;
                 _cursorRect.Height = metrics.CellHeight;
                 _cursorGlyph.Text = (cell.Attributes & CellAttributes.Hidden) != 0 ? " " : cell.Text ?? " ";
-                _cursorGlyph.Foreground = resolver.Brush(resolver.DefaultBackground);
+                _cursorGlyph.Foreground = resolver.Brush(TerminalPalette.LegibleOverlayForeground(resolver.DefaultBackground, resolver.Cursor));
                 Canvas.SetLeft(_cursorGlyph, left);
                 Canvas.SetTop(_cursorGlyph, top);
                 _cursorGlyph.Visibility = Visibility.Visible;

@@ -3,6 +3,7 @@ using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using Renci.SshNet;
 using Renci.SshNet.Common;
+using SurgeLink.Core.Terminal;
 
 namespace SurgeLink.Protocols.Ssh.Internal;
 
@@ -25,14 +26,9 @@ internal static class SshTrueColorShell
     internal static bool IsAvailable => CreateStream is not null && Open is not null && RequestPty is not null
         && RequestEnvironment is not null && RequestShell is not null;
 
-    internal static bool AdvertisesTrueColor(string terminalType) =>
-        terminalType.StartsWith("xterm", StringComparison.Ordinal)
-        || terminalType.EndsWith("-256color", StringComparison.Ordinal)
-        || terminalType.EndsWith("-direct", StringComparison.Ordinal);
-
     internal static ShellStream Create(SshClient client, string terminalType, uint columns, uint rows, int bufferSize, ILogger logger)
     {
-        if (!AdvertisesTrueColor(terminalType) || !IsAvailable || Session!.GetValue(client) is not { } session)
+        if (!TerminalStartOptions.AdvertisesTrueColor(terminalType) || !IsAvailable || Session!.GetValue(client) is not { } session)
             return client.CreateShellStream(terminalType, columns, rows, 0, 0, bufferSize);
 
         ShellStream? stream = null;
@@ -43,8 +39,18 @@ internal static class SshTrueColorShell
             Open!.Invoke(channel, null);
             if (RequestPty!.Invoke(channel, [terminalType, columns, rows, 0u, 0u, new Dictionary<TerminalModes, uint>()]) is not true)
                 throw new SshException("The server refused the pseudo-terminal request.");
-            if (RequestEnvironment!.Invoke(channel, ["COLORTERM", "truecolor"]) is not true)
-                logger.LogDebug("The server declined the SSH COLORTERM request.");
+            try
+            {
+                if (RequestEnvironment!.Invoke(channel, ["COLORTERM", "truecolor"]) is not true)
+                    logger.LogDebug("The server declined the SSH COLORTERM request.");
+            }
+            catch (TargetInvocationException ex) when (client.IsConnected && ex.InnerException is SshException or IOException)
+            {
+                logger.LogDebug(ex.InnerException, "The SSH COLORTERM request failed. Opening a standard shell channel.");
+                stream.Dispose();
+                stream = null;
+                return client.CreateShellStream(terminalType, columns, rows, 0, 0, bufferSize);
+            }
             if (RequestShell!.Invoke(channel, null) is not true)
                 throw new SshException("The server refused the shell request.");
             return stream;

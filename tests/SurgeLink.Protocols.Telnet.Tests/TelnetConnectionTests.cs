@@ -32,14 +32,21 @@ public sealed class TelnetConnectionTests
             if (received.Count >= 9) output.TrySetResult(received.ToArray());
         };
         terminal.Closed += (_, _) => { Interlocked.Increment(ref closeCount); closed.TrySetResult(); };
-        await terminal.StartAsync(new TerminalStartOptions { Columns = 80, Rows = 24 }, timeout.Token);
+        await terminal.StartAsync(new TerminalStartOptions { Columns = 80, Rows = 24, TerminalType = "xterm-direct" }, timeout.Token);
         Assert.True(terminal.IsOpen);
-        await ReadExactlyAsync(stream, 21, timeout.Token); // Initial WILL/DO offers.
+        var offers = await ReadExactlyAsync(stream, 24, timeout.Token);
+        Assert.Equal(new byte[] { 255, 251, 39 }, offers[12..15]);
 
         // Fragmented negotiation must not leak into the terminal text.
         await stream.WriteAsync(new byte[] { 255, 253 }, timeout.Token);
         await stream.WriteAsync(new byte[] { 31, 255, 251, 1 }, timeout.Token);
         Assert.Equal(new byte[] { 255, 250, 31, 0, 80, 0, 24, 255, 240 }, await ReadExactlyAsync(stream, 9, timeout.Token));
+        await stream.WriteAsync(new byte[] { 255, 253, 24, 255, 250, 24, 1, 255, 240 }, timeout.Token);
+        byte[] terminalType = [255, 250, 24, 0, .. "xterm-direct"u8, 255, 240];
+        Assert.Equal(terminalType, await ReadExactlyAsync(stream, terminalType.Length, timeout.Token));
+        await stream.WriteAsync(new byte[] { 255, 253, 39, 255, 250, 39, 1, 255, 240 }, timeout.Token);
+        byte[] environment = [255, 250, 39, 0, 3, .. "COLORTERM"u8, 1, .. "truecolor"u8, 255, 240];
+        Assert.Equal(environment, await ReadExactlyAsync(stream, environment.Length, timeout.Token));
         await stream.WriteAsync(Encoding.UTF8.GetBytes("login: \r\0\n"), timeout.Token);
         Assert.Equal(Encoding.UTF8.GetBytes("login: \r\n"), await output.Task.WaitAsync(timeout.Token));
 
@@ -74,7 +81,7 @@ public sealed class TelnetConnectionTests
         terminal.Closed += (_, _) => Interlocked.Increment(ref callbacks);
         session.StateChanged += (_, _) => Interlocked.Increment(ref callbacks);
         await terminal.StartAsync(new TerminalStartOptions(), timeout.Token);
-        await ReadExactlyAsync(peer.GetStream(), 21, timeout.Token);
+        await ReadExactlyAsync(peer.GetStream(), 24, timeout.Token);
         await Task.WhenAll(session.DisposeAsync().AsTask(), session.DisposeAsync().AsTask()).WaitAsync(timeout.Token);
         int after = Volatile.Read(ref callbacks);
         await Task.Delay(50, timeout.Token);

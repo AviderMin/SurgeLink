@@ -48,6 +48,19 @@ public sealed class TerminalBridgeResponseTests
     }
 
     [Fact]
+    public async Task RemoteColorProbeUsesTheConfiguredTerminalTypeAndRepliesOutsideTheLock()
+    {
+        var remote = new CapturingTerminal();
+        await using var bridge = new TerminalBridge(remote, new InlineDispatcher(), NullLogger.Instance, terminalType: "xterm-direct");
+        await bridge.StartAsync();
+        bridge.Emulator.ResponseRequested += _ => Assert.False(Monitor.IsEntered(bridge.Emulator.SyncRoot));
+
+        remote.Emit("\u001bP+q524742;544e\u001b\\");
+
+        Assert.Equal("\u001bP1+r524742=38;544E=787465726D2D646972656374\u001b\\", Assert.Single(remote.Writes));
+    }
+
+    [Fact]
     public async Task ConcurrentResizesDoNotLetAnOlderSizeOvertakeTheNewest()
     {
         var remote = new GatedResizeTerminal();

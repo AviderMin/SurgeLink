@@ -13,7 +13,7 @@ public sealed class OscTests
 
         Assert.Equal(0x123456u, emulator.Palette.Resolve(terminal.Cell(0, 0).Foreground, false, CellAttributes.None));
         Assert.Equal(0x8DB6CDu, emulator.Palette.ResolveIndexed(1));
-        Assert.Equal(new[] { "\u001b]4;200;rgb:1212/3434/5656\u001b\\", "\u001b]4;1;rgb:8d8d/b6b6/cdcd\u001b\\" }, replies);
+        Assert.Equal(new[] { "\u001b]4;200;rgb:1212/3434/5656\u0007", "\u001b]4;1;rgb:8d8d/b6b6/cdcd\u0007" }, replies);
 
         terminal.Feed("\u001b]104;200\u0007");
         Assert.Equal(TerminalPalette.Default.ResolveIndexed(200), emulator.Palette.ResolveIndexed(200));
@@ -35,8 +35,8 @@ public sealed class OscTests
         Assert.Equal(new[]
         {
             "\u001b]10;rgb:8383/9494/9696\u001b\\",
-            "\u001b]11;rgb:ffff/0000/8888\u001b\\",
-            "\u001b]12;rgb:0000/8080/ffff\u001b\\",
+            "\u001b]11;rgb:ffff/0000/8888\u0007",
+            "\u001b]12;rgb:0000/8080/ffff\u0007",
         }, replies);
 
         emulator.SetBasePalette(TerminalThemes.Light);
@@ -63,6 +63,36 @@ public sealed class OscTests
         terminal.Feed("\u001b]4;0;#112233\u0007\u001b]10;#112233\u0007");
         terminal.Emulator.ResetForNewShell();
         Assert.Same(TerminalThemes.Light, terminal.Emulator.Palette);
+    }
+
+    [Fact]
+    public void RisClearsEveryColorOverride()
+    {
+        var terminal = new TestTerminal();
+        terminal.Emulator.SetBasePalette(TerminalThemes.Light);
+        terminal.Feed("\u001b]4;1;#112233\u0007\u001b]10;#123456;#abcdef;#fedcba\u0007");
+        Assert.NotSame(TerminalThemes.Light, terminal.Emulator.Palette);
+
+        terminal.Feed("\u001bc");
+
+        Assert.Same(TerminalThemes.Light, terminal.Emulator.Palette);
+    }
+
+    [Fact]
+    public void PaletteQueriesAreBoundedAndDeliveredOutsideTheEmulatorLock()
+    {
+        var terminal = new TestTerminal();
+        var responses = new List<string>();
+        terminal.Emulator.ResponseRequested += response =>
+        {
+            Assert.False(Monitor.IsEntered(terminal.Emulator.SyncRoot));
+            responses.Add(response);
+        };
+        terminal.Feed("\u001b]4;" + string.Concat(Enumerable.Repeat("1;?;", 100)) + "1; #112233 \u001b\\");
+
+        Assert.Equal(32, responses.Count);
+        Assert.All(responses, response => Assert.EndsWith("\u001b\\", response));
+        Assert.Equal(0x112233u, terminal.Emulator.Palette.ResolveIndexed(1));
     }
 
     [Fact]

@@ -38,6 +38,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     private bool _shiftOut;
     private bool _joinNextRune;
     private string? _activeHyperlink;
+    private List<string>? _pendingResponses;
 
     /// <summary>
     /// When true, horizontal resizes reflow wrapped primary-screen and scrollback lines
@@ -161,8 +162,12 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     }
 
     /// <inheritdoc />
-    public void Feed(ReadOnlySpan<byte> data)
+    public void Feed(ReadOnlySpan<byte> data) => Feed(data, null);
+
+    /// <summary>Records output and parses it in one transaction, then dispatches replies outside the emulator lock.</summary>
+    public void Feed(ReadOnlySpan<byte> data, Action<ReadOnlySpan<byte>>? recordOutput)
     {
+        List<string>? responses;
         lock (_sync)
         {
             if (data.IsEmpty)
@@ -177,14 +182,21 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 // Every line added to scrollback advances the absolute viewport, so
                 // OnLineScrolledOff increases the offset by one. ScrollToBottom
                 // resumes live output.
+                recordOutput?.Invoke(data);
                 _parser.Feed(data);
             }
             finally
             {
+                responses = _pendingResponses;
+                _pendingResponses = null;
                 EndBatch();
             }
         }
+        if (responses is null) { return; }
+        foreach (var response in responses) { ResponseRequested?.Invoke(response); }
     }
+
+    private void QueueResponse(string response) => (_pendingResponses ??= []).Add(response);
 
     /// <inheritdoc />
     public void Resize(int columns, int rows)
@@ -268,7 +280,6 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             {
                 _primaryScreen.ResetShellState();
                 _alternateScreen.Reset();
-                ClearColorOverrides();
                 ResetSessionState();
             }
             finally { EndBatch(); }
@@ -277,6 +288,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
 
     private void ResetSessionState()
     {
+        ClearColorOverrides();
         _parser.Reset();
         _screen = _primaryScreen;
         _sgr.Reset();
@@ -756,7 +768,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 _screen.SetTabStop();
                 break;
             case 'Z':
-                ResponseRequested?.Invoke("\x1b[?1;0c");
+                QueueResponse("\x1b[?1;0c");
                 break;
             case 'c':
                 Reset();
@@ -894,18 +906,18 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             case 'n' when intermediates.IsEmpty:
                 if (privateMarker == '\0' && ParameterOrZero(parameters, 0) == 5)
                 {
-                    ResponseRequested?.Invoke("\x1b[0n");
+                    QueueResponse("\x1b[0n");
                 }
                 else if ((privateMarker == '\0' || privateMarker == '?') && ParameterOrZero(parameters, 0) == 6)
                 {
                     var row = _screen.CursorRow - (_modes.OriginMode ? _screen.ScrollTop : 0) + 1;
                     var prefix = privateMarker == '?' ? "?" : string.Empty;
-                    ResponseRequested?.Invoke(FormattableString.Invariant($"\x1b[{prefix}{row};{_screen.CursorColumn + 1}R"));
+                    QueueResponse(FormattableString.Invariant($"\x1b[{prefix}{row};{_screen.CursorColumn + 1}R"));
                 }
                 break;
             case 'c' when intermediates.IsEmpty && ParameterOrZero(parameters, 0) == 0:
-                if (privateMarker == '\0') { ResponseRequested?.Invoke("\x1b[?1;0c"); }
-                else if (privateMarker == '>') { ResponseRequested?.Invoke("\x1b[>0;1;0c"); }
+                if (privateMarker == '\0') { QueueResponse("\x1b[?1;0c"); }
+                else if (privateMarker == '>') { QueueResponse("\x1b[>0;1;0c"); }
                 break;
             case 'q':
                 if (intermediate == ' ')
@@ -958,7 +970,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     }
 
     /// <summary>Handles an OSC string (already terminated by BEL or ST).</summary>
-    internal void HandleOsc(ReadOnlySpan<byte> payload, bool complete)
+    internal void HandleOsc(ReadOnlySpan<byte> payload, bool complete, bool bellTerminated)
     {
         int separator = payload.IndexOf((byte)';');
         ReadOnlySpan<byte> commandPart = separator < 0 ? payload : payload[..separator];
@@ -981,7 +993,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 HandleOsc52Clipboard(rest);
                 break;
             case 4 or 10 or 11 or 12 or 104 or 110 or 111 or 112 when complete:
-                HandleOscColor(command, rest);
+                HandleOscColor(command, rest, bellTerminated);
                 break;
         }
     }
@@ -1576,7 +1588,8 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         if (modeIndex >= parameters.Length) { return end; }
 
         // xterm also accepts a semicolon before the first colon-separated subparameter.
-        if (end == modeIndex && modeIndex + 1 < parameters.Length && parameterIsSub[modeIndex + 1])
+        if (end == modeIndex && modeIndex + 1 < parameters.Length
+            && parameterIsSub[modeIndex + 1] && parameters[modeIndex] is 2 or 5)
         {
             end = modeIndex + 2;
             while (end < parameters.Length && parameterIsSub[end]) { end++; }
@@ -1600,7 +1613,8 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 int values = end - (modeIndex + 1);
                 if (values >= 3)
                 {
-                    SetRgbColor(code, parameters[end - 3], parameters[end - 2], parameters[end - 1]);
+                    int first = modeIndex + (values == 3 ? 1 : 2);
+                    SetRgbColor(code, parameters[first], parameters[first + 1], parameters[first + 2]);
                 }
 
                 return end;
@@ -1610,6 +1624,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
 
         int nextMode = parameters[modeIndex];
+        if (modeIndex + 1 < parameters.Length && parameterIsSub[modeIndex + 1]) { return modeIndex; }
         if (nextMode == 5 && modeIndex + 1 < parameters.Length)
         {
             SetIndexedColor(code, parameters[modeIndex + 1]);

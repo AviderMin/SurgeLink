@@ -49,7 +49,7 @@ public sealed class TelnetCodecTests
     public void InitialRequestsAreAcknowledgedWithoutBeingRepeated()
     {
         var codec = Create();
-        Assert.Equal(21, codec.BeginNegotiation().Length);
+        Assert.Equal(24, codec.BeginNegotiation().Length);
         Assert.Empty(codec.Receive([255, 253, 0, 255, 251, 0, 255, 251, 1]).Reply);
         Assert.Empty(codec.Receive([255, 254, 24, 255, 252, 3]).Reply);
     }
@@ -84,6 +84,24 @@ public sealed class TelnetCodecTests
         var reply = new List<byte>();
         foreach (byte b in new byte[] { 255, 250, 24, 1, 255, 240 }) reply.AddRange(codec.Receive([b]).Reply);
         Assert.Equal(new byte[] { 255, 250, 24, 0 }.Concat(Encoding.ASCII.GetBytes("xterm-256color")).Concat(new byte[] { 255, 240 }), reply);
+    }
+
+    [Fact]
+    public void NewEnvironAdvertisesOnlyColorCapabilityAfterNegotiation()
+    {
+        var codec = new TelnetCodec(80, 24, "XTERM-DIRECT");
+        byte[] send = [255, 250, 39, 1, 255, 240];
+        Assert.Empty(codec.Receive(send).Reply);
+        Assert.Equal(new byte[] { 255, 251, 39 }, codec.Receive([255, 253, 39]).Reply);
+        byte[] expect = [255, 250, 39, 0, 3, .. "COLORTERM"u8, 1, .. "truecolor"u8, 255, 240];
+        Assert.Equal(expect, codec.Receive(send).Reply);
+        Assert.Equal(expect, codec.Receive([255, 250, 39, 1, 3, .. "COLORTERM"u8, 255, 240]).Reply);
+        byte[] undefined = [255, 250, 39, 0, 0, .. "USER"u8, 255, 240];
+        Assert.Equal(undefined,
+            codec.Receive([255, 250, 39, 1, 0, .. "USER"u8, 255, 240]).Reply);
+        Assert.Equal(new byte[] { 255, 252, 39 }, codec.Receive([255, 254, 39]).Reply);
+        Assert.Empty(codec.Receive(send).Reply);
+        Assert.Equal(new byte[] { 255, 252, 39 }, new TelnetCodec(80, 24, "vt100").Receive([255, 253, 39]).Reply);
     }
 
     [Fact]
