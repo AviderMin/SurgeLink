@@ -328,7 +328,7 @@ internal sealed class ScreenBuffer
             {
                 _pendingWrap = false;
                 _cursorColumn = 0;
-                _lines[_cursorRow].Wrapped = true;
+                _lines[_cursorRow].WrappedColumns = _columns;
                 LineFeedInternal();
             }
             else
@@ -343,7 +343,7 @@ internal sealed class ScreenBuffer
             {
                 _pendingWrap = false;
                 _cursorColumn = 0;
-                _lines[_cursorRow].Wrapped = true;
+                _lines[_cursorRow].WrappedColumns = _columns - 1;
                 LineFeedInternal();
             }
             else
@@ -414,7 +414,7 @@ internal sealed class ScreenBuffer
             {
                 _pendingWrap = false;
                 _cursorColumn = 0;
-                _lines[_cursorRow].Wrapped = true;
+                _lines[_cursorRow].WrappedColumns = _columns;
                 LineFeedInternal();
             }
             var line = _lines[_cursorRow];
@@ -495,7 +495,7 @@ internal sealed class ScreenBuffer
                 break;
             default:
                 ClearCells(_cursorRow, _cursorColumn, _columns);
-                _lines[_cursorRow].Wrapped = false;
+                _lines[_cursorRow].WrappedColumns = 0;
                 for (int row = _cursorRow + 1; row < _rows; row++)
                 {
                     ClearRow(row);
@@ -522,7 +522,7 @@ internal sealed class ScreenBuffer
                 break;
             default:
                 ClearCells(_cursorRow, _cursorColumn, _columns);
-                _lines[_cursorRow].Wrapped = false;
+                _lines[_cursorRow].WrappedColumns = 0;
                 break;
         }
 
@@ -840,7 +840,7 @@ internal sealed class ScreenBuffer
                 {
                     line.PrepareForEdit();
                     line.Resize(columns);
-                    line.Wrapped = false;
+                    line.WrappedColumns = 0;
                     reflowed.Add(line);
                     continue;
                 }
@@ -864,13 +864,9 @@ internal sealed class ScreenBuffer
                         copyLen--;
                     }
                 }
-                else if (copyLen > 0
-                    && src.GetCell(copyLen - 1) == TerminalCell.Blank
-                    && GetCombinedLine(scrollback, r + 1).GetCell(0).Width == CellWidth.Wide)
+                else
                 {
-                    // A wide glyph at the start of the next wrapped row left one padding
-                    // blank at the right edge; drop it so re-widening stays lossless.
-                    copyLen--;
+                    copyLen = Math.Min(copyLen, src.WrappedColumns);
                 }
 
                 if (groupHasCursor && r == cursorAbsRow)
@@ -914,7 +910,7 @@ internal sealed class ScreenBuffer
                 }
                 if (col + width > columns)
                 {
-                    currentLine.Wrapped = true;
+                    currentLine.WrappedColumns = col;
                     reflowed.Add(currentLine);
                     currentLine = new CellLine(columns);
                     col = 0;

@@ -12,6 +12,30 @@ namespace SurgeLink.Agent.Tests;
 /// </summary>
 public sealed class AgentLocalPathSecurityTests
 {
+    [WindowsFact]
+    public void AgentTransferRejectsMultiplyLinkedLocalFiles()
+    {
+        var directory = Directory.CreateTempSubdirectory("surge-link-test-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "file.txt");
+            var link = Path.Combine(directory.FullName, "second-name.txt");
+            File.WriteAllText(path, "fixture");
+            Assert.True(CreateHardLink(link, path, 0));
+
+            Assert.Throws<UnsafeLocalPathException>(() => LocalDownloadPath.OpenExistingFileForRead(path, rejectHardLinks: true));
+            Assert.Throws<UnsafeLocalPathException>(() => LocalDownloadPath.IsSafeExistingFile(link));
+            using var ordinaryUpload = LocalDownloadPath.OpenExistingFileForRead(path);
+            Assert.Equal((long)"fixture".Length, ordinaryUpload.Length);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW",
+        CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool CreateHardLink(string link, string path, nint securityAttributes);
+
     private static (AgentGateway Gateway, string Handle) GrantControl(AgentGatewayTests.TestSession session,
         ITerminalAutomation? terminal = null)
     {

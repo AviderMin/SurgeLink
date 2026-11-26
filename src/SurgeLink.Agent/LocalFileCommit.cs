@@ -1,79 +1,48 @@
+using System.Globalization;
 using SurgeLink.Core.Files;
 
 namespace SurgeLink.Agent;
 
 /// <summary>
-/// Publishes a fully written sibling temporary file. A new destination is created
-/// with a non-overwriting move; an existing destination is replaced only through
-/// <see cref="File.Replace(string, string, string?)"/>. On NTFS that preserves the
-/// replaced file's access control list and alternate data streams (covered by the
-/// download tests). Filesystems or encrypted files that reject replacement fail
-/// closed instead of falling back to a metadata-destroying overwrite.
+/// Publishes a fully written sibling temporary file at an unused name.
 /// </summary>
 internal static class LocalFileCommit
 {
-    private const int MaximumAttempts = 4;
+    private const int MaximumSuffix = 1000;
 
-    /// <summary>Publishes <paramref name="temporary"/> at <paramref name="destination"/>.</summary>
-    /// <exception cref="LocalFileAlreadyExistsException">Overwrite is disabled and the destination exists.</exception>
-    public static void Publish(string temporary, string destination, bool overwrite)
+    /// <summary>Publishes the staged file and returns the actual path.</summary>
+    public static string Publish(string temporary, string destination, bool allowAlternateName, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(temporary);
         ArgumentException.ThrowIfNullOrEmpty(destination);
 
-        for (var attempt = 0; attempt < MaximumAttempts; attempt++)
+        var directory = Path.GetDirectoryName(destination)!;
+        var name = Path.GetFileName(destination);
+        var extension = Path.GetExtension(name);
+        if (extension.Length == name.Length) { extension = string.Empty; }
+        var stem = name[..(name.Length - extension.Length)];
+        for (var suffix = 0; suffix <= MaximumSuffix; suffix++)
         {
-            if (!LocalDownloadPath.IsSafeExistingFile(destination))
+            cancellationToken.ThrowIfCancellationRequested();
+            var candidate = suffix == 0 ? destination
+                : LocalDownloadPath.Resolve(directory, stem + " (" + suffix.ToString(CultureInfo.InvariantCulture) + ")" + extension);
+            try
             {
-                try
-                {
-                    // Never overwrite an entry that appeared after the caller's check.
-                    File.Move(temporary, destination, overwrite: false);
-                    return;
-                }
-                catch (IOException)
-                {
-                    if (!LocalDownloadPath.IsSafeExistingFile(destination)) throw;
-                    if (!overwrite)
-                    {
-                        throw new LocalFileAlreadyExistsException(destination);
-                    }
-                }
+                File.Move(temporary, candidate, overwrite: false);
+                return candidate;
             }
-            else
+            catch (IOException ex) when (IsNameCollision(ex, candidate))
             {
-                if (!overwrite)
-                {
-                    throw new LocalFileAlreadyExistsException(destination);
-                }
-
-                try
-                {
-                    // ReplaceFile is the only overwrite path: it merges the
-                    // replaced file's access control list and keeps its alternate
-                    // data streams on NTFS. Failures (locked, encrypted or
-                    // unsupported destinations) are surfaced, never downgraded.
-                    File.Replace(temporary, destination, destinationBackupFileName: null);
-                    return;
-                }
-                catch (PlatformNotSupportedException exception)
-                {
-                    throw new IOException(
-                        "Replacing the existing local file is not supported here; the destination was left unchanged.",
-                        exception);
-                }
-                catch (FileNotFoundException)
-                {
-                    // The destination disappeared after it was observed. Retry the
-                    // non-overwriting move path instead of recreating or overwriting.
-                }
+                if (!allowAlternateName) { throw new LocalFileAlreadyExistsException(destination); }
             }
         }
 
-        // Persistent create/remove churn: fail closed rather than guess which
-        // destination the caller intended.
-        throw new IOException("The local destination kept changing during the download.");
+        throw new IOException("No unused numbered name is available. Choose a different download file name.");
     }
+
+    private static bool IsNameCollision(IOException error, string path) =>
+        (OperatingSystem.IsWindows() && error.HResult is unchecked((int)0x80070050) or unchecked((int)0x800700B7))
+        || File.Exists(path) || Directory.Exists(path);
 }
 
 /// <summary>The destination appeared while the download was in flight.</summary>

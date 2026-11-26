@@ -32,7 +32,10 @@ internal sealed class CellLine
     /// row was filled without a hard line break. Copying must not insert a newline
     /// between the two rows of one logical line.
     /// </summary>
-    public bool Wrapped { get; set; }
+    public bool Wrapped => WrappedColumns != 0;
+
+    /// <summary>Columns that belong to the logical line before the soft wrap.</summary>
+    public int WrappedColumns { get; set; }
 
     public CellLine Copy()
     {
@@ -46,7 +49,7 @@ internal sealed class CellLine
     {
         Array.Fill(Cells, TerminalCell.Blank);
         _hiddenDirty = false;
-        Wrapped = false;
+        WrappedColumns = 0;
     }
 
     public void Clear(TerminalCell blank)
@@ -55,7 +58,7 @@ internal sealed class CellLine
         // stale content for a later widening to resurrect.
         Array.Fill(Cells, blank);
         _hiddenDirty = false;
-        Wrapped = false;
+        WrappedColumns = 0;
     }
 
     /// <summary>

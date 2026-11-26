@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Text;
+using System.Text.Json;
 
 namespace SurgeLink.Agent;
 
@@ -15,6 +16,43 @@ internal static class AgentFilePage
     // Up to three continuation bytes may precede the next character boundary,
     // and the page must be able to hold one complete code point (four bytes).
     private const int BoundarySlack = 8;
+
+    // Leave room for the response envelope and an escaped path of up to 4096 characters.
+    private const int MaximumEncodedTextBytes = AgentWire.MaximumFrameBytes - 32 * 1024;
+
+    public static (int Start, int Length) FitWireText(string text, bool keepTail)
+    {
+        if (Fits(text.AsSpan())) { return (0, text.Length); }
+
+        var lower = 0;
+        var upper = text.Length - 1;
+        while (lower < upper)
+        {
+            var middle = lower + (upper - lower + 1) / 2;
+            var (start, length) = GetSlice(middle);
+            if (Fits(text.AsSpan(start, length))) { lower = middle; }
+            else { upper = middle - 1; }
+        }
+        return GetSlice(lower);
+
+        (int Start, int Length) GetSlice(int length)
+        {
+            var start = keepTail ? text.Length - length : 0;
+            if (keepTail && start < text.Length && char.IsLowSurrogate(text[start]))
+            {
+                start++;
+                length--;
+            }
+            else if (!keepTail && length > 0 && char.IsHighSurrogate(text[length - 1]))
+            {
+                length--;
+            }
+            return (start, length);
+        }
+
+        static bool Fits(ReadOnlySpan<char> value) =>
+            JsonEncodedText.Encode(value, AgentJson.Options.Encoder).EncodedUtf8Bytes.Length <= MaximumEncodedTextBytes;
+    }
 
     public static async Task<FileTextPage> ReadAsync(Stream stream, long offset, int limit, CancellationToken cancellationToken)
     {

@@ -77,14 +77,19 @@ internal sealed class MainShell : Component
         var connectPending = UseRef(false);
         var connectionCancellation = UseRef<CancellationTokenSource?>(null);
         var (persistenceError, setPersistenceError) = UseState<string?>(null);
+        var pendingProfileWrites = UseRef(0);
+        var profileWrites = UseMemo(() => new SemaphoreSlim(1, 1), NoDependencies);
+        UseClosingGuard(() => pendingProfileWrites.Current == 0);
 
         void ReportPersistenceFailure(Exception error) => setPersistenceError(error.Message);
 
-        bool TryPersist(Action operation)
+        async Task<bool> TryPersistAsync(Action operation)
         {
+            pendingProfileWrites.Current++;
+            await profileWrites.WaitAsync();
             try
             {
-                operation();
+                await Task.Run(operation);
                 setPersistenceError(null);
                 return true;
             }
@@ -94,8 +99,13 @@ internal sealed class MainShell : Component
                 ReportPersistenceFailure(ex);
                 // Profile and credential files may fail independently; show what
                 // actually persisted even if the second write failed.
-                workspace.ReloadProfiles();
+                await Task.Run(workspace.ReloadProfiles);
                 return false;
+            }
+            finally
+            {
+                pendingProfileWrites.Current--;
+                profileWrites.Release();
             }
         }
 
@@ -193,7 +203,9 @@ internal sealed class MainShell : Component
             }
         }
 
-        void OpenDemo()
+        void OpenDemo() => _ = OpenDemoAsync();
+
+        async Task OpenDemoAsync()
         {
             var profile = workspace.Snapshot.Profiles.FirstOrDefault(p => p.ProtocolId == "demo")
                           ?? SessionProfile.New(
@@ -202,17 +214,19 @@ internal sealed class MainShell : Component
                               0,
                               Environment.UserName,
                               Str.T("shell.demo.profileName", "Demo session"));
-            if (TryPersist(() => workspace.SaveProfile(profile, new StoredCredential { Password = "demo" })))
+            if (await TryPersistAsync(() => workspace.SaveProfile(profile, new StoredCredential { Password = "demo" })))
             {
                 Connect(profile);
             }
         }
 
-        void SaveProfile(SessionEditorOutcome outcome)
+        void SaveProfile(SessionEditorOutcome outcome) => _ = SaveProfileAsync(outcome);
+
+        async Task SaveProfileAsync(SessionEditorOutcome outcome)
         {
             shellModal.Current = null;
             setEditor(null);
-            if (TryPersist(() => workspace.SaveProfile(outcome.Profile, outcome.Credential))
+            if (await TryPersistAsync(() => workspace.SaveProfile(outcome.Profile, outcome.Credential))
                 && outcome.ConnectAfterSave)
             {
                 _ = ConnectAsync(outcome.Profile, outcome.Options);
@@ -236,7 +250,7 @@ internal sealed class MainShell : Component
 
             if (confirmed)
             {
-                TryPersist(() => workspace.DeleteProfile(profile.Id));
+                await TryPersistAsync(() => workspace.DeleteProfile(profile.Id));
             }
         }
 
@@ -299,11 +313,13 @@ internal sealed class MainShell : Component
             workspace.Activate(tabs[next].Id);
         }
 
-        void Reconnect(WorkspaceTab tab)
+        void Reconnect(WorkspaceTab tab) => _ = ReconnectAsync(tab);
+
+        async Task ReconnectAsync(WorkspaceTab tab)
         {
-            if (workspace.GetReconnectProfile(tab.Id) is { } profile)
+            if (await Task.Run(() => workspace.GetReconnectProfile(tab.Id)) is { } profile)
             {
-                _ = ConnectAsync(profile, reconnectTabId: tab.Id);
+                await ConnectAsync(profile, reconnectTabId: tab.Id);
             }
         }
 

@@ -28,7 +28,7 @@
 2. 让每个状态变更动作带机械前置条件（不依赖 LLM 自觉）；
 3. 保持人在场优先（human-in-the-loop wins）。
 
-补充：`files.upload`/`files.download` 读写本机文件，超出远端会话的授权范围；每次操作必须在桌面端弹窗确认并显示确切本地路径，无 UI 时默认拒绝（`AgentFilePolicy`）。
+补充：`files.upload`/`files.download` 读写本机文件，超出远端会话的授权范围。每次操作都需在桌面弹窗确认，弹窗显示请求的本地路径和冲突处理方式。下载获准另存时，副本使用同目录下带编号的文件名。无 UI 时默认拒绝（`AgentFilePolicy`）。
 
 ### 1.3 资产清单
 

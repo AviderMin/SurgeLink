@@ -413,7 +413,8 @@ public sealed partial class AgentGateway
                 hasMore = page.HasMore;
                 sinceOutput.Restart();
                 if (expectText is not null
-                    && FindExecMarker(text.ToString(scanStart, text.Length - scanStart), expectText) is { } completion)
+                    && FindExecMarker(text.ToString(scanStart, text.Length - scanStart), expectText,
+                        scanStart == 0 || text[scanStart - 1] == '\n') is { } completion)
                 {
                     exitCode = completion.ExitCode;
                     text.Remove(scanStart + completion.Start, completion.Length);
@@ -470,11 +471,16 @@ public sealed partial class AgentGateway
         }), exitCode);
     }
 
-    private static (int Start, int Length, int ExitCode)? FindExecMarker(string text, string marker)
+    private static (int Start, int Length, int ExitCode)? FindExecMarker(string text, string marker, bool startsAtLineBoundary)
     {
         var index = 0;
         while ((index = text.IndexOf(marker, index, StringComparison.Ordinal)) >= 0)
         {
+            if (index == 0 ? !startsAtLineBoundary : text[index - 1] != '\n')
+            {
+                index += marker.Length;
+                continue;
+            }
             var cursor = index + marker.Length;
             if (cursor < text.Length && text[cursor] == '-') cursor++;
             var digitsStart = cursor;
@@ -620,7 +626,7 @@ public sealed partial class AgentGateway
         FileStream localFile;
         try
         {
-            localFile = LocalDownloadPath.OpenExistingFileForRead(localPath);
+            localFile = LocalDownloadPath.OpenExistingFileForRead(localPath, rejectHardLinks: true);
         }
         catch (UnsafeLocalPathException ex)
         {
@@ -675,12 +681,13 @@ public sealed partial class AgentGateway
             // failed or cancelled transfer into data loss.
             var temporary = Path.Combine(directory, ".surge-" + Guid.NewGuid().ToString("N") + ".tmp");
             long written = 0;
+            var published = false;
             try
             {
                 if (LocalDownloadPath.IsSafeExistingFile(localPath) && !request.Overwrite)
-                    return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
+                    return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to allow a numbered sibling name.");
                 // Close the remote source before publishing the destination. A failed
-                // close must not leave a replaced file behind a read_failed response.
+                // close must not publish a file behind a read_failed response.
                 await using (var source = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false))
                 {
                     await using (var target = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
@@ -698,20 +705,13 @@ public sealed partial class AgentGateway
                     }
                 }
                 await CheckTransferControlAsync(grant, ct).ConfigureAwait(false);
-                try
-                {
-                    // Same directory, so publishing is atomic on the local volume. A
-                    // new destination is moved without overwrite; an existing one is
-                    // replaced with File.Replace so its NTFS access control list and
-                    // alternate data streams survive. Unsupported replacements fail
-                    // here without falling back to a metadata-destroying overwrite.
-                    LocalFileCommit.Publish(temporary, localPath, request.Overwrite);
-                }
-                catch (LocalFileAlreadyExistsException)
-                {
-                    return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to replace it.");
-                }
-                return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = written, overwrite = request.Overwrite });
+                var actualPath = LocalFileCommit.Publish(temporary, localPath, request.Overwrite, ct);
+                published = true;
+                return AgentResponse.Ok(new { path = request.Path, localPath = actualPath, bytesWritten = written, overwrite = false });
+            }
+            catch (LocalFileAlreadyExistsException)
+            {
+                return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to allow a numbered sibling name.");
             }
             catch (UnsafeLocalPathException ex)
             {
@@ -723,8 +723,11 @@ public sealed partial class AgentGateway
             }
             finally
             {
-                try { File.Delete(temporary); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                if (!published)
+                {
+                    try { File.Delete(temporary); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                }
             }
         }
     }
@@ -740,15 +743,18 @@ public sealed partial class AgentGateway
             var tailLimit = Math.Clamp(request.TailBytes.Value, 1, 512 * 1024);
             await using var tailStream = await files.OpenReadAsync(request.Path!, ct).ConfigureAwait(false);
             var tail = await AgentFilePage.ReadTailAsync(tailStream, tailLimit, ct).ConfigureAwait(false);
-            var tailText = StripLeadingBom(tail.Text, tail.Offset);
+            var tailRange = AgentFilePage.FitWireText(tail.Text, keepTail: true);
+            var removed = System.Text.Encoding.UTF8.GetByteCount(tail.Text.AsSpan(0, tailRange.Start));
+            var tailOffset = removed == 0 ? tail.Offset : tail.Offset + tail.SkippedBytes + removed;
+            var tailBytes = tail.Offset + tail.BytesRead - tailOffset;
             return AgentResponse.Ok(new
             {
                 path = request.Path,
-                text = tailText,
-                offset = tail.Offset,
-                bytesRead = tail.BytesRead,
-                skippedBytes = tail.SkippedBytes,
-                truncated = tail.Truncated,
+                text = StripLeadingBom(tail.Text[tailRange.Start..], tailOffset),
+                offset = tailOffset,
+                bytesRead = tailBytes,
+                skippedBytes = removed == 0 ? tail.SkippedBytes : 0,
+                truncated = tail.Truncated || removed != 0,
                 nextOffset = tail.Offset + tail.BytesRead,
                 tail = true,
             });
@@ -765,16 +771,17 @@ public sealed partial class AgentGateway
         var offset = request.Offset ?? 0;
         var limit = Math.Clamp(request.MaxBytes ?? 128 * 1024, 1, 512 * 1024);
         var page = await AgentFilePage.ReadAsync(stream, offset, limit, ct).ConfigureAwait(false);
-        var text = StripLeadingBom(page.Text, offset);
+        var pageRange = AgentFilePage.FitWireText(page.Text, keepTail: false);
+        var bytesRead = page.SkippedBytes + System.Text.Encoding.UTF8.GetByteCount(page.Text.AsSpan(0, pageRange.Length));
         return AgentResponse.Ok(new
         {
-            path = request.Path, text, offset,
+            path = request.Path, text = StripLeadingBom(page.Text[..pageRange.Length], offset), offset,
             // Pages end on a UTF-8 character boundary. A request whose offset falls
             // inside a character is aligned forward and reports the skipped bytes.
-            bytesRead = page.BytesRead,
+            bytesRead,
             skippedBytes = page.SkippedBytes,
-            truncated = page.Truncated,
-            nextOffset = offset + page.BytesRead,
+            truncated = page.Truncated || bytesRead != page.BytesRead,
+            nextOffset = offset + bytesRead,
         });
     }
 

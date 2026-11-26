@@ -8,13 +8,23 @@
 
 SurgeLink 是一款使用 C#、WinUI 3 和 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor) 构建的开源 SSH／Telnet／串口客户端。通过标签页管理多个连接，在终端、远程文件和监控视图之间切换；无需服务器，也能用内置离线演示体验主要界面。
 
-当前源码版本：**1.0.3.17**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
+当前源码版本：**1.0.3.18**。安装包下载见 [GitHub Releases](https://github.com/AviderMin/SurgeLink/releases)。
 
 [更新](#版本更新) · [功能](#功能) · [界面预览](#界面预览) · [开始使用](#开始使用) · [构建](#从源码构建) · [打包](#打包与-github-actions) · [Agent 与 CLI](#ai-agent-与-cli共享终端预览) · [文档](#开发文档)
 
 ![SurgeLink 终端与会话侧栏](docs/images/main-window.png)
 
 ## 版本更新
+
+**1.0.3.18** 修复终端跨行复制、会话与监控生命周期、文件读取和发布版本检查。
+
+- 终端跨软换行复制时保留原文空格。重开 Shell 失败时保留旧终端画面。
+- 连接元数据与配置写盘不再占用工作区锁。关闭监控后，正在识别远端系统的任务不会重新创建探针。
+- Agent 文件读取按 JSON 帧大小缩页，并保持 UTF-8 字符边界和字节偏移。文本编辑器重载会使用最新文件大小。
+- 保存远端文件前会核对内容。SFTP 无法将核对和写入作为一次原子操作。同一文件有其他写入者时，可先导出本地副本保留修改。
+- 发布流程按四段版本号检查重复，避免不同标签产生相同的 APPX 版本。
+- Windows 上的 ProxyJump 在转发前验证本机 TCP 连接的发起进程，只接受 SurgeLink 自身建立的连接。
+- Agent 下载遇到同名文件时，`--overwrite` 允许保存为 `demo (1).txt` 等同目录副本。原文件保留，响应返回实际路径。
 
 **1.0.3.17** 优化 AI Agent 接入体验、命令执行超时契约与大日志尾部读取：
 

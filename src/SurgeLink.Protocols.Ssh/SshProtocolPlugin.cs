@@ -80,6 +80,8 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
         ForwardedPortLocal? jumpTunnel = null;
         if (!string.IsNullOrWhiteSpace(options.ProxyJump))
         {
+            if (!OperatingSystem.IsWindows())
+                throw new ProtocolException("ProxyJump requires Windows to verify the owner of its local tunnel.", ProtocolFailureKind.Configuration);
             (jumpClient, jumpTunnel) = await OpenJumpTunnelAsync(
                 request, options, context, logger, timeout, cancellationToken).ConfigureAwait(false);
             factory.SetJumpEndpoint("127.0.0.1", (int)jumpTunnel.BoundPort);
@@ -219,7 +221,16 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
 
             await timeout.ConnectAsync(jumpClient).ConfigureAwait(false);
             var targetPort = (uint)(targetRequest.Port > 0 ? targetRequest.Port : DefaultPort);
-            tunnel = new ForwardedPortLocal("127.0.0.1", 0, targetRequest.Host, targetPort);
+            var localPort = new ForwardedPortLocal("127.0.0.1", 0, targetRequest.Host, targetPort);
+            tunnel = localPort;
+            // SSH.NET 2026.0 raises this event before opening the remote channel
+            // and closes the accepted socket when the handler rejects it.
+            localPort.RequestReceived += (_, connection) =>
+            {
+                if (connection.OriginatorHost != "127.0.0.1"
+                    || !LoopbackConnectionOwner.IsOwnedBy(connection.OriginatorPort, localPort.BoundPort, Environment.ProcessId))
+                    throw new IOException("The jump tunnel only accepts connections from the SurgeLink process.");
+            };
             jumpClient.AddForwardedPort(tunnel);
             tunnel.Start();
             return (jumpClient, tunnel);

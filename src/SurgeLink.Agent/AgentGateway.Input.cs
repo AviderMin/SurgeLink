@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using SurgeLink.Core.Terminal;
 
@@ -31,6 +32,8 @@ public sealed partial class AgentGateway
             return AgentResponse.Error("invalid_arguments", "expectedInputRevision from read_terminal is required.");
         if ((request.Method is "terminal.text" or "terminal.exec") && (request.Text is null || request.Text.Length > 16384 || request.Text.Length == 0 && !request.Submit))
             return AgentResponse.Error("invalid_arguments", "Supply text up to 16384 characters, or submit an empty line explicitly.");
+        if (request.Method == "terminal.exec" && request.Text!.Contains('\0'))
+            return AgentResponse.Error("invalid_arguments", "A POSIX shell command cannot contain NUL.");
         if (request.Method == "terminal.key" && (string.IsNullOrWhiteSpace(request.Key) || request.Key.Length > 64))
             return AgentResponse.Error("invalid_arguments", "Supply a terminal key such as Enter, Tab, Ctrl+C or Up.");
         var isText = request.Method is "terminal.text" or "terminal.exec";
@@ -92,8 +95,20 @@ public sealed partial class AgentGateway
         return response;
     }
 
-    private static string BuildExecText(string command, string marker) =>
-        command.TrimEnd('\r', '\n') + "\n__surge_status=$?; printf '\\n" + marker + ":%d\\n' \"$__surge_status\"";
+    private static string BuildExecText(string command, string marker)
+    {
+        // Parse the completion print before executing anything that can read stdin.
+        var line = new StringBuilder("command eval \"$(printf '%b' ' ");
+        foreach (var character in command.TrimEnd('\r', '\n').Replace("\r\n", "\n", StringComparison.Ordinal))
+        {
+            if (character == '\'') { line.Append("'\\''"); }
+            else if (character == '\\') { line.Append("\\\\"); }
+            else if (char.IsAscii(character) && char.IsControl(character))
+                line.Append("\\0").Append(Convert.ToString(character, 8).PadLeft(3, '0'));
+            else { line.Append(character); }
+        }
+        return line.Append("')\"; printf '\\n").Append(marker).Append(":%d\\n' \"$?\"").ToString();
+    }
 
     private static string CleanExecOutput(string text, string marker, string? echoText)
     {
@@ -102,8 +117,7 @@ public sealed partial class AgentGateway
         var filtered = new List<string>();
         foreach (var line in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
         {
-            if (line.Contains("__surge_status=$?; printf", StringComparison.Ordinal)
-                || line.Contains(marker, StringComparison.Ordinal))
+            if (line.Contains(marker, StringComparison.Ordinal))
                 continue;
             if (!echoRemoved && !string.IsNullOrEmpty(command)
                 && string.Equals(line.Trim(), command, StringComparison.Ordinal))

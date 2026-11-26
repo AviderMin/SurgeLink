@@ -86,6 +86,21 @@ public sealed class ShellRecoveryTests
     }
 
     [Fact]
+    public async Task FailedShellStartupLeavesPreviousEmulatorUntouched()
+    {
+        await using var harness = await Harness.OpenAsync();
+        harness.Original.Exit();
+        var emulator = harness.Tab.Terminal!.Emulator;
+        emulator.Feed("existing output"u8);
+        var original = emulator.GetVisibleText();
+        harness.Session.TerminalFactory = _ => Task.FromResult<IRemoteTerminal>(new ControlledTerminal { FailStart = true });
+
+        await Assert.ThrowsAsync<IOException>(() => harness.Workspace.ReopenTerminalAsync(harness.Tab.Id));
+        Assert.Same(emulator, harness.Tab.Terminal!.Emulator);
+        Assert.Equal(original, emulator.GetVisibleText());
+    }
+
+    [Fact]
     public async Task ClosingDuringReopenCannotResurrectTheTab()
     {
         await using var harness = await Harness.OpenAsync();
@@ -156,10 +171,16 @@ public sealed class ShellRecoveryTests
         public int Rows => 24;
         public bool IsOpen { get; private set; }
         public int DisposeCount { get; private set; }
+        public bool FailStart { get; init; }
         public event EventHandler<TerminalOutputEventArgs>? OutputReceived { add { } remove { } }
         public event EventHandler? Closed;
         public void Exit() { IsOpen = false; Closed?.Invoke(this, EventArgs.Empty); }
-        public Task StartAsync(TerminalStartOptions options, CancellationToken cancellationToken) { IsOpen = true; return Task.CompletedTask; }
+        public Task StartAsync(TerminalStartOptions options, CancellationToken cancellationToken)
+        {
+            if (FailStart) { return Task.FromException(new IOException("Shell startup failed.")); }
+            IsOpen = true;
+            return Task.CompletedTask;
+        }
         public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
         public Task ResizeAsync(int columns, int rows, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() { DisposeCount++; IsOpen = false; return ValueTask.CompletedTask; }

@@ -201,14 +201,12 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             setStatus(null);
             try
             {
-                RemoteFileAccess.RequireRegularFile(target);
-                await RemoteFileAccess.RequireRegularFileAsync(props.FileSystem, target.FullPath, cancellationToken).ConfigureAwait(true);
-                if (target.Size > MaximumEditorBytes)
+                var current = await props.FileSystem.StatAsync(target.FullPath, cancellationToken).ConfigureAwait(true);
+                RemoteFileAccess.RequireRegularFile(current);
+                if (current.Size > MaximumEditorBytes)
                 {
-                    throw new InvalidOperationException(
-                        Str.T("sftp.editor.tooLarge", "This file is too large for the built-in text editor."));
+                    throw new IOException(Str.T("sftp.editor.tooLarge", "This file is too large for the built-in text editor."));
                 }
-
                 await using var stream = await props.FileSystem
                     .OpenReadAsync(target.FullPath, cancellationToken)
                     .ConfigureAwait(true);
@@ -396,6 +394,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                         .AutomationName(Str.T("sftp.editor.reload", "Reload")),
                     Button(Str.T("sftp.editor.save", "Save"), () => _ = SaveAsync())
                         .AccentButton()
+                        .ToolTip(Str.T("sftp.editor.concurrentSave", "Saving checks for changes first. If another editor is saving the same file at the same time, save a local copy to keep your edits."))
                         .IsEnabled(connected && !loading && !saving && !exporting && !loadFailed && document.Current?.Sha256 is not null && !lifetime.IsCancellationRequested)
                         .AutomationName(Str.T("sftp.editor.save", "Save")))
                 .VAlign(VerticalAlignment.Center)

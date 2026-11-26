@@ -146,6 +146,7 @@ public sealed class WorkspaceStore
     private readonly IAppSettingsStore? _settings;
     private readonly object _gate = new();
     private readonly Dictionary<Guid, (TaskCompletionSource Completion, bool KeepTab)> _closing = new();
+    private readonly object _profileGate = new();
     private WorkspaceSnapshot _snapshot = WorkspaceSnapshot.Empty;
 
     /// <summary>Creates the store and loads saved profiles.</summary>
@@ -408,7 +409,7 @@ public sealed class WorkspaceStore
             var remote = await tab.Session.ReopenTerminalAsync(cancellationToken);
             replacement = new TerminalBridge(remote, _dispatcher, _logger, settings: _settings,
                 terminalType: TerminalTypeFor(tab.Profile),
-                existingEmulator: tab.Terminal?.Emulator,
+                existingEmulator: tab.Terminal?.Emulator.CopyHistoryForNewShell(),
                 banner: "--- Shell reopened ---");
             await replacement.StartAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
@@ -441,11 +442,8 @@ public sealed class WorkspaceStore
     /// <summary>Uses the latest saved configuration, or the tab configuration if it was deleted.</summary>
     public SessionProfile? GetReconnectProfile(Guid tabId)
     {
-        lock (_gate)
-        {
-            var tab = _snapshot.Tabs.FirstOrDefault(t => t.Id == tabId);
-            return tab is null ? null : _profiles.Load().FirstOrDefault(p => p.Id == tab.Profile.Id) ?? tab.Profile;
-        }
+        var profile = Snapshot.Tabs.FirstOrDefault(t => t.Id == tabId)?.Profile;
+        return profile is null ? null : _profiles.Load().FirstOrDefault(p => p.Id == profile.Id) ?? profile;
     }
 
     /// <summary>Reads the generic TERM option a profile carries for its protocol.</summary>
@@ -531,7 +529,7 @@ public sealed class WorkspaceStore
     private void ChangeProfileAndCredential(string profileId, Func<SessionProfile?, SessionProfile?> edit,
         Action changeCredential)
     {
-        lock (_gate)
+        lock (_profileGate)
         {
             _profiles.WithExclusiveMutation(() =>
             {
@@ -556,12 +554,19 @@ public sealed class WorkspaceStore
                     throw;
                 }
             });
-            Update(s => s with { Profiles = LoadProfilesFromDisk() });
+            ReloadProfiles();
         }
     }
 
     /// <summary>Re-reads profiles from disk.</summary>
-    public void ReloadProfiles() => Update(s => s with { Profiles = LoadProfilesFromDisk() });
+    public void ReloadProfiles()
+    {
+        lock (_profileGate)
+        {
+            var profiles = LoadProfilesFromDisk();
+            Update(s => s with { Profiles = profiles });
+        }
+    }
 
     private IReadOnlyList<SessionProfile> LoadProfilesFromDisk() => _profiles.Load();
 
@@ -585,11 +590,11 @@ public sealed class WorkspaceStore
 
         try
         {
-            lock (_gate)
+            lock (_profileGate)
             {
-                if (tab.IsClosing || !_snapshot.Tabs.Contains(tab)) { return; }
                 _profiles.WithExclusiveMutation(() =>
                 {
+                    if (tab.IsClosing || !Snapshot.Tabs.Contains(tab)) { return; }
                     var current = _profiles.Load().FirstOrDefault(p => p.Id == profile.Id);
                     if (current is null || !SameConnection(current, profile) || current.LastUsedUtc > connectedAt)
                         return;
@@ -600,7 +605,7 @@ public sealed class WorkspaceStore
                     }
                     _profiles.Upsert(updated);
                 });
-                Update(s => s with { Profiles = LoadProfilesFromDisk() });
+                ReloadProfiles();
             }
         }
         catch (Exception ex)

@@ -32,7 +32,7 @@ public sealed class McpAdapter(Func<AgentRequest, CancellationToken, Task<AgentR
         new("rename_path", "files.rename", "Rename or move a remote entry to an absolute destination path.", ["session", "path", "destination"], [], false),
         new("create_directory", "files.mkdir", "Create one remote directory level.", ["session", "path"], [], false),
         new("upload_file", "files.upload", "Upload a local file to a remote path. The local path is on the SurgeLink desktop machine. Existing remote files are not overwritten unless overwrite=true.", ["session", "path", "localPath"], ["overwrite"], false),
-        new("download_file", "files.download", "Download a remote file to a local path on the SurgeLink desktop machine. Existing local files are not overwritten unless overwrite=true.", ["session", "path", "localPath"], ["overwrite"], false),
+        new("download_file", "files.download", "Download a remote file to the SurgeLink desktop machine. If the name exists, overwrite=true allows a numbered sibling such as demo (1).txt. Returns the actual localPath and preserves existing files.", ["session", "path", "localPath"], ["overwrite"], false),
     ];
 
     public static IReadOnlyList<Tool> Tools { get; } = Definitions.Select(definition => new Tool

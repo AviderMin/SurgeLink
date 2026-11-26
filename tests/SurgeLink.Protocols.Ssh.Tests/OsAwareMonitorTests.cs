@@ -7,6 +7,21 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 
 public sealed class OsAwareMonitorTests
 {
+    [Fact]
+    public async Task DisposalDuringDetectionPreventsPublishingAProbe()
+    {
+        var detected = new TaskCompletionSource<RemoteOperatingSystem>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var monitor = new OsAwareMonitor((_, _) => throw new InvalidOperationException("A disposed monitor cannot probe."),
+            _ => detected.Task, null);
+
+        var sampling = monitor.SampleAsync(default);
+        await monitor.DisposeAsync();
+        detected.SetResult(RemoteOperatingSystem.Linux);
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => sampling);
+        Assert.Null(monitor.ActiveProbe);
+    }
+
     private static readonly string LinuxOutput = TestMonitorOutput.Build(
         (MonitorScript.StatSection, "cpu 100 0 100 800 0 0 0 0\n"),
         (MonitorScript.MemInfoSection, "MemTotal: 1000 kB\nMemAvailable: 500 kB\n"));

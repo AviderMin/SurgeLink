@@ -29,6 +29,7 @@ if (args is ["--help"] or ["-h"] or [])
         surgelink-cli files mkdir --session HANDLE --path REMOTE_PATH [--instance PID] [--json]
         surgelink-cli files upload --session HANDLE --path REMOTE_PATH --local-path LOCAL_FILE [--overwrite] [--instance PID] [--json]
         surgelink-cli files download --session HANDLE --path REMOTE_PATH --local-path LOCAL_FILE [--overwrite] [--instance PID] [--json]
+          For downloads, --overwrite allows a numbered copy if the local name is taken. Check the returned localPath.
         surgelink-cli desktops list [--json]
         surgelink-cli doctor [--json]
 

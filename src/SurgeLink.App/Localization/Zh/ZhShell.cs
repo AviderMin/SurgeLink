@@ -50,6 +50,7 @@ public static class ZhShell
         ["shell.agent.localUploadBody"] = "Agent 想从你的电脑上传此文件：\n\n{0}\n\n会话：{2}\n远程目标：{1}\n{3}\n\n仅允许这一次？",
         ["shell.agent.localDownloadBody"] = "Agent 想把远程内容保存到你电脑上的此文件：\n\n{0}\n\n会话：{2}\n远程来源：{1}\n{3}\n\n仅允许这一次？",
         ["shell.agent.overwriteAllowed"] = "允许覆盖已有文件",
+        ["shell.agent.numberedDownload"] = "如果已有同名文件，另存为同目录内带编号的副本。",
         ["shell.agent.overwriteForbidden"] = "禁止覆盖已有文件",
         ["shell.agent.localFileAllow"] = "仅允许这一次",
         ["shell.agent.instructions.launch"] = "CLI 为短生命周期请求且始终输出 JSON：请直接捕获 stdout/stderr 与退出码，不要创建交互窗口或调用 wt.exe（传参时将路径与参数分开，避免控制台弹窗）。若遇启动或控制台报错（如 0x800700e8），请先执行只读的 doctor 或 --help 排查，切勿因启动报错换新操作 ID 重发终端输入。",

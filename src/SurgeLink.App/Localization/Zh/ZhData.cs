@@ -28,6 +28,7 @@ public static class ZhData
         ["sftp.editor.discardBody"] = "未保存的更改将丢失。是否继续？",
         ["sftp.editor.discard"] = "放弃更改",
         ["sftp.editor.saveFailed"] = "无法保存文件",
+        ["sftp.editor.concurrentSave"] = "保存前会检查远端文件是否有变化。如果其他编辑器也在同时保存该文件，请先导出本地副本保留修改。",
         ["sftp.menu.cut"] = "剪切",
         ["sftp.menu.copy"] = "复制",
         ["sftp.menu.paste"] = "粘贴",

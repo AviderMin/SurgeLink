@@ -104,10 +104,39 @@ public sealed class AgentErgonomicsTests
     }
 
     [Fact]
+    public async Task EscapedFilePagesFitTheWireAndKeepByteOffsets()
+    {
+        const string path = "/tmp/test.txt";
+        var text = new string((char)1, 300_000) + "界😀";
+        var files = new MemoryFiles();
+        files.Files[path] = Encoding.UTF8.GetBytes(text);
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession { FileSystem = files }, null, allowFileRead: true);
+
+        var first = await gateway.ExecuteAsync(new("files.read", handle, path, MaxBytes: 512 * 1024), default);
+        Assert.True(first.Success);
+        Assert.NotEmpty(AgentWire.Serialize(first));
+        var nextOffset = first.Data!.Value.GetProperty("nextOffset").GetInt64();
+        Assert.True(first.Data.Value.GetProperty("truncated").GetBoolean());
+        var next = await gateway.ExecuteAsync(new("files.read", handle, path, Offset: nextOffset, MaxBytes: 512 * 1024), default);
+        Assert.True(next.Success);
+        Assert.Equal(text, first.Data.Value.GetProperty("text").GetString() + next.Data!.Value.GetProperty("text").GetString());
+
+        var tail = await gateway.ExecuteAsync(new("files.read", handle, path, TailBytes: 512 * 1024), default);
+        Assert.True(tail.Success);
+        Assert.NotEmpty(AgentWire.Serialize(tail));
+        var data = tail.Data!.Value;
+        Assert.True(data.GetProperty("truncated").GetBoolean());
+        Assert.Equal(text[(int)data.GetProperty("offset").GetInt64()..], data.GetProperty("text").GetString());
+        Assert.Equal(files.Files[path].LongLength, data.GetProperty("nextOffset").GetInt64());
+    }
+
+    [Fact]
     public async Task LocalFileUploadAndDownloadRoundTripWhenControlIsGranted()
     {
-        var source = Path.GetTempFileName();
-        var destination = Path.GetTempFileName();
+        var directory = Directory.CreateTempSubdirectory("surge-round-trip-");
+        var source = Path.Combine(directory.FullName, "source.txt");
+        var destination = Path.Combine(directory.FullName, "download.txt");
         try
         {
             await File.WriteAllTextAsync(source, "round-trip");
@@ -123,14 +152,14 @@ public sealed class AgentErgonomicsTests
             Assert.Equal("round-trip", Encoding.UTF8.GetString(files.Files["/remote.txt"]));
 
             var downloaded = await gateway.ExecuteAsync(new("files.download", handle, "/remote.txt",
-                LocalPath: destination, Overwrite: true), default);
+                LocalPath: destination), default);
             Assert.True(downloaded.Success);
+            Assert.Equal(destination, downloaded.Data!.Value.GetProperty("localPath").GetString());
             Assert.Equal("round-trip", await File.ReadAllTextAsync(destination));
         }
         finally
         {
-            File.Delete(source);
-            File.Delete(destination);
+            directory.Delete(recursive: true);
         }
     }
 
@@ -247,7 +276,7 @@ public sealed class AgentErgonomicsTests
     }
 
     [Fact]
-    public async Task DownloadOverwriteHandlesATargetThatDisappearsBeforeCommit()
+    public async Task DownloadUsesRequestedNameIfItBecomesAvailableBeforeCommit()
     {
         var directory = Path.Combine(Path.GetTempPath(), "surge-download-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -264,6 +293,7 @@ public sealed class AgentErgonomicsTests
                 LocalPath: destination, Overwrite: true), default);
 
             Assert.True(response.Success, response.Message);
+            Assert.Equal(destination, response.Data!.Value.GetProperty("localPath").GetString());
             Assert.Equal("replacement", await File.ReadAllTextAsync(destination));
             Assert.Empty(Directory.GetFiles(directory, ".surge-*"));
         }
@@ -274,7 +304,7 @@ public sealed class AgentErgonomicsTests
     }
 
     [WindowsFact]
-    public async Task DownloadOverwritePreservesAlternateDataStreamOnWindows()
+    public async Task DownloadNumberedCopyPreservesOriginalAlternateDataStreamOnWindows()
     {
         if (!OperatingSystem.IsWindows()) return;
 
@@ -293,7 +323,11 @@ public sealed class AgentErgonomicsTests
                 LocalPath: destination, Overwrite: true), default);
 
             Assert.True(response.Success, response.Message);
-            Assert.Equal("replacement", await File.ReadAllTextAsync(destination));
+            var copy = Path.Combine(directory, "target (1).txt");
+            Assert.Equal(copy, response.Data!.Value.GetProperty("localPath").GetString());
+            Assert.False(response.Data.Value.GetProperty("overwrite").GetBoolean());
+            Assert.Equal("replacement", await File.ReadAllTextAsync(copy));
+            Assert.Equal("original", await File.ReadAllTextAsync(destination));
             Assert.Equal(new byte[] { 1, 2, 3 }, ReadAlternateStream(destination, "surge-download-test"));
             Assert.Empty(Directory.GetFiles(directory, ".surge-*"));
         }
@@ -304,7 +338,7 @@ public sealed class AgentErgonomicsTests
     }
 
     [WindowsFact]
-    public async Task DownloadOverwritePreservesExplicitAclOnWindows()
+    public async Task DownloadNumberedCopyPreservesOriginalAclOnWindows()
     {
         if (!OperatingSystem.IsWindows()) return;
 
@@ -324,7 +358,8 @@ public sealed class AgentErgonomicsTests
                 LocalPath: destination, Overwrite: true), default);
 
             Assert.True(response.Success, response.Message);
-            Assert.Equal("replacement", await File.ReadAllTextAsync(destination));
+            Assert.Equal("replacement", await File.ReadAllTextAsync(Path.Combine(directory, "target (1).txt")));
+            Assert.Equal("original", await File.ReadAllTextAsync(destination));
             Assert.Equal(before, GetAccessSddl(destination));
         }
         finally
@@ -334,7 +369,7 @@ public sealed class AgentErgonomicsTests
     }
 
     [WindowsFact]
-    public async Task DownloadOverwritePreservesMetadataWhenTargetAppearsDuringTheTransfer()
+    public async Task DownloadSkipsNamesThatBecomeOccupiedDuringTheTransfer()
     {
         if (!OperatingSystem.IsWindows()) return;
 
@@ -349,6 +384,7 @@ public sealed class AgentErgonomicsTests
             {
                 File.WriteAllText(destination, "appeared");
                 AddAlternateStream(destination, "surge-race-test", new byte[] { 9 });
+                File.WriteAllText(Path.Combine(directory, "target (1).txt"), "first copy");
             };
             var gateway = CreateDownloadGateway(files, out var handle);
 
@@ -356,7 +392,11 @@ public sealed class AgentErgonomicsTests
                 LocalPath: destination, Overwrite: true), default);
 
             Assert.True(response.Success, response.Message);
-            Assert.Equal("replacement", await File.ReadAllTextAsync(destination));
+            var copy = Path.Combine(directory, "target (2).txt");
+            Assert.Equal(copy, response.Data!.Value.GetProperty("localPath").GetString());
+            Assert.Equal("replacement", await File.ReadAllTextAsync(copy));
+            Assert.Equal("appeared", await File.ReadAllTextAsync(destination));
+            Assert.Equal("first copy", await File.ReadAllTextAsync(Path.Combine(directory, "target (1).txt")));
             Assert.Equal(new byte[] { 9 }, ReadAlternateStream(destination, "surge-race-test"));
         }
         finally
@@ -366,7 +406,7 @@ public sealed class AgentErgonomicsTests
     }
 
     [WindowsFact]
-    public async Task DownloadOverwriteFailsSafelyWhenTheTargetCannotBeReplaced()
+    public async Task DownloadCanSaveANumberedCopyWhileTheOriginalIsLocked()
     {
         if (!OperatingSystem.IsWindows()) return;
 
@@ -384,7 +424,8 @@ public sealed class AgentErgonomicsTests
             var response = await gateway.ExecuteAsync(new("files.download", handle, "/remote.txt",
                 LocalPath: destination, Overwrite: true), default);
 
-            Assert.Equal("read_failed", response.ErrorCode);
+            Assert.True(response.Success, response.Message);
+            Assert.Equal("replacement", await File.ReadAllTextAsync(Path.Combine(directory, "target (1).txt")));
             Assert.Equal("original", await File.ReadAllTextAsync(destination));
             Assert.Empty(Directory.GetFiles(directory, ".surge-*"));
         }
@@ -521,7 +562,7 @@ public sealed class AgentErgonomicsTests
     }
 
     [Fact]
-    public async Task TerminalExecTrimsTrailingNewlinesFromCommand()
+    public async Task TerminalExecSubmitsOneShellInputLineForMultilineCommands()
     {
         var terminal = new ExecTerminal();
         var gateway = new AgentGateway();
@@ -532,13 +573,15 @@ public sealed class AgentErgonomicsTests
         var checkData = check.Data!.Value;
 
         var response = await gateway.ExecuteAsync(new("terminal.exec", handle,
-            Text: "echo hi\r\n", OperationId: "exec-crlf", StripAnsi: true,
+            Text: "read -r value\r\nprintf '%s\\n' \"$value\"\r\n", OperationId: "exec-crlf", StripAnsi: true,
             ExpectedInputRevision: checkData.GetProperty("screen").GetProperty("inputRevision").GetInt64(),
             CheckToken: checkData.GetProperty("checkToken").GetString()), default);
 
         Assert.True(response.Success, response.Message);
         Assert.Equal(0, response.Data!.Value.GetProperty("exitCode").GetInt32());
-        Assert.DoesNotContain("\r\n\n__surge_status", terminal.LastWrittenText);
+        Assert.DoesNotContain('\r', terminal.LastWrittenText!);
+        Assert.DoesNotContain('\n', terminal.LastWrittenText!);
+        Assert.Contains("\\0012", terminal.LastWrittenText);
     }
 
     [Theory]
@@ -685,7 +728,7 @@ public sealed class AgentErgonomicsTests
             _screen = "hi\n";
             var marker = ReadExecMarker(text);
             Assert.NotEqual("__SURGELINK_EXIT_exec-1__", marker);
-            _output = "\u001b[?2004l\recho hi\r\n" + text[(text.IndexOf('\n') + 1)..] + "\r\nhi\r\n" + marker + ":0\r\nprompt> ";
+            _output = "\u001b[?2004l\r" + text + "\r\nhi\r\n" + marker + ":0\r\nprompt> ";
             AfterWrite?.Invoke();
             return Task.FromResult(new TerminalInputReceipt(_revision, 0, text.Length, submit));
         }

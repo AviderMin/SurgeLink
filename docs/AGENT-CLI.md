@@ -390,7 +390,8 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   PTY echo of the just-sent command is removed from the returned text, but only an
   occurrence that ends its own line counts as echo, so the same characters inside
   real output are preserved.
-- terminal.exec sends one command with a POSIX-shell sentinel appended and waits
+- terminal.exec submits the command and its completion marker together as one POSIX
+  shell input line. The shell parses the marker before the command can read stdin. It waits
   for that sentinel up to `timeoutMilliseconds` (capped at 50,000 ms to fit
   inside the 60s IPC frame deadline; quiet gaps do not end the wait). When the
   sentinel is observed it returns `status=executed`, `exitCode`,
@@ -402,7 +403,7 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   locking the session. Pass a small `timeoutMilliseconds` for commands that
   prompt for input. The returned output keeps the end of the stream so the
   sentinel and final result are present when `maxBytes` truncates a long response.
-  Trailing newlines are trimmed before appending the sentinel. This is best effort
+  Trailing newlines are trimmed before building the shell input. Completion is best effort
   for POSIX bash/sh; non-POSIX shells time out without an exit code.
 - sessions.check supports `brief=true` (compact screen) and `minimal=true`
   (compact screen plus only handle, label, target, control state and fileRead instead of
@@ -461,13 +462,12 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   `files.rename`, `files.mkdir`, `files.upload` and `files.download` are also
   available. Local upload/download paths refer to the Windows machine running
   SurgeLink and each such operation requires an explicit confirmation in the
-  desktop window that shows the exact local path; declining returns
-  `denied`. Downloads stage beside the local destination and replace it only
-  after the remote read and source close complete. Overwriting an existing local
-  file uses the platform replacement operation to preserve its metadata (ADS and
-  explicit DACL verified on local NTFS); unsupported replacement fails without a
-  fallback to a metadata-discarding move. New files use a non-overwriting move,
-  including when the target appears during transfer. Mutating file operations
+  desktop window that shows the requested local path; declining returns
+  `denied`. Downloads stage beside the local destination and publish only after
+  the remote read and source close complete. If the requested name is taken,
+  `overwrite=true` allows a numbered sibling such as `demo (1).txt`. The response
+  gives the actual `localPath`. Existing files stay intact, including files that
+  appear during transfer. Mutating file operations
   require terminal-control access; read-only sharing cannot write or delete.
 
 Error codes additionally include user_operating, session_check_required, session_context_unavailable,

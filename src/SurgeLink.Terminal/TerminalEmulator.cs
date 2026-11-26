@@ -415,39 +415,42 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
 
         var builder = new StringBuilder();
+        int previousWrappedColumns = 0;
         for (int row = startRow; row <= endRow; row++)
         {
             // A soft-wrapped row is one logical line: joining the next row with a
             // newline would break a pasted command in two.
-            if (row > startRow && !IsWrappedRow(row - 1))
+            if (row > startRow && previousWrappedColumns == 0)
             {
                 builder.Append('\n');
             }
 
             int fromColumn = row == first.Row ? Math.Clamp(first.Column, 0, Columns - 1) : 0;
             int toColumn = row == last.Row ? Math.Clamp(last.Column, 0, Columns - 1) : Columns - 1;
-            AppendRowRange(builder, row, fromColumn, toColumn);
+            previousWrappedColumns = GetWrappedColumns(row);
+            var joinsNextRow = row < endRow && previousWrappedColumns > 0;
+            if (joinsNextRow) { toColumn = Math.Min(toColumn, previousWrappedColumns - 1); }
+            AppendRowRange(builder, row, fromColumn, toColumn, trimEnd: !joinsNextRow);
         }
 
         return builder.ToString();
     }
 
-    /// <summary>True when the buffer row ends without a hard line break.</summary>
-    private bool IsWrappedRow(int row)
+    private int GetWrappedColumns(int row)
     {
         int index = _scrollback.Count - _viewportOffset + row;
         if (index < 0)
         {
-            return false;
+            return 0;
         }
 
         if (index < _scrollback.Count)
         {
-            return _scrollback[index].Wrapped;
+            return _scrollback[index].WrappedColumns;
         }
 
         int screenRow = index - _scrollback.Count;
-        return screenRow >= 0 && screenRow < _screen.Rows && _screen.LineAt(screenRow).Wrapped;
+        return screenRow >= 0 && screenRow < _screen.Rows ? _screen.LineAt(screenRow).WrappedColumns : 0;
     }
 
     /// <inheritdoc />
@@ -1166,7 +1169,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         return string.IsNullOrEmpty(text) || (text.Length == 1 && text[0] == ' ');
     }
 
-    private void AppendRowRange(StringBuilder builder, int row, int fromColumn, int toColumnInclusive)
+    private void AppendRowRange(StringBuilder builder, int row, int fromColumn, int toColumnInclusive, bool trimEnd = true)
     {
         if (toColumnInclusive < fromColumn)
         {
@@ -1174,7 +1177,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
 
         int end = toColumnInclusive + 1;
-        while (end > fromColumn && IsBlankCell(GetBufferCell(row, end - 1)))
+        while (trimEnd && end > fromColumn && IsBlankCell(GetBufferCell(row, end - 1)))
         {
             end--;
         }

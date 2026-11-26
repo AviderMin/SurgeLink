@@ -74,6 +74,7 @@ jobs:
           $parsed = [version]$version
           if (@($parsed.Major, $parsed.Minor, $parsed.Build, [Math]::Max(0, $parsed.Revision) | Where-Object { $_ -gt 65535 }).Count) { throw 'Version components must be <= 65535.' }
           if ($parsed.Major -eq 0 -and $parsed.Minor -eq 0 -and $parsed.Build -eq 0 -and $parsed.Revision -le 0) { throw 'Version must be greater than zero.' }
+          $version = if ($parsed.Revision -lt 0) { "${parsed}.0" } else { $parsed.ToString() }
           $sha = git rev-parse HEAD
           $existing = git rev-parse --verify "refs/tags/$tag^{commit}" 2>$null
           if ($LASTEXITCODE -eq 0 -and $existing -ne $sha) { throw 'The tag points to another commit. Run this workflow on that tag, or choose a new version.' }
@@ -162,7 +163,14 @@ jobs:
         run: |
           $existing = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --paginate --jq '.[].tag_name'
           if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect existing releases.' }
-          if (($existing -replace '^v', '') -contains $env:RELEASE_VERSION) { throw 'This release version already exists; refusing to replace it.' }
+          $requested = [version]$env:RELEASE_VERSION
+          foreach ($publishedTag in $existing) {
+            $published = $null
+            if ([version]::TryParse(($publishedTag -replace '^v', ''), [ref]$published) -and $published.Build -ge 0) {
+              if ($published.Revision -lt 0) { $published = [version]"${published}.0" }
+              if ($published -eq $requested) { throw 'This release version already exists; refusing to replace it.' }
+            }
+          }
           $assets = @(Get-ChildItem -LiteralPath artifacts/release -File |
             Where-Object { $_.Extension -ne '.sha256' } | ForEach-Object FullName)
           # Upload every asset to a draft before making the release public.

@@ -60,7 +60,7 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
         catch { lease.Dispose(); throw; }
     }
 
-    internal static FileStream OpenExistingFileForRead(string path)
+    internal static FileStream OpenExistingFileForRead(string path, bool rejectHardLinks)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         const int bufferSize = 81920;
@@ -89,6 +89,7 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
             if (!GetFileInformationByHandleEx(handle, 9, out var info, 8))
                 throw new IOException("Cannot open the local upload file.", new Win32Exception(Marshal.GetLastPInvokeError()));
             ValidateFileType((FileAttributes)info.Attributes, info.ReparseTag);
+            if (rejectHardLinks) { RequireSingleLink(handle); }
             if (((FileAttributes)info.Attributes & FileAttributes.ReparsePoint) != 0)
             {
                 // Keep the inspected placeholder pinned while opening it for hydration.
@@ -121,7 +122,17 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
         if (!GetFileInformationByHandleEx(handle, 9, out var info, 8))
             throw new IOException("Cannot inspect the local file.", new Win32Exception(Marshal.GetLastPInvokeError()));
         ValidateFileType((FileAttributes)info.Attributes, info.ReparseTag);
+        RequireSingleLink(handle);
         return true;
+    }
+
+    private static void RequireSingleLink(SafeFileHandle handle)
+    {
+        const int fileStandardInfo = 1;
+        if (!GetFileStandardInfo(handle, fileStandardInfo, out var info, (uint)Marshal.SizeOf<StandardInfo>()))
+            throw new IOException("Cannot inspect local file links.", new Win32Exception(Marshal.GetLastPInvokeError()));
+        if (info.NumberOfLinks != 1)
+            throw new UnsafeLocalPathException("The local file must have exactly one hard link.");
     }
 
     private static void ValidateFileType(FileAttributes attributes, uint tag)
@@ -158,4 +169,18 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool GetFileInformationByHandleEx(SafeFileHandle file, int infoClass, out AttributeTagInfo info, uint size);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct StandardInfo
+    {
+        public long AllocationSize;
+        public long EndOfFile;
+        public uint NumberOfLinks;
+        public byte DeletePending;
+        public byte Directory;
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFileInformationByHandleEx", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetFileStandardInfo(SafeFileHandle file, int infoClass, out StandardInfo info, uint size);
 }

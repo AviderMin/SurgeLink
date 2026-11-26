@@ -35,7 +35,9 @@ internal static class AgentFilePolicy
             ? $"{label} ({DiagnosticText.Escape(target.Username)}@{DiagnosticText.Escape(target.Server)})"
             : label;
         var overwrite = access.Overwrite
-            ? Str.T("shell.agent.overwriteAllowed", "Overwrite permitted")
+            ? access.Operation == "files.download"
+                ? Str.T("shell.agent.numberedDownload", "If the name is taken, save a numbered copy in the same folder.")
+                : Str.T("shell.agent.overwriteAllowed", "Overwrite permitted")
             : Str.T("shell.agent.overwriteForbidden", "Overwrite disabled");
         var title = access.Operation == "files.upload"
             ? Str.T("shell.agent.localUploadTitle", "Allow the Agent to read a local file?")

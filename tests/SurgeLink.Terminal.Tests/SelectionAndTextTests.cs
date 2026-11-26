@@ -2,6 +2,18 @@ namespace SurgeLink.Terminal.Tests;
 
 public sealed class SelectionAndTextTests
 {
+    [Theory]
+    [InlineData("abcd ef", "abcd ef")]
+    [InlineData("abcd界e", "abcd界e")]
+    [InlineData("abcd 界", "abcd 界")]
+    public void SelectionPreservesSoftWrapSpacesWithoutWideGlyphPadding(string text, string expected)
+    {
+        var terminal = new TestTerminal(5, 3);
+        terminal.Feed(text);
+        var selection = new TerminalSelection(new TerminalPosition(0, 0), new TerminalPosition(1, 4));
+        Assert.Equal(expected, terminal.Emulator.GetSelectionText(selection));
+    }
+
     private static TestTerminal Create()
     {
         var terminal = new TestTerminal(20, 5);

@@ -7,7 +7,8 @@ public static class LocalDownloadPath
     public static IDisposable LockDirectory(string directory) => LocalDownloadDirectory.Open(directory);
 
     /// <summary>Opens a local file without following Windows symbolic links or junctions.</summary>
-    public static FileStream OpenExistingFileForRead(string path) => LocalDownloadDirectory.OpenExistingFileForRead(path);
+    public static FileStream OpenExistingFileForRead(string path, bool rejectHardLinks = false) =>
+        LocalDownloadDirectory.OpenExistingFileForRead(path, rejectHardLinks);
 
     /// <summary>Checks a destination's own file type. Callers secure its parent directory separately.</summary>
     public static bool IsSafeExistingFile(string path) => LocalDownloadDirectory.IsSafeExistingFile(path);

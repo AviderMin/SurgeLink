@@ -15,6 +15,7 @@ public sealed class OsAwareMonitor : IRemoteSystemMonitor, IAsyncDisposable
     private readonly Func<CancellationToken, Task<RemoteOperatingSystem>> _detectOperatingSystem;
     private readonly ILogger? _logger;
     private readonly SemaphoreSlim _selectionLock = new(1, 1);
+    private readonly object _lifecycleGate = new();
     private IRemoteSystemMonitor? _probe;
     private int _operatingSystem = (int)RemoteOperatingSystem.Unknown;
     private int _disposed;
@@ -77,12 +78,14 @@ public sealed class OsAwareMonitor : IRemoteSystemMonitor, IAsyncDisposable
     /// <summary>Closes the selected probe; safe to call twice.</summary>
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        IRemoteSystemMonitor? probe;
+        lock (_lifecycleGate)
         {
-            return;
+            if (IsDisposed) { return; }
+            Volatile.Write(ref _disposed, 1);
+            probe = Interlocked.Exchange(ref _probe, null);
         }
 
-        var probe = Interlocked.Exchange(ref _probe, null);
         if (probe is IAsyncDisposable disposable)
         {
             try
@@ -95,7 +98,6 @@ public sealed class OsAwareMonitor : IRemoteSystemMonitor, IAsyncDisposable
             }
         }
 
-        SafeDispose(_selectionLock);
         GC.SuppressFinalize(this);
     }
 
@@ -124,49 +126,29 @@ public sealed class OsAwareMonitor : IRemoteSystemMonitor, IAsyncDisposable
             if (operatingSystem == RemoteOperatingSystem.Unknown)
             {
                 operatingSystem = await _detectOperatingSystem(cancellationToken).ConfigureAwait(false);
-                Volatile.Write(ref _operatingSystem, (int)operatingSystem);
             }
 
-            var probe = operatingSystem switch
+            IRemoteSystemMonitor probe;
+            lock (_lifecycleGate)
             {
-                RemoteOperatingSystem.Linux => (IRemoteSystemMonitor)new LinuxMonitorProbe(_executeCommand, _logger),
-                RemoteOperatingSystem.Windows => new WindowsMonitorProbe(_executeCommand, _logger),
-                _ => throw new ProtocolException(
-                    "The remote operating system could not be identified; remote monitoring supports Linux and Windows guests only.",
-                    ProtocolFailureKind.Unknown),
-            };
-
+                ObjectDisposedException.ThrowIf(IsDisposed, this);
+                probe = operatingSystem switch
+                {
+                    RemoteOperatingSystem.Linux => (IRemoteSystemMonitor)new LinuxMonitorProbe(_executeCommand, _logger),
+                    RemoteOperatingSystem.Windows => new WindowsMonitorProbe(_executeCommand, _logger),
+                    _ => throw new ProtocolException(
+                        "The remote operating system could not be identified; remote monitoring supports Linux and Windows guests only.",
+                        ProtocolFailureKind.Unknown),
+                };
+                Volatile.Write(ref _operatingSystem, (int)operatingSystem);
+                Volatile.Write(ref _probe, probe);
+            }
             _logger?.LogDebug("Remote monitor selected {Probe} for a {OperatingSystem} guest.", probe.GetType().Name, operatingSystem);
-            Volatile.Write(ref _probe, probe);
             return probe;
         }
         finally
         {
-            SafeRelease(_selectionLock);
-        }
-    }
-
-    private static void SafeRelease(SemaphoreSlim semaphore)
-    {
-        try
-        {
-            semaphore.Release();
-        }
-        catch (ObjectDisposedException)
-        {
-            // The monitor was disposed while a probe was being selected.
-        }
-    }
-
-    private static void SafeDispose(SemaphoreSlim semaphore)
-    {
-        try
-        {
-            semaphore.Dispose();
-        }
-        catch (ObjectDisposedException)
-        {
-            // Already disposed.
+            _selectionLock.Release();
         }
     }
 }
