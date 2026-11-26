@@ -40,7 +40,9 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     private string? _activeHyperlink;
     private readonly Dictionary<string, string> _hyperlinks = new(StringComparer.Ordinal);
     private const int MaximumHyperlinks = 4096;
+    private const int MaximumResponsesPerFeed = 64;
     private List<string>? _pendingResponses;
+    private string? _pendingClipboardCopy;
 
     /// <summary>
     /// When true, horizontal resizes reflow wrapped primary-screen and scrollback lines
@@ -171,6 +173,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     public void Feed(ReadOnlySpan<byte> data, Action<ReadOnlySpan<byte>>? recordOutput)
     {
         List<string>? responses;
+        string? clipboardCopy;
         lock (_sync)
         {
             if (data.IsEmpty)
@@ -192,14 +195,21 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             {
                 responses = _pendingResponses;
                 _pendingResponses = null;
+                clipboardCopy = _pendingClipboardCopy;
+                _pendingClipboardCopy = null;
                 EndBatch();
             }
         }
-        if (responses is null) { return; }
-        foreach (var response in responses) { ResponseRequested?.Invoke(response); }
+        if (responses is not null)
+            foreach (var response in responses) { ResponseRequested?.Invoke(response); }
+        if (clipboardCopy is not null) { ClipboardCopyRequested?.Invoke(clipboardCopy); }
     }
 
-    private void QueueResponse(string response) => (_pendingResponses ??= []).Add(response);
+    private void QueueResponse(string response)
+    {
+        if (_pendingResponses?.Count >= MaximumResponsesPerFeed) { return; }
+        (_pendingResponses ??= []).Add(response);
+    }
 
     /// <inheritdoc />
     public void Resize(int columns, int rows)
@@ -308,6 +318,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         _shiftOut = false;
         _joinNextRune = false;
         _activeHyperlink = null;
+        _hyperlinks.Clear();
         MarkDirty();
     }
 
@@ -330,6 +341,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 UpdateEraseCell();
                 _screen.SetCursor(0, 0);
                 ClearScrollback();
+                _hyperlinks.Clear();
                 MarkDirty();
             }
             finally
@@ -1005,7 +1017,8 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 SetWindowTitle(DecodeWindowTitle(rest));
                 break;
             case 8:
-                HandleOsc8Hyperlink(rest);
+                _activeHyperlink = null;
+                if (complete) { HandleOsc8Hyperlink(rest); }
                 break;
             case 52 when complete:
                 HandleOsc52Clipboard(rest);
@@ -1019,26 +1032,14 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     private void HandleOsc8Hyperlink(ReadOnlySpan<byte> rest)
     {
         int uriSeparator = rest.IndexOf((byte)';');
-        if (uriSeparator < 0)
-        {
-            _activeHyperlink = null;
-            return;
-        }
+        if (uriSeparator < 0) { return; }
 
         ReadOnlySpan<byte> uriBytes = rest[(uriSeparator + 1)..];
-        if (uriBytes.IsEmpty)
-        {
-            _activeHyperlink = null;
-            return;
-        }
+        if (uriBytes.IsEmpty) { return; }
 
         if (uriBytes.Length > 2048) return;
         string uri = Encoding.UTF8.GetString(uriBytes).Trim();
-        if (uri.Length == 0)
-        {
-            _activeHyperlink = null;
-            return;
-        }
+        if (uri.Length == 0) { return; }
 
         if (uri.Any(char.IsControl)) return;
         if (Uri.TryCreate(uri, UriKind.Absolute, out var parsed)
@@ -1052,7 +1053,6 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 _hyperlinks.Add(canonical, canonical);
                 _activeHyperlink = canonical;
             }
-            else { _activeHyperlink = null; }
         }
     }
 
@@ -1071,7 +1071,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         try
         {
             byte[] decoded = Convert.FromBase64String(base64);
-            ClipboardCopyRequested?.Invoke(Encoding.UTF8.GetString(decoded));
+            _pendingClipboardCopy = Encoding.UTF8.GetString(decoded);
         }
         catch (FormatException)
         {

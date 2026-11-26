@@ -97,7 +97,8 @@ internal sealed class MonitorView : Component<MonitorViewProps>
             {
                 if (index >= 0 && index < Intervals.Length)
                 {
-                    settingsStore.Update(current => current with { MonitorIntervalSeconds = Intervals[index] });
+                    try { settingsStore.Update(current => current with { MonitorIntervalSeconds = Intervals[index] }); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { setError(ex.Message); }
                 }
             },
             wide);

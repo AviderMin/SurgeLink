@@ -104,7 +104,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
         };
 
         var errors = Validate();
-        var showErrors = errors.Count > 0 && (attempted || pickerError is not null);
+        var showErrors = pickerError is not null || (errors.Count > 0 && attempted);
         var canSave = errors.Count == 0;
         validationRef.Current = canSave ? null : string.Join(Environment.NewLine, errors);
 
@@ -345,7 +345,8 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                     Str.T("shell.editor.secretUnavailableBody", "The saved secret could not be decrypted. Re-enter it, or turn off Remember to remove it.")).Warning());
             if (showErrors)
             {
-                var message = pickerError ?? string.Join(Environment.NewLine, errors);
+                var message = string.Join(Environment.NewLine, errors.Prepend(pickerError)
+                    .Where(error => !string.IsNullOrEmpty(error)));
                 fields.Add(InfoBar(Str.T("shell.editor.invalidTitle", "Check the connection details"), message).Warning().WithKey("validation"));
             }
             fields.Add(connection.WithKey("connection"));

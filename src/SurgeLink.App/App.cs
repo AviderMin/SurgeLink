@@ -22,6 +22,7 @@ public static class Program
             args.SetObserved();
         };
 
+        ReactorApp.ShutdownPolicy = ShutdownPolicy.OnLastSurfaceClosed;
         ReactorApp.Run<MainShell>(
             new WindowSpec
             {

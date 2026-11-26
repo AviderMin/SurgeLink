@@ -142,10 +142,11 @@ if ($process.HasExited) { throw ("app exited with " + $process.ExitCode) }
 $script:appPid = $process.Id
 $process.Refresh()
 $script:hwnd = $process.MainWindowHandle
-if (Focus-App) { Pass "app is in the foreground" } else { Fail "app is in the foreground" "mouse input would go to another window" }
+if (-not (Focus-App)) { throw "SurgeLink is not foreground. Mouse input would go to another window." }
+Pass "app is in the foreground"
 
 Step "Open the demo file manager"
-& (Join-Path $PSScriptRoot "uia-action.ps1") -Name "Demo session" -Type "Button" -ProcessId $script:appPid | Out-Null
+& (Join-Path $PSScriptRoot "uia-action.ps1") -Name "Open demo session" -Type "Button" -ProcessId $script:appPid | Out-Null
 Start-Sleep -Seconds 3
 & (Join-Path $PSScriptRoot "uia-action.ps1") -Name "Files" -Type "ListItem" -Select -ProcessId $script:appPid | Out-Null
 Start-Sleep -Seconds 4

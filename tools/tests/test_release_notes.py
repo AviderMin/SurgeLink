@@ -25,7 +25,7 @@ class ReleaseNotesTests(unittest.TestCase):
                 git("config", "user.name", "Release test")
                 git("config", "user.email", "release@example.invalid")
                 for index in range(count):
-                    git("-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", f"Change {index}")
+                    git("-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", f"Change {index} user's <tag>")
                 sha = git("rev-parse", "HEAD")
                 assets = root / "assets"
                 assets.mkdir()
@@ -44,7 +44,7 @@ class ReleaseNotesTests(unittest.TestCase):
                 self.assertNotIn("截至本次发布目标提交", notes)
                 changes = notes.split("## 更新记录\n\n", 1)[1].split("\n---", 1)[0]
                 self.assertEqual(min(count, 8), len([line for line in changes.splitlines() if line.startswith("- ")]))
-                self.assertIn(f"- Change {count - 1}", changes)
+                self.assertIn(f"- Change {count - 1} user's &lt;tag&gt;", changes)
                 if count > 8:
                     self.assertNotIn("- Change 0", changes)
                 else:

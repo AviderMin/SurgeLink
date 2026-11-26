@@ -358,7 +358,12 @@ internal sealed partial class TerminalSurface
 
         var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
         package.SetText(text);
-        Clipboard.SetContent(package);
+        try { Clipboard.SetContent(package); }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            _logger?.LogDebug(ex, "Terminal clipboard write failed.");
+            return false;
+        }
         return true;
     }
 

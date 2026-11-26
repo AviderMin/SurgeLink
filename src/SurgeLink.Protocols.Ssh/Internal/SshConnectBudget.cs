@@ -48,11 +48,26 @@ internal sealed class SshConnectBudget : IDisposable
     {
         // SSH.NET also has synchronous waits during authentication. Those waits
         // must not impose a second, non-pausable deadline on a human prompt.
-        client.ConnectionInfo.Timeout = Timeout.InfiniteTimeSpan;
-        var connect = Task.Run(() => client.ConnectAsync(Token), CancellationToken.None);
+        var info = client.ConnectionInfo;
+        var token = Token;
+        info.Timeout = Timeout.InfiniteTimeSpan;
+        var connect = Task.Run(async () =>
+        {
+            try { await client.ConnectAsync(token).ConfigureAwait(false); }
+            finally
+            {
+                // Wait for SSH.NET itself to finish, even when our caller timed out first.
+                foreach (var method in info.AuthenticationMethods)
+                {
+                    if (method is PrivateKeyAuthenticationMethod publicKey)
+                        foreach (var key in publicKey.KeyFiles.OfType<PrivateKeyFile>()) { key.Dispose(); }
+                    (method as IDisposable)?.Dispose();
+                }
+            }
+        }, CancellationToken.None);
         TaskObservation.ObserveFaults(connect);
-        try { await connect.WaitAsync(Token).ConfigureAwait(false); }
-        finally { client.ConnectionInfo.Timeout = _limit; }
+        try { await connect.WaitAsync(token).ConfigureAwait(false); }
+        finally { info.Timeout = _limit; }
     }
 
     public void Dispose()

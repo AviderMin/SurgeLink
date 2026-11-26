@@ -49,8 +49,8 @@ def generate(version, tag, sha, repository, assets, output):
     for commit in commits:
         commit_sha, subject = commit.split("\t", 1)
         # Commit subjects are data, never release Markdown or HTML instructions.
-        subject = html.escape(subject)
-        subject = re.sub(r"([\\`*_{}\[\]()#+.!|>~-])", r"\\\1", subject)
+        subject = html.escape(subject, quote=False)
+        subject = re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", subject)
         changelog.append(f"- {subject} ([`{commit_sha[:7]}`]({base}/commit/{commit_sha}))")
     notes = f"""# SurgeLink {version}
 

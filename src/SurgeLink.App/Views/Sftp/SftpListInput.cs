@@ -21,6 +21,7 @@ internal static class SftpListInput
     private sealed class BlankAreaBinding
     {
         public Action? ClearSelection;
+        public PointerEventHandler? Handler;
     }
 
     private static readonly ConditionalWeakTable<FrameworkElement, BlankAreaBinding> BlankAreas = new();
@@ -30,7 +31,7 @@ internal static class SftpListInput
         var binding = BlankAreas.GetValue(area, control =>
         {
             var state = new BlankAreaBinding();
-            control.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, args) =>
+            state.Handler = (_, args) =>
             {
                 if (!args.GetCurrentPoint(control).Properties.IsLeftButtonPressed) { return; }
                 var source = args.OriginalSource as DependencyObject;
@@ -42,10 +43,18 @@ internal static class SftpListInput
                     source = VisualTreeHelper.GetParent(source);
                 }
                 if (source == control) { state.ClearSelection?.Invoke(); }
-            }), handledEventsToo: true);
+            };
+            control.AddHandler(UIElement.PointerPressedEvent, state.Handler, handledEventsToo: true);
             return state;
         });
         binding.ClearSelection = clearSelection;
+    }
+
+    public static void DetachBlankArea(FrameworkElement area)
+    {
+        if (!BlankAreas.TryGetValue(area, out var binding)) return;
+        area.RemoveHandler(UIElement.PointerPressedEvent, binding.Handler);
+        BlankAreas.Remove(area);
     }
 
 

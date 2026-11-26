@@ -40,12 +40,17 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
       - name: Repository and localization checks
         run: |
           python tools/check-repository.py
           if ($LASTEXITCODE -ne 0) { throw 'Repository check failed.' }
           python tools/check-ui-localization.py
           if ($LASTEXITCODE -ne 0) { throw 'Localization check failed.' }
+          python tools/check-version.py
+          if ($LASTEXITCODE -ne 0) { throw 'Documented version check failed.' }
       - name: Desktop build with warnings as errors
         run: dotnet build src/SurgeLink.App -c Release -p:Platform=x64 --nologo -warnaserror
       - name: Test release tooling
@@ -123,6 +128,9 @@ jobs:
   publish:
     name: Publish
     needs: [prepare, installer, appx, desktop-smoke]
+    concurrency:
+      group: publish-${{ needs.prepare.outputs.version }}
+      cancel-in-progress: false
     if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.installer.result == 'success' && needs.appx.result == 'success' && (!inputs.desktop_smoke || needs.desktop-smoke.result == 'success') }}
     runs-on: windows-2025
     timeout-minutes: 15
@@ -152,9 +160,9 @@ jobs:
         run: python tools/release-notes.py --version $env:RELEASE_VERSION --tag $env:RELEASE_TAG --sha $env:RELEASE_SHA --repository $env:GITHUB_REPOSITORY --assets artifacts/release --output artifacts/release-notes.md
       - name: Publish release
         run: |
-          $existing = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
+          $existing = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --paginate --jq '.[].tag_name'
           if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect existing releases.' }
-          if ($existing.tagName -contains $env:RELEASE_TAG) { throw 'This release already exists; refusing to replace it.' }
+          if (($existing -replace '^v', '') -contains $env:RELEASE_VERSION) { throw 'This release version already exists; refusing to replace it.' }
           $assets = @(Get-ChildItem -LiteralPath artifacts/release -File |
             Where-Object { $_.Extension -ne '.sha256' } | ForEach-Object FullName)
           # Upload every asset to a draft before making the release public.

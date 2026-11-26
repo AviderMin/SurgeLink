@@ -13,6 +13,8 @@ public sealed class FileSafetyTests
         using (LocalDownloadPath.LockDirectory(destination))
         {
             Assert.True(Directory.Exists(destination));
+            if (OperatingSystem.IsWindows())
+                Assert.Throws<IOException>(() => Directory.Move(destination, temp.PathOf("moved-leaf")));
             File.WriteAllText(Path.Combine(destination, "payload.txt"), "download");
             if (OperatingSystem.IsWindows())
                 Assert.Throws<IOException>(() => Directory.Move(temp.PathOf("parent"), temp.PathOf("moved")));

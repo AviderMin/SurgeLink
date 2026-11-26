@@ -31,7 +31,7 @@ internal static class PrivacyDisplay
     }
 
     public static TextBlockElement Private(this TextBlockElement element, string original) =>
-        element.Set(control => Apply(control, original)).ToolTip(original);
+        element.Set(control => Apply(control, original)).OnUnmountAdd(control => Detach((TextBlock)control));
 
     private sealed class HoverState
     {
@@ -47,14 +47,33 @@ internal static class PrivacyDisplay
         var state = States.GetValue(text, control =>
         {
             var value = new HoverState();
-            control.PointerEntered += (_, _) => { value.Hovered = true; Refresh(control, value); };
-            control.PointerExited += (_, _) => { value.Hovered = false; Refresh(control, value); };
-            control.Unloaded += (_, _) => { value.Hovered = false; Refresh(control, value); };
+            control.PointerEntered += OnLabelEntered;
+            control.PointerExited += OnLabelExited;
+            control.Unloaded += OnLabelExited;
             return value;
         });
         state.Original = original;
         Refresh(text, state);
-        ToolTipService.SetToolTip(text, original);
+    }
+
+    private static void OnLabelEntered(object sender, RoutedEventArgs args) => SetLabelHover((TextBlock)sender, true);
+    private static void OnLabelExited(object sender, RoutedEventArgs args) => SetLabelHover((TextBlock)sender, false);
+
+    private static void SetLabelHover(TextBlock text, bool hovered)
+    {
+        if (!States.TryGetValue(text, out var state)) return;
+        state.Hovered = hovered;
+        Refresh(text, state);
+    }
+
+    private static void Detach(TextBlock text)
+    {
+        if (!States.Remove(text)) return;
+        text.PointerEntered -= OnLabelEntered;
+        text.PointerExited -= OnLabelExited;
+        text.Unloaded -= OnLabelExited;
+        text.ClearValue(AutomationProperties.NameProperty);
+        text.ClearValue(ToolTipService.ToolTipProperty);
     }
 
 
@@ -71,6 +90,7 @@ internal static class PrivacyDisplay
         var revealed = state.Group?.Hovered ?? state.Hovered;
         text.Text = revealed ? state.Original : Mask(state.Original);
         AutomationProperties.SetName(text, text.Text);
+        ToolTipService.SetToolTip(text, text.Text);
     }
 
     /// <summary>Reveal every private label when any part of its containing row is hovered.</summary>
@@ -79,14 +99,34 @@ internal static class PrivacyDisplay
         var group = Groups.GetValue(container, control =>
         {
             var value = new HoverGroup();
-            control.PointerEntered += (_, _) => { value.Hovered = true; RefreshGroup(control, value); };
-            control.PointerExited += (_, _) => { value.Hovered = false; RefreshGroup(control, value); };
-            control.Unloaded += (_, _) => { value.Hovered = false; RefreshGroup(control, value); };
-            control.Loaded += (_, _) => RefreshGroup(control, value);
+            control.PointerEntered += OnGroupEntered;
+            control.PointerExited += OnGroupExited;
+            control.Unloaded += OnGroupExited;
+            control.Loaded += OnGroupExited;
             return value;
         });
         group.Name = name;
         RefreshGroup(container, group);
+    }
+
+    private static void OnGroupEntered(object sender, RoutedEventArgs args) => SetGroupHover((FrameworkElement)sender, true);
+    private static void OnGroupExited(object sender, RoutedEventArgs args) => SetGroupHover((FrameworkElement)sender, false);
+
+    private static void SetGroupHover(FrameworkElement container, bool hovered)
+    {
+        if (!Groups.TryGetValue(container, out var group)) return;
+        group.Hovered = hovered;
+        RefreshGroup(container, group);
+    }
+
+    public static void DetachGroup(FrameworkElement container)
+    {
+        if (!Groups.Remove(container)) return;
+        container.PointerEntered -= OnGroupEntered;
+        container.PointerExited -= OnGroupExited;
+        container.Unloaded -= OnGroupExited;
+        container.Loaded -= OnGroupExited;
+        container.ClearValue(AutomationProperties.NameProperty);
     }
 
     private static void RefreshGroup(FrameworkElement container, HoverGroup group)

@@ -13,6 +13,18 @@ public sealed class AgentExperienceTests
     }
 
     [Fact]
+    public async Task LargeTextFrameRoundTripsWithoutExpandingUnicodeOrMarkup()
+    {
+        var text = new string('界', 150_000) + new string('<', 150_000);
+        await using var stream = new MemoryStream();
+
+        await AgentWire.WriteAsync(stream, AgentResponse.Ok(new { text }), default);
+        stream.Position = 0;
+        var response = await AgentWire.ReadAsync<AgentResponse>(stream, default);
+        Assert.Equal(text, response.Data!.Value.GetProperty("text").GetString());
+    }
+
+    [Fact]
     public async Task OversizedDirectoryReadReturnsAnActionableTransportError()
     {
         var gateway = new AgentGateway((_, _) => Task.FromResult(true));

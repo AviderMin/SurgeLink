@@ -47,7 +47,9 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         var surfaceRef = UseRef<FileEditorSurface?>(null);
         var (loadFailed, setLoadFailed) = UseState(false, threadSafe: true);
         var (confirmation, setConfirmation) = UseState(0);
-        var window = UseWindow();
+        var currentWindow = UseWindow();
+        var editorWindow = UseRef(currentWindow);
+        var window = editorWindow.Current ??= currentWindow;
         var pickers = UseMemo(() => window is null ? null : new WindowStoragePicker(window.NativeWindow), window!);
         var allowClose = UseRef(false);
         var operationBusy = UseRef(false);
@@ -79,7 +81,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
 
         void OpenSearch(bool replace)
         {
-            if (editorRef.Current is { SelectionLength: > 0 } editor && !editor.SelectedText.Contains('\n'))
+            if (editorRef.Current is { SelectionLength: > 0 } editor && editor.SelectedText.AsSpan().IndexOfAny('\r', '\n') < 0)
             {
                 setQuery(editor.SelectedText);
             }
@@ -159,7 +161,9 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 setStatus(Str.T("sftp.editor.waitForSave", "Wait for the current operation to finish before closing."));
                 return false;
             }
-            if (!allowClose.Current && HasUnsavedChanges()) { setConfirmation(1); return false; }
+            if (allowClose.Current) { return true; }
+            if (confirmation != 0) { return false; }
+            if (HasUnsavedChanges()) { setConfirmation(1); return false; }
             return true;
         });
 
@@ -338,7 +342,12 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 var action = confirmation;
                 setConfirmation(0);
                 if (result != ContentDialogResult.Primary) { return; }
-                if (action == 1) { allowClose.Current = true; window?.Close(); }
+                if (action == 1)
+                {
+                    if (window is null) { return; }
+                    allowClose.Current = true;
+                    window.Close();
+                }
                 else if (!connected) { RestoreLoadedCopy(); }
                 else if (!lifetime.IsCancellationRequested) { _ = LoadAsync(lifetime.Token); }
             }, Str.T("sftp.editor.discard", "Discard changes"), Str.T("common.cancel", "Cancel"),

@@ -173,6 +173,13 @@ internal sealed class AnsiParser
                 return;
             }
 
+            if (_intermediateCount != 0)
+            {
+                _terminal.HandleEsc((char)value, _intermediates.AsSpan(0, _intermediateCount));
+                ResetSequence();
+                return;
+            }
+
             switch (value)
             {
                 case (byte)'[':

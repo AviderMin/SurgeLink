@@ -89,10 +89,12 @@ internal static class SftpViewCommands
                 var siblings = await fileSystem.ListAsync(directory, token).ConfigureAwait(true);
                 var names = siblings.Select(entry => entry.Name).ToHashSet(StringComparer.Ordinal);
                 var suffix = 1;
-                var stem = isDirectory ? name : Path.GetFileNameWithoutExtension(name);
-                var extension = isDirectory ? string.Empty : Path.GetExtension(name);
-                do { destination = SftpPath.Combine(directory, stem + " (" + suffix++ + ")" + extension); }
-                while (names.Contains(destination[(destination.LastIndexOf('/') + 1)..]));
+                var split = isDirectory ? -1 : name.LastIndexOf('.');
+                var stem = split > 0 ? name[..split] : name;
+                var extension = split > 0 ? name[split..] : string.Empty;
+                do { name = stem + " (" + suffix++ + ")" + extension; }
+                while (names.Contains(name));
+                destination = SftpPath.Combine(directory, name);
             }
             else { overwrite = conflicts.ToHashSet(StringComparer.Ordinal); }
         }

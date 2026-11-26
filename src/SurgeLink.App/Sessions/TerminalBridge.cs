@@ -138,7 +138,9 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         if (!string.IsNullOrEmpty(text))
         {
             MarkUserInput();
-            lock (Emulator.SyncRoot) Send(TerminalInputEncoder.EncodeText(text, Emulator.Modes));
+            byte[] bytes;
+            lock (Emulator.SyncRoot) bytes = TerminalInputEncoder.EncodeText(text, Emulator.Modes);
+            _ = SendAsync(bytes);
         }
     }
 
@@ -148,7 +150,9 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         if (!string.IsNullOrEmpty(text))
         {
             MarkUserInput();
-            lock (Emulator.SyncRoot) Send(TerminalInputEncoder.EncodePaste(text, Emulator.Modes));
+            byte[] bytes;
+            lock (Emulator.SyncRoot) bytes = TerminalInputEncoder.EncodePaste(text, Emulator.Modes);
+            _ = SendAsync(bytes);
         }
     }
 
@@ -167,7 +171,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         }
 
         MarkUserInput();
-        Send(bytes);
+        _ = SendAsync(bytes);
         return true;
     }
 
@@ -179,7 +183,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         lock (Emulator.SyncRoot) { bytes = TerminalMouseEncoder.Encode(column, row, button, action, Emulator.Modes, control, alt, shift); }
         if (bytes is not { Length: > 0 } || IsClosed) { return false; }
         MarkUserInput();
-        Send(bytes);
+        _ = SendAsync(bytes);
         return true;
     }
 
@@ -234,9 +238,19 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         RaiseInvalidated();
     }
 
-    private void OnResponseRequested(string response) => Send(System.Text.Encoding.UTF8.GetBytes(response));
+    private int _pendingResponses;
 
-    private async void Send(byte[] bytes)
+    private async void OnResponseRequested(string response)
+    {
+        try
+        {
+            if (Interlocked.Increment(ref _pendingResponses) <= 16)
+                await SendAsync(System.Text.Encoding.UTF8.GetBytes(response)).ConfigureAwait(false);
+        }
+        finally { Interlocked.Decrement(ref _pendingResponses); }
+    }
+
+    private async Task SendAsync(byte[] bytes)
     {
         try
         {
@@ -248,8 +262,8 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
         }
         catch (Exception ex)
         {
-            // The write path wraps protocol failures in ProtocolException; an
-            // async void handler must never let any of them escape unobserved.
+            // The write path wraps protocol failures in ProtocolException;
+            // keep them observable even when a UI caller cannot await the write.
             // A failure while the channel still claims to be open is actionable
             // diagnostics and must reach the normal Information-level log file.
             if (IsClosed)

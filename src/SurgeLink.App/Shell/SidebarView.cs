@@ -182,9 +182,10 @@ internal sealed class SidebarView : Component<SidebarProps>
                 button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                 PrivacyDisplay.ApplyGroup(button, profile.Name);
             })
+            .OnUnmountAdd(PrivacyDisplay.DetachGroup)
             .MinHeight(AppTheme.RowMinHeight)
-            .ToolTip($"{profile.Name}\n{subtitle}" +
-                (string.IsNullOrWhiteSpace(profile.DetectedOperatingSystem) ? string.Empty : "\n" + profile.DetectedOperatingSystem))
+            .ToolTip(PrivacyDisplay.Mask($"{profile.Name}\n{subtitle}" +
+                (string.IsNullOrWhiteSpace(profile.DetectedOperatingSystem) ? string.Empty : "\n" + profile.DetectedOperatingSystem)))
             .AutomationName(PrivacyDisplay.Mask(profile.Name))
             .AutomationId("Session-" + profile.Id)
             .PositionInSet(position, total)

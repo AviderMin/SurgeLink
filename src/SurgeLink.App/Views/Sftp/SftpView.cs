@@ -49,7 +49,10 @@ internal sealed class SftpView : Component<SftpViewProps>
         var (error, setError) = UseState<string?>(null, threadSafe: true);
         var (sortColumn, setSortColumn) = UseState(SftpSortColumn.Name);
         var (ascending, setAscending) = UseState(true);
-        var (selected, setSelected) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>(), threadSafe: true);
+        var (savedSelection, setSelected) = UseState<IReadOnlyList<RemoteFileEntry>>(Array.Empty<RemoteFileEntry>(), threadSafe: true);
+        var selected = settings.ShowHiddenFiles || !savedSelection.Any(entry => entry.Name.StartsWith('.'))
+            ? savedSelection
+            : savedSelection.Where(entry => !entry.Name.StartsWith('.')).ToArray();
         var (dialog, setDialog) = UseState(SftpDialogState.None);
         var (dialogText, setDialogText) = UseState(string.Empty);
         var (dialogMode, setDialogMode) = UseState(0);
@@ -266,7 +269,7 @@ internal sealed class SftpView : Component<SftpViewProps>
 
         void OpenRename(RemoteFileEntry? entry)
         {
-            if (!IsOnline() || entry is null)
+            if (loading || !IsOnline() || entry is null)
             {
                 return;
             }
@@ -739,6 +742,11 @@ internal sealed class SftpView : Component<SftpViewProps>
                     selections.Current[cwd] = Array.Empty<string>();
                     setSelected(Array.Empty<RemoteFileEntry>());
                 });
+            })
+            .OnUnmountAdd(grid =>
+            {
+                SftpContextMenu.Detach(grid);
+                SftpListInput.DetachBlankArea(grid);
             });
 
         var transferPanel = Component<SftpTransferPanel, FileTransferQueue>(queue);

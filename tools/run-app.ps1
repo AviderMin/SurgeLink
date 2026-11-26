@@ -14,6 +14,7 @@ $exeCandidates = @(
 $exe = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 function Stop-OwnInstances($exePath) {
+  if (-not $exePath) { return }
   Get-Process SurgeLink -ErrorAction SilentlyContinue | ForEach-Object {
     try { if ($_.Path -eq $exePath) { Stop-Process -Id $_.Id -Force } } catch { }
   }
@@ -27,13 +28,14 @@ if (-not $NoBuild) {
     $out = & dotnet build "src/SurgeLink.App/SurgeLink.App.csproj" -c Debug -p:Platform=x64 -v q -nologo 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { Write-Output "BUILD FAILED"; Write-Output $out; exit 1 }
   } finally { Pop-Location }
+  $exe = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
   Stop-OwnInstances $exe
   Start-Sleep -Milliseconds 500
 }
 
 $artifacts = Join-Path $root "artifacts"
 New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
-if (-not (Test-Path $exe)) { Write-Output "MISSING EXE: $exe"; exit 2 }
+if (-not $exe) { Write-Output "MISSING EXE: $($exeCandidates[0])"; exit 2 }
 
 if ($LaunchArgs.Count -gt 0) { $p = Start-Process -FilePath $exe -ArgumentList $LaunchArgs -PassThru } else { $p = Start-Process -FilePath $exe -PassThru }
 Start-Sleep -Seconds $WaitSeconds

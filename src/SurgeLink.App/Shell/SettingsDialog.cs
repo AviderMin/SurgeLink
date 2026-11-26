@@ -33,17 +33,22 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
         var (saveError, setSaveError) = UseState<string?>(null);
         var closed = UseRef(false);
         var dialogControl = UseRef<ContentDialog?>(null);
+        var saveHandler = UseRef<Windows.Foundation.TypedEventHandler<ContentDialog, ContentDialogButtonClickEventArgs>?>(null);
         // The dialog's PrimaryButtonClick handler is bound only once (see onOpened),
         // so it must read the latest draft from a stable holder instead of the
         // draft captured by the render that attached it.
         var draftRef = UseRef(draft);
         draftRef.Current = draft;
+        saveHandler.Current ??= CancelFailedSave;
         // PrimaryButtonClick runs before OnClosed. Keeping the native dialog open
         // on a failed write preserves both the user's draft and their retry path.
-        UseEffect(() => () =>
+        UseEffect(() => DetachSaveHandler, Array.Empty<object>());
+        void DetachSaveHandler()
         {
-            if (dialogControl.Current is { } control) control.PrimaryButtonClick -= CancelFailedSave;
-        }, Array.Empty<object>());
+            if (dialogControl.Current is not { } control) return;
+            control.PrimaryButtonClick -= saveHandler.Current;
+            dialogControl.Current = null;
+        }
         void CancelFailedSave(ContentDialog sender, ContentDialogButtonClickEventArgs args)
         {
             if (!SettingsDialogSave.TryApply(store, draftRef.Current, error =>
@@ -223,11 +228,7 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
             {
                 if (closed.Current) return;
                 closed.Current = true;
-                if (dialogControl.Current is { } control)
-                {
-                    control.PrimaryButtonClick -= CancelFailedSave;
-                    dialogControl.Current = null;
-                }
+                DetachSaveHandler();
                 Props.OnClosed();
             },
             Str.T("common.save", "Save"),
@@ -240,18 +241,14 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
                 // AppDialog invokes OnOpened on every render and again when the
                 // native dialog opens; attaching each time would stack duplicate
                 // handlers whose stale drafts could later overwrite saved values.
-                if (ReferenceEquals(dialogControl.Current, control))
+                if (closed.Current || ReferenceEquals(dialogControl.Current, control))
                 {
                     return;
                 }
 
-                if (dialogControl.Current is { } previous)
-                {
-                    previous.PrimaryButtonClick -= CancelFailedSave;
-                }
-
+                DetachSaveHandler();
                 dialogControl.Current = control;
-                control.PrimaryButtonClick += CancelFailedSave;
+                control.PrimaryButtonClick += saveHandler.Current;
             });
     }
 

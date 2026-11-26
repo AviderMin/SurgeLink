@@ -45,7 +45,7 @@ try {
         else {
             # Elevate only certificate import, keeping app installation under the
             # original user even when UAC uses another administrator account.
-            $arguments = '-NoProfile -File "' + $PSCommandPath + '" -TrustCertificateOnly'
+            $arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -TrustCertificateOnly'
             $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
                 -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
             if ($process.ExitCode -ne 0) { throw 'Certificate import failed or was cancelled.' }

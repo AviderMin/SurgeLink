@@ -127,10 +127,8 @@ if (-not $NoBuild) {
 
 if (-not $SkipTests) {
   Step "Tests"
-  foreach ($proj in @("tests/SurgeLink.Terminal.Tests", "tests/SurgeLink.Protocols.Ssh.Tests", "tests/SurgeLink.Core.Tests", "tests/SurgeLink.Protocols.Conformance")) {
-    $out = & dotnet test (Join-Path $root ($proj + "/" + (Split-Path $proj -Leaf) + ".csproj")) -c $Configuration -v q -nologo 2>&1 | Out-String
-    if ($LASTEXITCODE -eq 0) { Pass ("tests " + (Split-Path $proj -Leaf)) } else { Fail ("tests " + (Split-Path $proj -Leaf)) ($out | Select-Object -Last 8 | Out-String) }
-  }
+  $out = & dotnet test (Join-Path $root "SurgeLink.slnx") -c $Configuration -p:Platform=x64 -m:1 -v q -nologo 2>&1 | Out-String
+  if ($LASTEXITCODE -eq 0) { Pass "solution tests" } else { Fail "solution tests" $out }
 }
 
 # ---------------------------------------------------------------------------

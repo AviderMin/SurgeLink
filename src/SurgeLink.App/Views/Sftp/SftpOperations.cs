@@ -51,7 +51,7 @@ internal static class SftpOperations
         SftpDialogKind.NewFolder => fileSystem.CreateDirectoryAsync(
             SftpPath.Combine(workingDirectory, text), cancellationToken),
         SftpDialogKind.Rename when state.Target is { } target => fileSystem.RenameAsync(
-            target.FullPath, SftpPath.Combine(workingDirectory, text), cancellationToken),
+            target.FullPath, SftpPath.Combine(SftpPath.Parent(target.FullPath), text), cancellationToken),
         SftpDialogKind.Delete => RemoteFileDelete.DeleteManyAsync(fileSystem, state.DeleteTargets, cancellationToken),
         SftpDialogKind.Permissions when state.Target is { } target => fileSystem.SetPermissionsAsync(
             target.FullPath, mode, cancellationToken),

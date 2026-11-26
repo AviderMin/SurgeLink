@@ -91,11 +91,9 @@ internal sealed partial class TerminalSurface
         {
             // With a selection Ctrl+C copies, as in Windows Terminal; without one it
             // falls through and sends ETX so the shell can interrupt a command.
-            if (CopySelection())
-            {
-                e.Handled = true;
-                return;
-            }
+            CopySelection();
+            e.Handled = true;
+            return;
         }
 
         if (control && !alt && key == (int)VirtualKey.V)

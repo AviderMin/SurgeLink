@@ -58,7 +58,8 @@ internal sealed partial class TerminalSurface : ContentControl
     private readonly TextBlock _cursorGlyph;
     private readonly DispatcherQueueTimer? _blinkTimer;
     private readonly DispatcherQueueTimer? _resizeTimer;
-    private bool _active;
+    private volatile bool _active;
+    private string? _pendingClipboardCopy;
     private bool _cursorBlinking;
     private readonly StringBuilder _runBuilder = new(64);
     private bool _hasBlinkingCells;
@@ -187,6 +188,7 @@ internal sealed partial class TerminalSurface : ContentControl
     {
         if (_active == active) { return; }
         _active = active;
+        if (!active) { Interlocked.Exchange(ref _pendingClipboardCopy, null); }
         if (active)
         {
             _allRowsDirty = true;
@@ -282,6 +284,7 @@ internal sealed partial class TerminalSurface : ContentControl
     {
         if (!_loaded) return;
         _loaded = false;
+        Interlocked.Exchange(ref _pendingClipboardCopy, null);
         if (_canvas is { } canvas)
         {
             canvas.Draw -= OnCanvasDraw;
@@ -336,21 +339,26 @@ internal sealed partial class TerminalSurface : ContentControl
 
     private void OnClipboardCopyRequested(string text)
     {
-        if (!_bridge.AllowRemoteClipboard || _bridge.IsClosed) return;
-        DispatcherQueue?.TryEnqueue(() =>
+        if (!_active || !_bridge.AllowRemoteClipboard || _bridge.IsClosed) return;
+        if (Interlocked.Exchange(ref _pendingClipboardCopy, text) is not null) return;
+        if (DispatcherQueue?.TryEnqueue(() =>
         {
-            if (!_loaded || !_bridge.AllowRemoteClipboard || _bridge.IsClosed) return;
+            var latest = Interlocked.Exchange(ref _pendingClipboardCopy, null);
+            if (latest is null || !_loaded || !_active || !_bridge.AllowRemoteClipboard || _bridge.IsClosed) return;
             try
             {
                 var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
-                package.SetText(text);
+                package.SetText(latest);
                 Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
             }
             catch (Exception ex)
             {
                 _logger?.LogDebug(ex, "OSC 52 clipboard write failed.");
             }
-        });
+        }) != true)
+        {
+            Interlocked.Exchange(ref _pendingClipboardCopy, null);
+        }
     }
 
     private void InvalidatePaint(bool force)

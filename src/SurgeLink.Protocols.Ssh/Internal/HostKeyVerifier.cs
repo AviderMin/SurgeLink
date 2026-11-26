@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Renci.SshNet.Common;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
+using System.Runtime.CompilerServices;
 
 namespace SurgeLink.Protocols.Ssh.Internal;
 
@@ -17,6 +18,7 @@ internal sealed class HostKeyVerifier
     private readonly Func<HostKeyChallenge, CancellationToken, Task<HostKeyDecision>>? _prompt;
     private readonly ILogger _logger;
     private readonly CancellationToken _cancellationToken;
+    private readonly StrongBox<string?> _sessionFingerprint;
     private readonly object _gate = new();
     private string? _rejectionReason;
 
@@ -27,7 +29,8 @@ internal sealed class HostKeyVerifier
         IHostKeyStore store,
         Func<HostKeyChallenge, CancellationToken, Task<HostKeyDecision>>? prompt,
         ILogger logger,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        StrongBox<string?>? sessionFingerprint = null)
     {
         _host = host;
         _port = port;
@@ -35,6 +38,7 @@ internal sealed class HostKeyVerifier
         _prompt = prompt;
         _logger = logger;
         _cancellationToken = cancellationToken;
+        _sessionFingerprint = sessionFingerprint ?? new();
     }
 
     /// <summary>Endpoint key used for storage and display.</summary>
@@ -73,12 +77,15 @@ internal sealed class HostKeyVerifier
     {
         var algorithm = string.IsNullOrWhiteSpace(args.HostKeyName) ? "unknown" : args.HostKeyName;
         var fingerprint = HostKeyFingerprint.ComputeSha256(args.HostKey);
+        var pinned = Volatile.Read(ref _sessionFingerprint.Value);
+        if (pinned is not null) { return MatchesSessionKey(pinned, fingerprint); }
+
         var known = _store.TryGetFingerprint(Endpoint, out var entry);
 
         if (known && string.Equals(entry.FingerprintSha256, fingerprint, StringComparison.Ordinal))
         {
             _logger.LogDebug("Host key for {Endpoint} matches the remembered fingerprint.", Endpoint);
-            return true;
+            return PinSessionKey(fingerprint);
         }
 
         var prompt = _prompt;
@@ -97,6 +104,7 @@ internal sealed class HostKeyVerifier
             SetRejection($"The host key for {Endpoint} was rejected.");
             return false;
         }
+        if (!PinSessionKey(fingerprint)) { return false; }
 
         if (decision.Remember)
         {
@@ -117,6 +125,16 @@ internal sealed class HostKeyVerifier
         }
 
         return true;
+    }
+
+    private bool PinSessionKey(string fingerprint) =>
+        MatchesSessionKey(Interlocked.CompareExchange(ref _sessionFingerprint.Value, fingerprint, null) ?? fingerprint, fingerprint);
+
+    private bool MatchesSessionKey(string pinned, string presented)
+    {
+        if (string.Equals(pinned, presented, StringComparison.Ordinal)) { return true; }
+        SetRejection($"The host key for {Endpoint} changed during the session.");
+        return false;
     }
 
     private HostKeyDecision AskUser(Func<HostKeyChallenge, CancellationToken, Task<HostKeyDecision>> prompt, HostKeyChallenge challenge)

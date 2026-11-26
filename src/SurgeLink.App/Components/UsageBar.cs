@@ -24,7 +24,7 @@ internal sealed class UsageBar : Component<UsageBarProps>
     public override Element Render()
     {
         _ = UseColorScheme(); // repaint when the theme changes
-        var fraction = Math.Clamp(Props.Fraction, 0d, 1d);
+        var fraction = double.IsNaN(Props.Fraction) ? 0d : Math.Clamp(Props.Fraction, 0d, 1d);
 
         // Star(0) is not a valid grid length, so clamp both sides to a hair.
         var bar = Grid(

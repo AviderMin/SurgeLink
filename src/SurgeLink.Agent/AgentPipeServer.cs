@@ -32,52 +32,34 @@ public sealed class AgentPipeServer : IAsyncDisposable
 
     private async Task RunAsync(NamedPipeServerStream first)
     {
-        var pipe = first;
+        NamedPipeServerStream? pipe = first;
         try
         {
             while (!_shutdown.IsCancellationRequested)
             {
-                NamedPipeServerStream? accepted = null;
                 try
                 {
+                    pipe ??= CreatePipe();
                     await pipe.WaitForConnectionAsync(_shutdown.Token).ConfigureAwait(false);
-                    accepted = pipe;
 
                     // Serve before allocating another instance. Even at saturation,
                     // the last accepted client must have a reader and a deadline.
+                    var accepted = pipe;
+                    pipe = null;
                     TrackConnection(ServeAsync(accepted));
-                    accepted = null;
-                    while (true)
-                    {
-                        try
-                        {
-                            pipe = CreatePipe();
-                            break;
-                        }
-                        catch (IOException) when (!_shutdown.IsCancellationRequested)
-                        {
-                            await Task.Delay(ListenRetryDelay, _shutdown.Token).ConfigureAwait(false);
-                        }
-                    }
-
                 }
                 catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
                 catch (ObjectDisposedException) when (_shutdown.IsCancellationRequested) { }
                 catch (IOException)
                 {
-                    // A broken or aborted wait must not end the listener. Back off
-                    // briefly so a persistent failure cannot spin the loop.
+                    if (pipe is not null) { await pipe.DisposeAsync().ConfigureAwait(false); }
+                    pipe = null;
                     try { await Task.Delay(ListenRetryDelay, _shutdown.Token).ConfigureAwait(false); }
                     catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
                 }
-                finally
-                {
-                    // Only release the accepted pipe when it was not handed off.
-                    if (accepted is not null) { await accepted.DisposeAsync().ConfigureAwait(false); }
-                }
             }
         }
-        finally { await pipe.DisposeAsync().ConfigureAwait(false); }
+        finally { if (pipe is not null) { await pipe.DisposeAsync().ConfigureAwait(false); } }
     }
 
     private void TrackConnection(Task connection)

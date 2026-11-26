@@ -94,7 +94,8 @@ internal sealed class SessionWorkspaceView : Component<SessionViewProps>
                     // Include the space between both labels in the hover target.
                     .Background(HoverSurface)
                     .Set(panel => PrivacyDisplay.ApplyGroup(panel, tab.Title))
-                    .ToolTip(string.IsNullOrEmpty(props.Message) ? tab.Title : props.Message)
+                    .OnUnmountAdd(PrivacyDisplay.DetachGroup)
+                    .ToolTip(PrivacyDisplay.Mask(string.IsNullOrEmpty(props.Message) ? tab.Title : props.Message))
                     .Margin(0, 0, AppTheme.SpacingM, 0).Grid(column: 0),
                 selector.VAlign(VerticalAlignment.Center).Grid(column: 1))
             .Padding(AppTheme.SpacingM, AppTheme.SpacingS)

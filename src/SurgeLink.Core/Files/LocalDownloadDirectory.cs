@@ -10,6 +10,8 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
     private const uint OpenReparsePoint = 0x00200000;
     private const uint Overlapped = 0x40000000;
     private const uint GenericRead = 0x80000000;
+    private const uint ListDirectory = 0x00000001;
+    private const uint ReadAttributes = 0x00000080;
     private const uint CloudReparseTag = 0x9000001A;
     private const uint CloudReparseTagMask = 0x0000F000;
     private const int FileNotFound = 2;
@@ -35,9 +37,9 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
                     continue;
                 }
                 var nativePath = ToExtendedPath(directory);
-                // Deny write/delete sharing: an ancestor cannot be renamed or
-                // converted to a junction while it owns a download destination.
-                var handle = CreateFile(nativePath, 0x80, FileShare.Read, 0, FileMode.Open, 0x02200000, 0);
+                // Deny delete sharing so an ancestor cannot be renamed while
+                // allowing write access needed to replace files within it.
+                var handle = CreateFile(nativePath, ListDirectory | ReadAttributes, FileShare.ReadWrite, 0, FileMode.Open, 0x02200000, 0);
                 var openError = Marshal.GetLastPInvokeError();
                 lease._directories.Add(handle);
                 if (handle.IsInvalid)
@@ -108,7 +110,7 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
             return true;
         }
 
-        using var handle = CreateFile(ToExtendedPath(path), 0x80, FileShare.ReadWrite | FileShare.Delete,
+        using var handle = CreateFile(ToExtendedPath(path), ReadAttributes, FileShare.ReadWrite | FileShare.Delete,
             0, FileMode.Open, OpenReparsePoint | 0x02000000, 0);
         if (handle.IsInvalid)
         {

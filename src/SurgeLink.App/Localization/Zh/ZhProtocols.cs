@@ -7,6 +7,8 @@ public static class ZhProtocols
         ["protocol.serial.endpoint"] = "串口名称",
         ["protocol.serial.description"] = "本地串口终端",
         ["protocol.ssh.description"] = "安全外壳协议，支持 SFTP/SCP 与远程监控",
+        ["protocol.telnet.description"] = "通过 TCP 连接的明文 Telnet 终端",
+        ["protocol.demo.description"] = "本地演示会话，提供模拟终端、内存文件和模拟监控数据",
         ["protocol.option.serial.baudRate"] = "波特率",
         ["protocol.option.serial.dataBits"] = "数据位",
         ["protocol.option.serial.parity"] = "校验位",

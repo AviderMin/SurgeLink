@@ -20,6 +20,8 @@ internal static class SftpContextMenu
         public Action<FrameworkElement, ContextRequestedEventArgs>? Callback { get; set; }
 
         public TypedEventHandler<UIElement, ContextRequestedEventArgs>? Handler { get; set; }
+        public void OnLoaded(object sender, RoutedEventArgs args) => Subscribe((FrameworkElement)sender);
+        public void OnUnloaded(object sender, RoutedEventArgs args) => Unsubscribe((FrameworkElement)sender);
 
         /// <summary>Subscribes once; later calls only keep the callback current.</summary>
         public void Subscribe(FrameworkElement element)
@@ -57,13 +59,22 @@ internal static class SftpContextMenu
         var subscription = Subscriptions.GetValue(element, static control =>
         {
             var state = new Subscription();
-            control.Loaded += (_, _) => state.Subscribe(control);
-            control.Unloaded += (_, _) => state.Unsubscribe(control);
+            control.Loaded += state.OnLoaded;
+            control.Unloaded += state.OnUnloaded;
             return state;
         });
 
         subscription.Callback = callback;
         subscription.Subscribe(element);
+    }
+
+    public static void Detach(FrameworkElement element)
+    {
+        if (!Subscriptions.TryGetValue(element, out var subscription)) return;
+        element.Loaded -= subscription.OnLoaded;
+        element.Unloaded -= subscription.OnUnloaded;
+        subscription.Unsubscribe(element);
+        Subscriptions.Remove(element);
     }
 
     public static void Add(MenuFlyout menu, string label, string glyph, Action action, bool enabled)

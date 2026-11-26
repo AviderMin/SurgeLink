@@ -1,10 +1,29 @@
 using SurgeLink.Protocols.Ssh.Internal;
+using Microsoft.Extensions.Logging.Abstractions;
+using SurgeLink.Core.Protocols;
+using SurgeLink.Core.Security;
 using Xunit;
 
 namespace SurgeLink.Protocols.Ssh.Tests;
 
 public sealed class ScpReadSafetyTests
 {
+    [Theory]
+    [InlineData("/tmp/file\rname")]
+    [InlineData("/tmp/file\nname")]
+    public async Task ScpUploadRejectsUnsupportedFileNamesBeforeOpeningAConnection(string path)
+    {
+        var request = new ConnectionRequest { Host = "unused.test", Username = "user" };
+        var options = new SshProtocolOptions(request);
+        var context = new ProtocolHostContext(NullLoggerFactory.Instance,
+            new JsonHostKeyStore(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "hosts.json")));
+        var factory = new SshConnectionFactory(request, options, context, NullLogger.Instance);
+        await using var files = new ScpFileSystem(factory, options, NullLogger.Instance);
+
+        var error = Assert.Throws<ProtocolException>(() => { _ = files.OpenWriteAsync(path, null, null, default); });
+        Assert.Equal(ProtocolFailureKind.Configuration, error.Kind);
+    }
+
     [Fact]
     public void ReadCommandChecksTheTypeInTheSameCommand()
     {

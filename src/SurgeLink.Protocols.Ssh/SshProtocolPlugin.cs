@@ -204,7 +204,7 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
                 cancellationToken).ConfigureAwait(false);
         }
         finally { timeout.Resume(); }
-        var jumpFactory = new SshConnectionFactory(jumpRequest, targetOptions, context, logger);
+        var jumpFactory = new SshConnectionFactory(jumpRequest, new SshProtocolOptions(jumpRequest), context, logger);
         var jumpInfo = jumpFactory.CreateConnectionInfo(timeout.Token, timeout);
         var jumpVerifier = jumpFactory.CreateVerifier(timeout.Token, timeout);
         var jumpClient = new SshClient(jumpInfo);
@@ -231,6 +231,10 @@ public sealed class SshProtocolPlugin : IProtocolPlugin
             if (cancellationToken.IsCancellationRequested)
             {
                 throw new ProtocolException($"Connecting to jump host {jumpFactory.Endpoint} was cancelled.", ProtocolFailureKind.Cancelled, ex);
+            }
+            if (timeout.IsCancellationRequested)
+            {
+                throw new ProtocolException($"Connecting to jump host {jumpFactory.Endpoint} timed out.", ProtocolFailureKind.Timeout, ex);
             }
             if (jumpVerifier.RejectionReason is { Length: > 0 } reason)
             {

@@ -58,6 +58,7 @@ public static class AgentJson
 {
     public static JsonSerializerOptions Options { get; } = new(JsonSerializerDefaults.Web)
     {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         Converters = { new JsonStringEnumConverter() },
         MaxDepth = 32,
     };

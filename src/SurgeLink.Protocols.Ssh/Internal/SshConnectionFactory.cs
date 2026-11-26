@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Renci.SshNet;
 using Renci.SshNet.Common;
 using SurgeLink.Core.Protocols;
+using System.Runtime.CompilerServices;
 using CoreAuthenticationMethod = SurgeLink.Core.Protocols.AuthenticationMethod;
 using SshAuthenticationMethod = Renci.SshNet.AuthenticationMethod;
 
@@ -33,6 +34,7 @@ internal sealed class SshConnectionFactory
     private readonly SshProtocolOptions _options;
     private readonly ProtocolHostContext _context;
     private readonly ILogger _logger;
+    private readonly StrongBox<string?> _sessionFingerprint = new();
     private string? _dialHostOverride;
     private int? _dialPortOverride;
 
@@ -75,7 +77,7 @@ internal sealed class SshConnectionFactory
                     try { return await prompt(challenge, token).ConfigureAwait(false); }
                     finally { budget.Resume(); }
                 }
-                : _context.HostKeyPrompt, _logger, cancellationToken);
+                : _context.HostKeyPrompt, _logger, cancellationToken, _sessionFingerprint);
 
     internal SshConnectBudget CreateConnectBudget(CancellationToken token) => new(_options.ConnectTimeout, token);
 

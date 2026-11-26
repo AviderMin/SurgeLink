@@ -36,7 +36,9 @@ internal sealed class MainShell : Component
     {
         // Keep the root window across store-triggered renders, when Reactor's
         // ambient ActiveHost can be absent or refer to another nested host.
-        var ownerWindow = UseWindow();
+        var currentWindow = UseWindow();
+        var rootWindow = UseRef(currentWindow);
+        var ownerWindow = rootWindow.Current ??= currentWindow;
         var pickers = UseRef<WindowStoragePicker?>(null);
         if (pickers.Current is null && ownerWindow is not null)
         {

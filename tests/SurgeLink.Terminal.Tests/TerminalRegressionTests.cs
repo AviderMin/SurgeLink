@@ -328,6 +328,38 @@ public sealed class TerminalRegressionTests
     }
 
     [Fact]
+    public void EscapeFinalFollowingAnIntermediateDoesNotStartAControlString()
+    {
+        var terminal = new TestTerminal();
+        terminal.Feed("\u001b(Pfirst\u001b([second");
+        Assert.Equal("firstsecond", terminal.Line(0));
+    }
+
+    [Fact]
+    public void RejectedHyperlinkDoesNotCarryOverToFollowingText()
+    {
+        var terminal = new TestTerminal();
+        terminal.Feed("\u001b]8;;https://example.com\u0007A\u001b]8;;file:///example\u0007B");
+        Assert.NotNull(terminal.Cell(0, 0).Hyperlink);
+        Assert.Null(terminal.Cell(0, 1).Hyperlink);
+    }
+
+    [Fact]
+    public void Osc52PublishesTheLatestPayloadOutsideTheParserLock()
+    {
+        var terminal = new TestTerminal();
+        var copied = new List<string>();
+        terminal.Emulator.ClipboardCopyRequested += value =>
+        {
+            Assert.False(System.Threading.Monitor.IsEntered(terminal.Emulator.SyncRoot));
+            copied.Add(value);
+        };
+
+        terminal.Feed("\u001b]52;c;Zmlyc3Q=\u0007\u001b]52;c;bGFzdA==\u0007");
+        Assert.Equal("last", Assert.Single(copied));
+    }
+
+    [Fact]
     public void Osc52ClipboardEmitsDecodedPayloadAndIgnoresReadQueries()
     {
         var terminal = new TestTerminal(20, 2);

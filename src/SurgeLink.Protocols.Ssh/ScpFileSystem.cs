@@ -171,6 +171,10 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         cancellationToken.ThrowIfCancellationRequested();
         var fullPath = NormalizePath(path);
+        if (fullPath.AsSpan((fullPath.LastIndexOf('/') + 1)).IndexOfAny('\r', '\n') >= 0)
+        {
+            throw new ProtocolException("SCP upload file names cannot contain line breaks.", ProtocolFailureKind.Configuration);
+        }
         var temporaryPath = Path.Combine(
             Path.GetTempPath(),
             "surge-scp-" + Guid.NewGuid().ToString("N") + ".tmp");
@@ -219,6 +223,10 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         if (IsRootPath(fullPath))
         {
             throw new ProtocolException("Refusing to delete the remote root directory.", ProtocolFailureKind.Configuration);
+        }
+        if (fullPath.Split('/').Any(segment => segment is "." or ".."))
+        {
+            throw new ProtocolException("Delete paths must not contain dot segments.", ProtocolFailureKind.Configuration);
         }
 
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
@@ -561,7 +569,11 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         return string.Compare(left.Name, right.Name, StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static string NormalizePath(string path) => PosixPath.Resolve(path);
+    internal static string NormalizePath(string path)
+    {
+        var resolved = PosixPath.Resolve(path).TrimEnd('/');
+        return resolved.Length == 0 ? "/" : resolved;
+    }
 
     /// <summary>True when a path lexically resolves to the remote root; used before any recursive delete.</summary>
     internal static bool IsRootPath(string path) => PosixPath.Normalize(path) == "/";

@@ -92,6 +92,7 @@ try
     }
     if (parsed.TextFromStdin)
     {
+        if (Console.IsInputRedirected) Console.InputEncoding = new UTF8Encoding(false);
         request = request with { Text = await Console.In.ReadToEndAsync(cancellation.Token) };
     }
     if (request.Method == "files.write" && request.Text is { } writeText && System.Text.Encoding.UTF8.GetByteCount(writeText) > 900_000)
