@@ -36,8 +36,8 @@ internal sealed record SessionEditorOutcome(
 internal sealed record SessionEditorProps(
     SessionEditorMode Mode,
     SessionProfile? Existing,
-    Action<SessionEditorOutcome> OnSaved,
-    Action OnCancel);
+    Func<SessionEditorOutcome, Task<bool>> SaveAsync,
+    Action<SessionEditorOutcome?> OnClosed);
 
 /// <summary>
 /// Create, edit or duplicate a saved connection. Protocols and their default
@@ -82,9 +82,12 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
         // Read by the dialog buttons, which are wired on mount in the editor's
         // command space (the declarative DSL has no click handler for those).
-        var validationRef = UseRef<string?>(null);
-        var clickHandler = UseRef<TypedEventHandler<ContentDialog, ContentDialogButtonClickEventArgs>?>(null);
-        var dialogControl = UseRef<ContentDialog?>(null);
+        var submit = UseRef<Func<bool, ContentDialogButtonClickEventArgs, Task>?>(null);
+        var submitting = UseRef(false);
+        var savedOutcome = UseRef<SessionEditorOutcome?>(null);
+        var draftId = UseRef<string?>(null);
+        var (saveFailed, setSaveFailed) = UseState(false);
+        var detachDialog = UseRef<Action?>(null);
         // The shell retains this component after close. Settings notifications can
         // render it again, so its declarative open state must also stay closed.
         var closed = UseRef(false);
@@ -105,41 +108,70 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
         var errors = Validate();
         var showErrors = pickerError is not null || (errors.Count > 0 && attempted);
-        var canSave = errors.Count == 0;
-        validationRef.Current = canSave ? null : string.Join(Environment.NewLine, errors);
-
-        void Submit(bool connectAfterSave)
+        if (!closed.Current) submit.Current = async (connectAfterSave, args) =>
         {
-            if (!canSave)
+            args.Cancel = true;
+            if (submitting.Current) { return; }
+            if (errors.Count > 0)
             {
                 setAttempted(true);
                 return;
             }
 
-            var profile = BuildProfile();
-            props.OnSaved(new SessionEditorOutcome(profile, BuildCredential(), connectAfterSave, new ConnectOptions
+            var deferral = args.GetDeferral();
+            submitting.Current = true;
+            setSaveFailed(false);
+            try
             {
-                // A secret entered for this connection is independent of whether it is saved.
-                Password = isPassword && password.Length > 0 ? password : null,
-                PrivateKeyPath = profile.PrivateKeyPath,
-                PrivateKeyPassphrase = isKey && passphrase.Length > 0
-                    ? passphrase
-                    : BuildCredential()?.PrivateKeyPassphrase,
-            }));
-        }
+                var profile = BuildProfile();
+                var credential = BuildCredential();
+                var outcome = new SessionEditorOutcome(profile, credential, connectAfterSave, new ConnectOptions
+                {
+                    // A secret entered for this connection is independent of whether it is saved.
+                    Password = isPassword && password.Length > 0 ? password : null,
+                    PrivateKeyPath = profile.PrivateKeyPath,
+                    PrivateKeyPassphrase = isKey && passphrase.Length > 0
+                        ? passphrase
+                        : credential?.PrivateKeyPassphrase,
+                });
+                if (await props.SaveAsync(outcome))
+                {
+                    savedOutcome.Current = outcome;
+                    args.Cancel = false;
+                }
+                else { setSaveFailed(true); }
+            }
+            catch (Exception ex)
+            {
+                CrashLog.Write("SaveProfile", ex);
+                setSaveFailed(true);
+            }
+            finally
+            {
+                submitting.Current = false;
+                deferral.Complete();
+            }
+        };
 
         // All shell modals share the same scroll viewport, padding and sizing.
         // Keep validation on both save buttons so invalid forms remain open.
         return AppDialog.Render(
             TitleFor(props.Mode),
-            VStack(AppTheme.SpacingXl, BuildFields()),
+            VStack(AppTheme.SpacingXl, saveFailed
+                ? [InfoBar(Str.T("shell.error.saveFailed", "Could not save changes"),
+                       Str.T("shell.editor.retrySave", "Check folder access and available disk space, then try saving again."))
+                       .Severity(InfoBarSeverity.Error).IsClosable(false), .. BuildFields()]
+                : BuildFields()),
             "SessionEditor",
-            result =>
+            _ =>
             {
                 if (closed.Current) return;
                 closed.Current = true;
                 DetachDialogEvents();
-                SubmitOrCancel(result);
+                var outcome = savedOutcome.Current;
+                savedOutcome.Current = null;
+                submit.Current = null;
+                props.OnClosed(outcome);
             },
             Str.T("shell.editor.saveAndConnect", "Save & connect"),
             Str.T("common.cancel", "Cancel"),
@@ -151,63 +183,37 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
         void AttachDialogEvents(ContentDialog control)
         {
-            if (clickHandler.Current is not null)
+            if (closed.Current || detachDialog.Current is not null)
             {
                 return;
             }
 
-            dialogControl.Current = control;
             // The DSL has no click hook for the dialog's own command-space
             // buttons. Attach when the dialog opens; DetachDialogEvents runs in
             // OnClosed so the pair is balanced for every result path. The
-            // handler reads validationRef.Current, so it validates the latest
-            // form state rather than the state captured at mount.
-            TypedEventHandler<ContentDialog, ContentDialogButtonClickEventArgs> handler =
-                (_, args) => CancelIfInvalid(args);
-            clickHandler.Current = handler;
-            control.PrimaryButtonClick += handler;
-            control.SecondaryButtonClick += handler;
+            // handlers use the submit callback from the latest render.
+            TypedEventHandler<ContentDialog, ContentDialogButtonClickEventArgs> saveAndConnect =
+                (sender, args) => { _ = submit.Current?.Invoke(true, args); };
+            TypedEventHandler<ContentDialog, ContentDialogButtonClickEventArgs> save =
+                (sender, args) => { _ = submit.Current?.Invoke(false, args); };
+            TypedEventHandler<ContentDialog, ContentDialogClosingEventArgs> closing =
+                (_, args) => { if (submitting.Current) { args.Cancel = true; } };
+            control.PrimaryButtonClick += saveAndConnect;
+            control.SecondaryButtonClick += save;
+            control.Closing += closing;
+            detachDialog.Current = () =>
+            {
+                control.PrimaryButtonClick -= saveAndConnect;
+                control.SecondaryButtonClick -= save;
+                control.Closing -= closing;
+            };
             DialogAutomation.Tag("SessionEditor")(control);
         }
 
         void DetachDialogEvents()
         {
-            if (dialogControl.Current is { } control && clickHandler.Current is { } handler)
-            {
-                control.PrimaryButtonClick -= handler;
-                control.SecondaryButtonClick -= handler;
-            }
-
-            clickHandler.Current = null;
-            dialogControl.Current = null;
-        }
-
-        void CancelIfInvalid(ContentDialogButtonClickEventArgs args)
-        {
-            if (validationRef.Current is null)
-            {
-                return;
-            }
-
-            // Keep the dialog open so the validation InfoBar becomes visible.
-            setAttempted(true);
-            args.Cancel = true;
-        }
-
-        void SubmitOrCancel(ContentDialogResult result)
-        {
-            switch (result)
-            {
-                case ContentDialogResult.Primary:
-                    Submit(true);
-                    break;
-                case ContentDialogResult.Secondary:
-                    Submit(false);
-                    break;
-                default:
-                    props.OnCancel();
-                    break;
-            }
+            detachDialog.Current?.Invoke();
+            detachDialog.Current = null;
         }
 
         Element[] BuildFields()
@@ -461,8 +467,10 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
 
             // Create and Duplicate both get a fresh identity so credentials and
             // open sessions never collide with the source profile.
-            return SessionProfile.New(protocolId, host.Trim(), parsedPort, localDevice ? string.Empty : userName.Trim(), displayName) with
+            var profile = SessionProfile.New(protocolId, host.Trim(), parsedPort, localDevice ? string.Empty : userName.Trim(), displayName);
+            return profile with
             {
+                Id = draftId.Current ??= profile.Id,
                 Authentication = auth,
                 PrivateKeyPath = keyFile,
                 Group = groupValue,

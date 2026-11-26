@@ -14,6 +14,22 @@ namespace SurgeLink.Protocols.Ssh.Tests;
 /// </summary>
 public sealed class SshIntegrationTests
 {
+    [SshJumpIntegrationFact]
+    public async Task ProxyJumpSupportsShellAndSeparateSftpConnectionOnWindows()
+    {
+        await using var session = await SshIntegration.ConnectSessionAsync(viaJump: true);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var terminal = Assert.IsAssignableFrom<IRemoteTerminal>(session.Terminal);
+        await terminal.StartAsync(new TerminalStartOptions(), timeout.Token);
+        Assert.True(terminal.IsOpen);
+
+        var files = Assert.IsAssignableFrom<IRemoteFileSystem>(session.FileSystem);
+        var home = await files.GetHomeDirectoryAsync(timeout.Token);
+        Assert.StartsWith("/", home);
+        var homeEntry = await files.StatAsync(home, timeout.Token);
+        Assert.True(homeEntry.IsDirectory);
+    }
+
     [SshIntegrationFact]
     public async Task NewFolderUploadPublishesCompleteTreeFromOneStagingRoot()
     {

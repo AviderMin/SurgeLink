@@ -13,6 +13,9 @@ namespace SurgeLink.App.Views.Sftp;
 internal static class FileEditorWindows
 {
     private static readonly ConditionalWeakTable<IRemoteFileSystem, Dictionary<string, ReactorWindow>> Windows = new();
+    private static int _openCount;
+
+    public static bool AnyOpen => _openCount > 0;
 
     public static void Open(IRemoteFileSystem fileSystem, RemoteFileEntry target,
         IAppSettingsStore settings, IProtocolSession? session)
@@ -46,6 +49,10 @@ internal static class FileEditorWindows
                 ? BackdropKind.MicaAlt : BackdropKind.None),
         }, _ => Component<FileEditorWindow, FileEditorWindowProps>(new(fileSystem, target, settings, session)));
         editors.Add(target.FullPath, editor);
-        editor.Closed += (_, _) => editors.Remove(target.FullPath);
+        _openCount++;
+        editor.Closed += (_, _) =>
+        {
+            if (editors.Remove(target.FullPath)) { _openCount--; }
+        };
     }
 }

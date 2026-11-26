@@ -7,6 +7,7 @@ using SurgeLink.App.Localization;
 using SurgeLink.App.Services;
 using SurgeLink.App.Sessions;
 using SurgeLink.App.Styling;
+using SurgeLink.App.Views.Sftp;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
 using SurgeLink.Core.Sessions;
@@ -77,9 +78,25 @@ internal sealed class MainShell : Component
         var connectPending = UseRef(false);
         var connectionCancellation = UseRef<CancellationTokenSource?>(null);
         var (persistenceError, setPersistenceError) = UseState<string?>(null);
+        var (closeNotice, setCloseNotice) = UseState<string?>(null);
         var pendingProfileWrites = UseRef(0);
+        var demoPending = UseRef(false);
         var profileWrites = UseMemo(() => new SemaphoreSlim(1, 1), NoDependencies);
-        UseClosingGuard(() => pendingProfileWrites.Current == 0);
+        UseEffect(() => profileWrites.Dispose, NoDependencies);
+        UseClosingGuard(() =>
+        {
+            if (pendingProfileWrites.Current != 0)
+            {
+                setCloseNotice(Str.T("shell.close.pendingSave", "Wait for the session changes to finish saving, then close SurgeLink again."));
+                return false;
+            }
+            if (FileEditorWindows.AnyOpen)
+            {
+                setCloseNotice(Str.T("shell.close.openEditors", "Close the remote text editor windows before closing SurgeLink."));
+                return false;
+            }
+            return true;
+        });
 
         void ReportPersistenceFailure(Exception error) => setPersistenceError(error.Message);
 
@@ -99,7 +116,8 @@ internal sealed class MainShell : Component
                 ReportPersistenceFailure(ex);
                 // Profile and credential files may fail independently; show what
                 // actually persisted even if the second write failed.
-                await Task.Run(workspace.ReloadProfiles);
+                try { await Task.Run(workspace.ReloadProfiles); }
+                catch (Exception reloadError) { CrashLog.Write("ReloadProfiles", reloadError); }
                 return false;
             }
             finally
@@ -207,27 +225,33 @@ internal sealed class MainShell : Component
 
         async Task OpenDemoAsync()
         {
-            var profile = workspace.Snapshot.Profiles.FirstOrDefault(p => p.ProtocolId == "demo")
-                          ?? SessionProfile.New(
-                              "demo",
-                              "demo-host",
-                              0,
-                              Environment.UserName,
-                              Str.T("shell.demo.profileName", "Demo session"));
-            if (await TryPersistAsync(() => workspace.SaveProfile(profile, new StoredCredential { Password = "demo" })))
+            if (demoPending.Current) { return; }
+            demoPending.Current = true;
+            try
             {
-                Connect(profile);
+                var profile = workspace.Snapshot.Profiles.FirstOrDefault(p => p.ProtocolId == "demo")
+                              ?? SessionProfile.New(
+                                  "demo",
+                                  "demo-host",
+                                  0,
+                                  Environment.UserName,
+                                  Str.T("shell.demo.profileName", "Demo session"));
+                if (await TryPersistAsync(() => workspace.SaveProfile(profile, new StoredCredential { Password = "demo" })))
+                {
+                    Connect(profile);
+                }
             }
+            finally { demoPending.Current = false; }
         }
 
-        void SaveProfile(SessionEditorOutcome outcome) => _ = SaveProfileAsync(outcome);
+        Task<bool> SaveProfileAsync(SessionEditorOutcome outcome) =>
+            TryPersistAsync(() => workspace.SaveProfile(outcome.Profile, outcome.Credential));
 
-        async Task SaveProfileAsync(SessionEditorOutcome outcome)
+        void OnProfileEditorClosed(SessionEditorOutcome? outcome)
         {
             shellModal.Current = null;
             setEditor(null);
-            if (await TryPersistAsync(() => workspace.SaveProfile(outcome.Profile, outcome.Credential))
-                && outcome.ConnectAfterSave)
+            if (outcome is { ConnectAfterSave: true })
             {
                 _ = ConnectAsync(outcome.Profile, outcome.Options);
             }
@@ -370,7 +394,7 @@ internal sealed class MainShell : Component
 
         Element BuildContent() => Grid(
             columns: [GridSize.Star()],
-            rows: [GridSize.Auto, GridSize.Star()],
+            rows: [GridSize.Auto, GridSize.Auto, GridSize.Star()],
             (persistenceError is null ? Empty() : InfoBar(
                 Str.T("shell.error.saveFailed", "Could not save changes"),
                 Str.F("shell.error.saveFailedHint", "Check folder access and available disk space, then try again. {0}", persistenceError)) with
@@ -379,7 +403,14 @@ internal sealed class MainShell : Component
                 IsClosable = true,
                 OnClosed = () => setPersistenceError(null),
             }).Grid(row: 0),
-            workspaceSurface.Grid(row: 1));
+            (closeNotice is null ? Empty() : InfoBar(
+                Str.T("shell.close.title", "SurgeLink is still open"), closeNotice) with
+            {
+                Severity = InfoBarSeverity.Informational,
+                IsClosable = true,
+                OnClosed = () => setCloseNotice(null),
+            }).Grid(row: 1),
+            workspaceSurface.Grid(row: 2));
 
         // A bounded star row gives the session list the remaining pane height.
         // NavigationView.PaneCustomContent is measured in an Auto row instead.
@@ -425,8 +456,8 @@ internal sealed class MainShell : Component
             lastEditor.Current = Component<SessionEditorDialog, SessionEditorProps>(new SessionEditorProps(
                     editor.Mode,
                     editor.Existing,
-                    SaveProfile,
-                    () => { shellModal.Current = null; setEditor(null); }))
+                    SaveProfileAsync,
+                    OnProfileEditorClosed))
                 .WithKey(editor.RequestId.ToString("n"));
             editorOverlay = lastEditor.Current;
         }

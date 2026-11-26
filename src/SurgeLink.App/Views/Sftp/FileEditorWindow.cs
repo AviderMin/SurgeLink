@@ -1,6 +1,7 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Hosting;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SurgeLink.App.Localization;
@@ -170,15 +171,19 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         UseEffect(
             () =>
             {
+                var dispatcher = DispatcherQueue.GetForCurrentThread();
+                var unmounted = false;
                 void OnSessionStateChanged(object? _, SessionStateChangedEventArgs args)
                 {
                     if (args.NewState is ConnectionState.Disconnected or ConnectionState.Disconnecting or ConnectionState.Faulted)
                     {
-                        lifetime.Cancel();
-                        setConnected(false);
-                        setLoading(false);
-                        setSaving(false);
-                        setError(Str.T("sftp.editor.sessionClosed", "The session has closed. Keep a copy of any unsaved text before closing this window."));
+                        dispatcher.TryEnqueue(() =>
+                        {
+                            if (unmounted) { return; }
+                            lifetime.Cancel();
+                            setConnected(false);
+                            setError(Str.T("sftp.editor.sessionClosed", "The session has closed. Keep a copy of any unsaved text before closing this window."));
+                        });
                     }
                 }
                 if (props.Session is { } session) { session.StateChanged += OnSessionStateChanged; }
@@ -186,6 +191,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
                 else { setConnected(false); setLoading(false); setError(Str.T("sftp.editor.sessionClosed", "The session has closed. Keep a copy of any unsaved text before closing this window.")); }
                 return () =>
                 {
+                    unmounted = true;
                     if (props.Session is { } activeSession) { activeSession.StateChanged -= OnSessionStateChanged; }
                     lifetime.Cancel();
                     lifetime.Dispose();

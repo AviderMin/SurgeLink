@@ -30,6 +30,7 @@ public static class SshIntegrationEnvironment
     public static string? KeyPath => Environment.GetEnvironmentVariable("SURGELINK_SSH_TEST_KEY");
     public static string? KeyPassphrase => Environment.GetEnvironmentVariable("SURGELINK_SSH_TEST_KEY_PASSPHRASE");
     public static string? Password => Environment.GetEnvironmentVariable("SURGELINK_SSH_TEST_PASSWORD");
+    public static string? Jump => Environment.GetEnvironmentVariable("SURGELINK_SSH_TEST_JUMP");
 }
 
 /// <summary>Runs only against a configured real server; otherwise reports a skip.</summary>
@@ -45,9 +46,23 @@ public sealed class SshIntegrationFactAttribute : FactAttribute
     }
 }
 
+/// <summary>Requires a Windows client, two test endpoints and a private key accepted by both.</summary>
+public sealed class SshJumpIntegrationFactAttribute : FactAttribute
+{
+    public SshJumpIntegrationFactAttribute()
+    {
+        if (!OperatingSystem.IsWindows() || !SshIntegrationEnvironment.IsConfigured
+            || string.IsNullOrWhiteSpace(SshIntegrationEnvironment.Jump)
+            || string.IsNullOrWhiteSpace(SshIntegrationEnvironment.KeyPath))
+        {
+            Skip = "On Windows, set SURGELINK_SSH_TEST_JUMP and configure the target using SURGELINK_SSH_TEST_KEY.";
+        }
+    }
+}
+
 internal static class SshIntegration
 {
-    public static async Task<IProtocolSession> ConnectSessionAsync()
+    public static async Task<IProtocolSession> ConnectSessionAsync(bool viaJump = false)
     {
         var key = SshIntegrationEnvironment.KeyPath;
         var request = new ConnectionRequest
@@ -65,11 +80,19 @@ internal static class SshIntegration
             KeepAliveInterval = TimeSpan.Zero,
             DisplayName = "ssh-integration",
         };
+        if (viaJump)
+        {
+            request = request with { Options = new Dictionary<string, string>
+            {
+                [SshProtocolOptions.ProxyJumpKey] = SshIntegrationEnvironment.Jump!,
+                [SshProtocolOptions.ProxyJumpPrivateKeyKey] = key!,
+            } };
+        }
         // Trust-on-first-use into a throwaway store: the tests never touch the user's known hosts.
         var store = new JsonHostKeyStore(
             Path.Combine(Path.GetTempPath(), "surge-ssh-integration-" + Guid.NewGuid().ToString("N"), "hosts.json"));
         var context = new ProtocolHostContext(NullLoggerFactory.Instance, store,
-            (_, _) => Task.FromResult(HostKeyDecision.TrustAlways));
+            (_, _) => Task.FromResult(viaJump ? HostKeyDecision.TrustOnce : HostKeyDecision.TrustAlways));
         return await new SshProtocolPlugin().ConnectAsync(request, context, CancellationToken.None);
     }
 

@@ -292,6 +292,15 @@ if ($null -ne $editorWindow) {
     } else { Fail "CRLF editing preserves empty lines, line numbers and content after find" }
     & (Join-Path $PSScriptRoot "dump-uia.ps1") -ProcessId $script:appPid -MaxDepth 15 2>&1 | Out-File -FilePath (Join-Path $artifacts "uia-03-editor-find.txt") -Encoding utf8
   }
+  $shellWindow = $windows | Where-Object { $_.Current.Name -eq "SurgeLink" } | Select-Object -First 1
+  $shellWindow.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+  Start-Sleep -Milliseconds 700
+  try {
+    $null = Get-Control "Close the remote text editor windows before closing SurgeLink." "Text" $shellWindow
+    Pass "main window stays open while a remote editor is open"
+  } catch {
+    Fail "main window stays open while a remote editor is open" $_.Exception.Message
+  }
   try {
     $windowPattern = $editorWindow.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
     $windowPattern.Close()
