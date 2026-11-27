@@ -408,7 +408,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                 problems.Add(Str.T("shell.editor.keyRequired", "Pick the private key file to use."));
             }
 
-            foreach (var field in protocol?.ConnectionOptions ?? [])
+            foreach (var field in protocol?.ConnectionOptions ?? Array.Empty<ProtocolOptionDescriptor>())
             {
                 string value = protocolOptions.TryGetValue(field.Key, out string? configured) ? configured : field.DefaultValue;
                 if (!field.IsValid(value)) problems.Add(Str.F("shell.editor.optionInvalid", "Check the value for {0}.",
@@ -450,7 +450,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             var auth = terminalLogin ? AuthenticationMethod.KeyboardInteractive : (AuthenticationMethod)authIndex;
             var keyFile = isKey && !string.IsNullOrWhiteSpace(keyPath) ? keyPath.Trim() : null;
             var savedOptions = new Dictionary<string, string>(protocolOptions);
-            foreach (var field in protocol?.ConnectionOptions ?? [])
+            foreach (var field in protocol?.ConnectionOptions ?? Array.Empty<ProtocolOptionDescriptor>())
                 if (!savedOptions.ContainsKey(field.Key)) savedOptions[field.Key] = field.DefaultValue;
 
             if (props.Mode == SessionEditorMode.Edit && template is not null)

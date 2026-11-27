@@ -243,7 +243,7 @@ public sealed class WorkspaceStore
             {
                 Update(s => s with
                 {
-                    Tabs = [.. s.Tabs, tab],
+                    Tabs = s.Tabs.Append(tab).ToArray(),
                     ActiveTabId = tab.Id,
                 });
             }

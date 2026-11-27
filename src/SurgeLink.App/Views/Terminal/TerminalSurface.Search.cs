@@ -285,7 +285,7 @@ internal sealed partial class TerminalSurface
     {
         _searchQuery = _searchBox.Text ?? string.Empty;
         DiscardPendingSearch();
-        _searchMatches = [];
+        _searchMatches = Array.Empty<TerminalSearchMatch>();
         _searchIndex = -1;
         _searchTruncated = false;
         UpdateSearchStatus();
@@ -363,7 +363,7 @@ internal sealed partial class TerminalSurface
         var emulator = _bridge.Emulator;
         _ = Task.Run(() =>
         {
-            IReadOnlyList<TerminalSearchMatch> found = [];
+            IReadOnlyList<TerminalSearchMatch> found = Array.Empty<TerminalSearchMatch>();
             try
             {
                 // One extra result distinguishes an exact cap from a truncated result.
