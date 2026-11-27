@@ -48,8 +48,12 @@ public sealed class AgentLocalPathSecurityTests
     [Theory]
     [InlineData(@"\\attacker\share\payload.txt")]
     [InlineData("//attacker/share/payload.txt")]
+    [InlineData(@"\/attacker\share\payload.txt")]
     [InlineData(@"\\.\PhysicalDrive0")]
     [InlineData(@"\\?\C:\Windows\System32\drivers\etc\hosts")]
+    [InlineData(@"\??\UNC\attacker\share\payload.txt")]
+    [InlineData(@"\??\C:\Windows\System32\drivers\etc\hosts")]
+    [InlineData(@"\??\GLOBALROOT\Device\Harddisk0\Partition1\foo")]
     public async Task UncAndDevicePathsAreRejectedForUpload(string localPath)
     {
         var files = new MemoryFiles();
@@ -67,6 +71,9 @@ public sealed class AgentLocalPathSecurityTests
     [Theory]
     [InlineData(@"\\attacker\share\exfil.txt")]
     [InlineData("//attacker/share/exfil.txt")]
+    [InlineData(@"\/attacker\share\exfil.txt")]
+    [InlineData(@"\??\UNC\attacker\share\exfil.txt")]
+    [InlineData(@"\??\C:\temp\exfil.txt")]
     public async Task UncPathsAreRejectedForDownload(string localPath)
     {
         var files = new MemoryFiles();
@@ -79,6 +86,37 @@ public sealed class AgentLocalPathSecurityTests
 
         Assert.False(response.Success);
         Assert.Equal("invalid_path", response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task InvalidRemoteWriteAndUploadArgumentsFailBeforeConfirmationPrompt()
+    {
+        var directory = NewDirectory();
+        try
+        {
+            var localFile = Path.Combine(directory, "data.txt");
+            await File.WriteAllTextAsync(localFile, "ok");
+            var prompts = 0;
+            var gateway = new AgentGateway((_, _) => { prompts++; return Task.FromResult(true); });
+            var session = new AgentGatewayTests.TestSession { FileSystem = new MemoryFiles() };
+            var handle = gateway.GrantSession("tab", "Demo", session, null, new SilentTerminal(), true,
+                target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+
+            var relUpload = await gateway.ExecuteAsync(new("files.upload", handle, "dest.txt", LocalPath: localFile), default);
+            var dirUpload = await gateway.ExecuteAsync(new("files.upload", handle, "/tmp/", LocalPath: localFile), default);
+            var dotWrite = await gateway.ExecuteAsync(new("files.write", handle, "/tmp/../evil.txt", Text: "hi"), default);
+            var loneSurrogate = await gateway.ExecuteAsync(new("files.write", handle, "/tmp/bad.txt", Text: "\uD800"), default);
+
+            Assert.Equal("invalid_path", relUpload.ErrorCode);
+            Assert.Equal("invalid_path", dirUpload.ErrorCode);
+            Assert.Equal("invalid_path", dotWrite.ErrorCode);
+            Assert.Equal("invalid_arguments", loneSurrogate.ErrorCode);
+            Assert.Equal(0, prompts);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]

@@ -139,7 +139,17 @@ public sealed class SshSession : IProtocolSession
                 previous = _terminal;
                 if (previous?.IsOpen == true) { throw new InvalidOperationException("The current shell is still open."); }
             }
-            if (previous is not null) { await previous.DisposeAsync().ConfigureAwait(false); }
+            if (previous is not null)
+            {
+                await previous.DisposeAsync().ConfigureAwait(false);
+                lock (_gate)
+                {
+                    if (ReferenceEquals(_terminal, previous))
+                    {
+                        _terminal = null;
+                    }
+                }
+            }
             cancellationToken.ThrowIfCancellationRequested();
             lock (_gate)
             {
@@ -453,7 +463,7 @@ public sealed class SshSession : IProtocolSession
 
         if (string.IsNullOrWhiteSpace(info.HostName))
         {
-            info = info with { HostName = _client.ConnectionInfo.Host };
+            info = info with { HostName = _options.Request.Host };
         }
 
         return info;

@@ -191,6 +191,28 @@ public sealed class DesktopConnectionTests
         finally { await shutdown.CancelAsync(); await presence; }
         Assert.Empty(gateway.McpPeers);
     }
+
+    [Fact]
+    public async Task ListDesktopsDoesNotFlagOtherDesktopAsReusedWhenSelectedInstanceExists()
+    {
+        var selectedPid = RandomNumberGenerator.GetInt32(1000000, int.MaxValue);
+        var otherPid = selectedPid - 1;
+        var selectedTime = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var otherTime = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var connection = new DesktopConnection(selectedPid,
+            discoverDesktops: () => [new(selectedPid, null, selectedTime), new(otherPid, null, otherTime)]);
+        await using var selectedServer = new AgentPipeServer(AgentEndpoint.ForProcess(selectedPid), new AgentGateway());
+        await using var otherServer = new AgentPipeServer(AgentEndpoint.ForProcess(otherPid), new AgentGateway());
+
+        Assert.True((await connection.SendAsync(new("desktops.select", DesktopProcessId: selectedPid), default)).Success);
+        var listed = await connection.SendAsync(new("desktops.list"), default);
+        Assert.True(listed.Success);
+        var desktops = listed.Data!.Value.GetProperty("desktops").EnumerateArray().ToArray();
+        Assert.Equal(2, desktops.Length);
+        var otherEntry = desktops.Single(item => item.GetProperty("processId").GetInt32() == otherPid);
+        Assert.False(otherEntry.GetProperty("processIdReused").GetBoolean());
+    }
+
     private sealed class TestFiles : IRemoteFileSystem
     {
         public bool SupportsPermissions => false;

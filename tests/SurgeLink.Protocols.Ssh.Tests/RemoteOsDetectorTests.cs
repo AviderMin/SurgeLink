@@ -50,6 +50,19 @@ public sealed class RemoteOsDetectorTests
     }
 
     [Fact]
+    public async Task DetectAsyncDoesNotMisclassifyLinuxWhenFailedWindowsProbeMentionsWindowsInStdErr()
+    {
+        var executor = new TestCommandExecutor(command => Task.FromResult(command == RemoteOsDetector.UnameCommand
+            ? new SshCommandResult(command, "Linux 6.1.0-18-amd64 x86_64", string.Empty, 0)
+            : new SshCommandResult(command, string.Empty, "sh: cmd: Windows command interpreter not found", 127)));
+
+        var operatingSystem = await RemoteOsDetector.DetectAsync(executor.ExecuteAsync, CancellationToken.None);
+
+        Assert.Equal(RemoteOperatingSystem.Linux, operatingSystem);
+        Assert.Equal(2, executor.Count);
+    }
+
+    [Fact]
     public async Task DetectAsyncClassifiesAWindowsGuest()
     {
         var executor = new TestCommandExecutor(command => Task.FromResult(command == RemoteOsDetector.WindowsVersionCommand

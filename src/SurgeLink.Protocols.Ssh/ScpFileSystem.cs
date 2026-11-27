@@ -68,7 +68,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     /// <inheritdoc />
     public async Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken cancellationToken)
     {
-        var fullPath = NormalizePath(path);
+        var fullPath = await ResolvePathAsync(path, cancellationToken).ConfigureAwait(false);
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         var result = await RunAsync(
                 runner,
@@ -86,7 +86,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     /// <inheritdoc />
     public async Task<RemoteFileEntry> StatAsync(string path, CancellationToken cancellationToken)
     {
-        var fullPath = NormalizePath(path);
+        var fullPath = await ResolvePathAsync(path, cancellationToken).ConfigureAwait(false);
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         var result = await RunAsync(
                 runner,
@@ -116,12 +116,12 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken)
+    public async Task<Stream> OpenReadAsync(string path, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         cancellationToken.ThrowIfCancellationRequested();
-        var fullPath = NormalizePath(path);
-        return Task.FromResult<Stream>(new RemoteReadStream(async (target, token) =>
+        var fullPath = await ResolvePathAsync(path, cancellationToken).ConfigureAwait(false);
+        return new RemoteReadStream(async (target, token) =>
         {
             await _transferLock.WaitAsync(token).ConfigureAwait(false);
             try
@@ -158,11 +158,11 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 }
             }
             finally { _transferLock.Release(); }
-        }, cancellationToken));
+        }, cancellationToken);
     }
 
     /// <inheritdoc />
-    public Task<Stream> OpenWriteAsync(
+    public async Task<Stream> OpenWriteAsync(
         string path,
         long? expectedSize,
         IProgress<TransferProgress>? progress,
@@ -170,7 +170,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         cancellationToken.ThrowIfCancellationRequested();
-        var fullPath = NormalizePath(path);
+        var fullPath = await ResolvePathAsync(path, cancellationToken).ConfigureAwait(false);
         if (fullPath.AsSpan((fullPath.LastIndexOf('/') + 1)).IndexOfAny('\r', '\n') >= 0)
         {
             throw new ProtocolException("SCP upload file names cannot contain line breaks.", ProtocolFailureKind.Configuration);
@@ -189,9 +189,9 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
                 81920,
                 FileOptions.Asynchronous);
 
-            return Task.FromResult<Stream>(new DeferredUploadStream(file, temporaryPath,
+            return new DeferredUploadStream(file, temporaryPath,
                 token => UploadFileAsync(temporaryPath, fullPath, expectedSize, progress, token),
-                cancellationToken));
+                cancellationToken);
         }
         catch (Exception exception)
         {
@@ -208,7 +208,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     /// <inheritdoc />
     public async Task CreateDirectoryAsync(string path, CancellationToken cancellationToken)
     {
-        var fullPath = NormalizePath(path);
+        var fullPath = await ResolvePathAsync(path, cancellationToken).ConfigureAwait(false);
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         await RunAsync(runner, "mkdir " + Quote(fullPath), "create directory", fullPath, cancellationToken)
             .ConfigureAwait(false);
@@ -217,7 +217,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     /// <inheritdoc />
     public async Task DeleteAsync(string path, bool recursive, CancellationToken cancellationToken)
     {
-        var fullPath = NormalizePath(path);
+        var fullPath = await ResolvePathAsync(path, cancellationToken).ConfigureAwait(false);
         // The guard must use lexical normalisation: "//", "/./" and "/.." all name
         // the same remote root but survive the literal-preserving Resolve above.
         if (IsRootPath(fullPath))
@@ -245,8 +245,8 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
     public async Task CommitWriteAsync(string temporaryPath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
     {
-        var source = NormalizePath(temporaryPath);
-        var destination = NormalizePath(destinationPath);
+        var source = await ResolvePathAsync(temporaryPath, cancellationToken).ConfigureAwait(false);
+        var destination = await ResolvePathAsync(destinationPath, cancellationToken).ConfigureAwait(false);
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         // -T prevents a directory or symlink-to-directory being treated as a folder
         // to move/link into. Missing server support must fail rather than overwrite.
@@ -261,8 +261,8 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     /// <inheritdoc />
     public async Task RenameAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)
     {
-        var source = NormalizePath(sourcePath);
-        var destination = NormalizePath(destinationPath);
+        var source = await ResolvePathAsync(sourcePath, cancellationToken).ConfigureAwait(false);
+        var destination = await ResolvePathAsync(destinationPath, cancellationToken).ConfigureAwait(false);
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         await RunAsync(
                 runner,
@@ -284,7 +284,7 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
     /// <inheritdoc />
     public async Task SetPermissionsAsync(string path, int unixMode, CancellationToken cancellationToken)
     {
-        var fullPath = NormalizePath(path);
+        var fullPath = await ResolvePathAsync(path, cancellationToken).ConfigureAwait(false);
         var mode = Convert.ToString(unixMode & 0xFFF, 8).PadLeft(3, '0');
         var runner = await EnsureCommandRunnerAsync(cancellationToken).ConfigureAwait(false);
         await RunAsync(
@@ -401,8 +401,18 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
             using var budget = _factory.CreateConnectBudget(cancellationToken);
             var connectionInfo = _factory.CreateConnectionInfo(budget.Token, budget);
-            var verifier = _factory.CreateVerifier(budget.Token, budget);
-            var client = new SshClient(connectionInfo);
+            HostKeyVerifier verifier;
+            SshClient client;
+            try
+            {
+                verifier = _factory.CreateVerifier(budget.Token, budget);
+                client = new SshClient(connectionInfo);
+            }
+            catch
+            {
+                SshConnectionFactory.DisposeAuthenticationMethods(connectionInfo.AuthenticationMethods);
+                throw;
+            }
             if (_factory.KeepAliveInterval > TimeSpan.Zero)
             {
                 client.KeepAliveInterval = _factory.KeepAliveInterval;
@@ -479,11 +489,21 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
             using var budget = _factory.CreateConnectBudget(cancellationToken);
             var connectionInfo = _factory.CreateConnectionInfo(budget.Token, budget);
-            var verifier = _factory.CreateVerifier(budget.Token, budget);
-            var client = new ScpClient(connectionInfo, RemotePathTransformation.ShellQuote)
+            HostKeyVerifier verifier;
+            ScpClient client;
+            try
             {
-                OperationTimeout = ScpOperationTimeout,
-            };
+                verifier = _factory.CreateVerifier(budget.Token, budget);
+                client = new ScpClient(connectionInfo, RemotePathTransformation.ShellQuote)
+                {
+                    OperationTimeout = ScpOperationTimeout,
+                };
+            }
+            catch
+            {
+                SshConnectionFactory.DisposeAuthenticationMethods(connectionInfo.AuthenticationMethods);
+                throw;
+            }
             if (_factory.KeepAliveInterval > TimeSpan.Zero)
             {
                 client.KeepAliveInterval = _factory.KeepAliveInterval;
@@ -567,6 +587,14 @@ internal sealed class ScpFileSystem : IRemoteFileSystem, IAsyncDisposable
         }
 
         return string.Compare(left.Name, right.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async ValueTask<string> ResolvePathAsync(string path, CancellationToken cancellationToken)
+    {
+        if (path.StartsWith('/')) return NormalizePath(path);
+        var home = await GetHomeDirectoryAsync(cancellationToken).ConfigureAwait(false);
+        var resolved = PosixPath.Resolve(path, home, home).TrimEnd('/');
+        return resolved.Length == 0 ? "/" : resolved;
     }
 
     internal static string NormalizePath(string path)

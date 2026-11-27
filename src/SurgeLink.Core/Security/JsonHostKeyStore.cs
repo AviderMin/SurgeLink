@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using SurgeLink.Core.Storage;
 
 namespace SurgeLink.Core.Security;
@@ -23,7 +26,8 @@ public sealed class JsonHostKeyStore : IHostKeyStore
         lock (_gate)
         {
             _entries = Load(_path);
-            if (_entries.TryGetValue(endpoint, out var found))
+            var key = NormalizeEndpoint(endpoint);
+            if (key.Length > 0 && _entries.TryGetValue(key, out var found))
             {
                 entry = found;
                 return true;
@@ -37,12 +41,23 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     /// <inheritdoc />
     public void Save(KnownHostEntry entry)
     {
+        ArgumentNullException.ThrowIfNull(entry);
+        ArgumentException.ThrowIfNullOrWhiteSpace(entry.Endpoint);
+        ArgumentException.ThrowIfNullOrWhiteSpace(entry.Algorithm);
+        ArgumentException.ThrowIfNullOrWhiteSpace(entry.FingerprintSha256);
+
+        var key = NormalizeEndpoint(entry.Endpoint);
+        if (key.Length == 0)
+        {
+            throw new ArgumentException("Endpoint must not be empty.", nameof(entry));
+        }
+
         lock (_gate)
         {
             AtomicJsonFile.WithExclusiveAccess(_path, () =>
             {
                 var next = Load(_path, tolerateErrors: false);
-                next[entry.Endpoint] = entry;
+                next[key] = entry;
                 Persist(next);
                 _entries = next;
                 return true;
@@ -53,12 +68,18 @@ public sealed class JsonHostKeyStore : IHostKeyStore
     /// <inheritdoc />
     public bool Remove(string endpoint)
     {
+        var key = NormalizeEndpoint(endpoint);
+        if (key.Length == 0)
+        {
+            return false;
+        }
+
         lock (_gate)
         {
             return AtomicJsonFile.WithExclusiveAccess(_path, () =>
             {
                 var next = Load(_path, tolerateErrors: false);
-                if (!next.Remove(endpoint)) return false;
+                if (!next.Remove(key)) return false;
                 Persist(next);
                 _entries = next;
                 return true;
@@ -76,6 +97,78 @@ public sealed class JsonHostKeyStore : IHostKeyStore
         }
     }
 
+    internal static string NormalizeEndpoint(string? endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = endpoint.Trim();
+        var hostPart = trimmed;
+        int? port = null;
+
+        if (trimmed[0] == '[')
+        {
+            var close = trimmed.IndexOf(']');
+            if (close > 1)
+            {
+                if (close == trimmed.Length - 1)
+                {
+                    hostPart = trimmed[1..close];
+                }
+                else if (trimmed[close + 1] == ':'
+                    && ushort.TryParse(trimmed[(close + 2)..], NumberStyles.None, CultureInfo.InvariantCulture, out var parsedPort))
+                {
+                    hostPart = trimmed[1..close];
+                    port = parsedPort;
+                }
+            }
+        }
+        else
+        {
+            var lastColon = trimmed.LastIndexOf(':');
+            if (lastColon > 0
+                && ushort.TryParse(trimmed[(lastColon + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var parsedPort))
+            {
+                var candidateHost = trimmed[..lastColon];
+                if (!candidateHost.Contains(':') || IPAddress.TryParse(candidateHost, out _))
+                {
+                    hostPart = candidateHost;
+                    port = parsedPort;
+                }
+            }
+        }
+
+        hostPart = hostPart.Trim();
+        if (hostPart.Length >= 2 && hostPart[0] == '[' && hostPart[^1] == ']')
+        {
+            hostPart = hostPart[1..^1].Trim();
+        }
+
+        string canonicalHost;
+        if (IPAddress.TryParse(hostPart, out var ip))
+        {
+            if (ip.IsIPv4MappedToIPv6)
+            {
+                ip = ip.MapToIPv4();
+            }
+
+            canonicalHost = ip.AddressFamily == AddressFamily.InterNetworkV6 && port is not null
+                ? $"[{ip}]"
+                : ip.ToString();
+        }
+        else
+        {
+            var withoutTrailingDot = hostPart.TrimEnd('.');
+            canonicalHost = (withoutTrailingDot.Length > 0 ? withoutTrailingDot : hostPart).ToLowerInvariant();
+        }
+
+        return port is int p
+            ? $"{canonicalHost}:{p.ToString(CultureInfo.InvariantCulture)}"
+            : canonicalHost;
+    }
+
     private void Persist(Dictionary<string, KnownHostEntry> entries) =>
         AtomicJsonFile.Write(_path, entries.Values.OrderBy(e => e.Endpoint, StringComparer.Ordinal).ToList());
 
@@ -89,9 +182,12 @@ public sealed class JsonHostKeyStore : IHostKeyStore
                 || string.IsNullOrWhiteSpace(entry.Algorithm)
                 || string.IsNullOrWhiteSpace(entry.FingerprintSha256))
                 throw new IOException("The known-hosts store contains an invalid entry. Restore or repair it before connecting.");
-            if (map.ContainsKey(entry.Endpoint))
+            var key = NormalizeEndpoint(entry.Endpoint);
+            if (key.Length == 0)
+                throw new IOException("The known-hosts store contains an invalid entry. Restore or repair it before connecting.");
+            if (map.ContainsKey(key))
                 throw new IOException("The known-hosts store contains duplicate endpoints. Restore or repair it before connecting.");
-            map[entry.Endpoint] = entry;
+            map[key] = entry;
         }
 
         return map;

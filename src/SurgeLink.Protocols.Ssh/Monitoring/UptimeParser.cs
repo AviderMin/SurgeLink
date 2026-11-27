@@ -22,7 +22,7 @@ public static class UptimeParser
         }
 
         if (!double.TryParse(tokens[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) ||
-            double.IsNaN(seconds) ||
+            !double.IsFinite(seconds) ||
             seconds < 0)
         {
             return null;

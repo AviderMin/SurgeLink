@@ -77,6 +77,8 @@ internal sealed class MainShell : Component
         var shellModal = UseRef<string?>(null);
         var connectPending = UseRef(false);
         var connectionCancellation = UseRef<CancellationTokenSource?>(null);
+        var pendingDeleteProfiles = UseRef(new HashSet<string>(StringComparer.Ordinal));
+        var pendingCloseTabs = UseRef(new HashSet<Guid>());
         var (persistenceError, setPersistenceError) = UseState<string?>(null);
         var (closeNotice, setCloseNotice) = UseState<string?>(null);
         var pendingProfileWrites = UseRef(0);
@@ -261,20 +263,32 @@ internal sealed class MainShell : Component
 
         async Task DeleteProfileAsync(SessionProfile profile)
         {
-            var confirmed = await services.Interaction.RequestConfirmationAsync(
-                new ConfirmationRequest(
-                    Str.T("shell.confirm.deleteSession.title", "Delete session"),
-                    Str.F(
-                        "shell.confirm.deleteSession.body",
-                        "Delete '{0}'? The saved password is removed as well. Open tabs stay open.",
-                        profile.Name),
-                    Str.T("common.delete", "Delete"),
-                    Str.T("common.cancel", "Cancel")),
-                CancellationToken.None);
-
-            if (confirmed)
+            if (!pendingDeleteProfiles.Current.Add(profile.Id))
             {
-                await TryPersistAsync(() => workspace.DeleteProfile(profile.Id));
+                return;
+            }
+
+            try
+            {
+                var confirmed = await services.Interaction.RequestConfirmationAsync(
+                    new ConfirmationRequest(
+                        Str.T("shell.confirm.deleteSession.title", "Delete session"),
+                        Str.F(
+                            "shell.confirm.deleteSession.body",
+                            "Delete '{0}'? The saved password is removed as well. Open tabs stay open.",
+                            profile.Name),
+                        Str.T("common.delete", "Delete"),
+                        Str.T("common.cancel", "Cancel")),
+                    CancellationToken.None);
+
+                if (confirmed)
+                {
+                    await TryPersistAsync(() => workspace.DeleteProfile(profile.Id));
+                }
+            }
+            finally
+            {
+                pendingDeleteProfiles.Current.Remove(profile.Id);
             }
         }
 
@@ -282,26 +296,38 @@ internal sealed class MainShell : Component
 
         async Task CloseTabAsync(WorkspaceTab tab)
         {
-            if (settings.ConfirmCloseConnectedTab && tab.State == ConnectionState.Connected)
+            if (!pendingCloseTabs.Current.Add(tab.Id))
             {
-                var confirmed = await services.Interaction.RequestConfirmationAsync(
-                    new ConfirmationRequest(
-                        Str.T("shell.confirm.closeTab.title", "Close session"),
-                        Str.F("shell.confirm.closeTab.body", "'{0}' is still connected. Close it?", tab.Title),
-                        Str.T("common.close", "Close"),
-                        Str.T("shell.confirm.closeTab.keepOpen", "Keep open")),
-                    CancellationToken.None);
-
-                if (!confirmed)
-                {
-                    return;
-                }
+                return;
             }
 
-            try { await workspace.CloseAsync(tab.Id); }
-            catch (Exception ex)
+            try
             {
-                await ShowConnectionErrorAsync(Str.T("shell.error.closeFailed", "Could not close the session"), ex);
+                if (settings.ConfirmCloseConnectedTab && tab.State == ConnectionState.Connected)
+                {
+                    var confirmed = await services.Interaction.RequestConfirmationAsync(
+                        new ConfirmationRequest(
+                            Str.T("shell.confirm.closeTab.title", "Close session"),
+                            Str.F("shell.confirm.closeTab.body", "'{0}' is still connected. Close it?", tab.Title),
+                            Str.T("common.close", "Close"),
+                            Str.T("shell.confirm.closeTab.keepOpen", "Keep open")),
+                        CancellationToken.None);
+
+                    if (!confirmed)
+                    {
+                        return;
+                    }
+                }
+
+                try { await workspace.CloseAsync(tab.Id); }
+                catch (Exception ex)
+                {
+                    await ShowConnectionErrorAsync(Str.T("shell.error.closeFailed", "Could not close the session"), ex);
+                }
+            }
+            finally
+            {
+                pendingCloseTabs.Current.Remove(tab.Id);
             }
         }
 

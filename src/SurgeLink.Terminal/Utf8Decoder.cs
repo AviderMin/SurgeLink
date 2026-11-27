@@ -43,7 +43,7 @@ internal sealed class Utf8Decoder
             return;
         }
 
-        if ((value & 0xC0) == 0x80)
+        if (IsValidContinuation(_sequence[0], _sequenceLength, value))
         {
             _sequence[_sequenceLength++] = value;
             if (_sequenceLength == ExpectedLength(_sequence[0]))
@@ -54,8 +54,8 @@ internal sealed class Utf8Decoder
             return;
         }
 
-        // A non continuation byte aborts the pending sequence; the new byte is
-        // then decoded as if it started a fresh sequence.
+        // An invalid or non-continuation byte aborts the pending sequence; the new byte
+        // is then decoded as if it started a fresh sequence.
         _sequenceLength = 0;
         Emit(new Rune(ReplacementCharacter));
         Feed(value);
@@ -108,6 +108,23 @@ internal sealed class Utf8Decoder
         OperationStatus status = Rune.DecodeFromUtf8(span, out Rune rune, out int consumed);
         _sequenceLength = 0;
         Emit(status == OperationStatus.Done && consumed == span.Length ? rune : new Rune(ReplacementCharacter));
+    }
+
+    private static bool IsValidContinuation(byte first, int position, byte value)
+    {
+        if (position == 1)
+        {
+            return first switch
+            {
+                0xE0 => value is >= 0xA0 and <= 0xBF,
+                0xED => value is >= 0x80 and <= 0x9F,
+                0xF0 => value is >= 0x90 and <= 0xBF,
+                0xF4 => value is >= 0x80 and <= 0x8F,
+                _ => (value & 0xC0) == 0x80,
+            };
+        }
+
+        return (value & 0xC0) == 0x80;
     }
 
     private static int ExpectedLength(byte first) => first switch

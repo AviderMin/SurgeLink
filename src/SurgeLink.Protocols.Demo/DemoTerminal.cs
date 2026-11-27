@@ -12,7 +12,9 @@ namespace SurgeLink.Protocols.Demo;
 public sealed class DemoTerminal : IRemoteTerminal
 {
     private readonly Channel<byte[]> _outbox = Channel.CreateUnbounded<byte[]>();
+    private readonly object _gate = new();
     private readonly StringBuilder _line = new();
+    private readonly Decoder _utf8 = Encoding.UTF8.GetDecoder();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly string _user;
     private readonly string _host;
@@ -50,11 +52,23 @@ public sealed class DemoTerminal : IRemoteTerminal
     /// <inheritdoc />
     public Task StartAsync(TerminalStartOptions options, CancellationToken cancellationToken)
     {
-        Columns = options.Columns;
-        Rows = options.Rows;
-        _pump = Task.Run(PumpAsync, CancellationToken.None);
-        EmitBanner();
-        Emit(_prompt);
+        ArgumentNullException.ThrowIfNull(options);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (_pump is not null)
+            {
+                throw new InvalidOperationException("The demo terminal has already been started.");
+            }
+
+            Columns = options.Columns;
+            Rows = options.Rows;
+            _pump = Task.Run(PumpAsync, CancellationToken.None);
+            EmitBanner();
+            Emit(_prompt);
+        }
+
         return Task.CompletedTask;
     }
 
@@ -62,56 +76,61 @@ public sealed class DemoTerminal : IRemoteTerminal
     public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (Volatile.Read(ref _closed) != 0) { return ValueTask.CompletedTask; }
-        var text = Encoding.UTF8.GetString(data.Span);
-        foreach (var ch in text)
+        lock (_gate)
         {
-            if (Volatile.Read(ref _closed) != 0) { break; }
-            if (ch != '\n')
+            if (Volatile.Read(ref _closed) != 0 || data.IsEmpty) { return ValueTask.CompletedTask; }
+            var chars = new char[Encoding.UTF8.GetMaxCharCount(data.Length)];
+            var count = _utf8.GetChars(data.Span, chars, flush: false);
+            for (var index = 0; index < count; index++)
             {
-                _lastInputWasCarriageReturn = false;
-            }
+                if (Volatile.Read(ref _closed) != 0) { break; }
+                var ch = chars[index];
+                if (ch != '\n')
+                {
+                    _lastInputWasCarriageReturn = false;
+                }
 
-            switch (ch)
-            {
-                case '\r':
-                    _lastInputWasCarriageReturn = true;
-                    HandleEnter();
-                    break;
-                case '\n':
-                    // Enter typed on a POSIX terminal arrives as CR; CRLF only shows up in pasted text.
-                    if (_lastInputWasCarriageReturn)
-                    {
-                        _lastInputWasCarriageReturn = false;
+                switch (ch)
+                {
+                    case '\r':
+                        _lastInputWasCarriageReturn = true;
+                        HandleEnter();
                         break;
-                    }
+                    case '\n':
+                        // Enter typed on a POSIX terminal arrives as CR; CRLF only shows up in pasted text.
+                        if (_lastInputWasCarriageReturn)
+                        {
+                            _lastInputWasCarriageReturn = false;
+                            break;
+                        }
 
-                    HandleEnter();
-                    break;
-                case (char)127:
-                case '\b':
-                    if (_line.Length > 0)
-                    {
-                        _line.Length--;
-                        Emit(Ansi.Esc + "[D " + Ansi.Esc + "[D");
-                    }
+                        HandleEnter();
+                        break;
+                    case (char)127:
+                    case '\b':
+                        if (_line.Length > 0)
+                        {
+                            _line.Length--;
+                            Emit(Ansi.Esc + "[D " + Ansi.Esc + "[D");
+                        }
 
-                    break;
-                case (char)3:
-                    _line.Clear();
-                    Emit("^C" + Ansi.Crlf + _prompt);
-                    break;
-                case (char)12:
-                    Emit(Ansi.ClearScreen + _prompt);
-                    break;
-                default:
-                    if (!char.IsControl(ch))
-                    {
-                        _line.Append(ch);
-                        Emit(ch.ToString());
-                    }
+                        break;
+                    case (char)3:
+                        _line.Clear();
+                        Emit("^C" + Ansi.Crlf + _prompt);
+                        break;
+                    case (char)12:
+                        Emit(Ansi.ClearScreen + _prompt);
+                        break;
+                    default:
+                        if (!char.IsControl(ch))
+                        {
+                            _line.Append(ch);
+                            Emit(ch.ToString());
+                        }
 
-                    break;
+                        break;
+                }
             }
         }
 
@@ -268,9 +287,16 @@ public sealed class DemoTerminal : IRemoteTerminal
     {
         try
         {
-            await foreach (var chunk in _outbox.Reader.ReadAllAsync().ConfigureAwait(false))
+            await foreach (var chunk in _outbox.Reader.ReadAllAsync(_lifetime.Token).ConfigureAwait(false))
             {
-                OutputReceived?.Invoke(this, new TerminalOutputEventArgs(chunk));
+                try
+                {
+                    OutputReceived?.Invoke(this, new TerminalOutputEventArgs(chunk));
+                }
+                catch
+                {
+                    // A failing subscriber must not stop the demo output pump.
+                }
             }
         }
         catch (OperationCanceledException)
@@ -287,7 +313,14 @@ public sealed class DemoTerminal : IRemoteTerminal
     {
         if (Interlocked.Exchange(ref _closedRaised, 1) == 0)
         {
-            Closed?.Invoke(this, EventArgs.Empty);
+            try
+            {
+                Closed?.Invoke(this, EventArgs.Empty);
+            }
+            catch
+            {
+                // Keep disposal and shutdown deterministic when a closed handler fails.
+            }
         }
     }
 }

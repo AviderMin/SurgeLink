@@ -56,6 +56,7 @@ internal sealed class TelnetTerminal : IRemoteTerminal
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        Exception? fatal = null;
         await _ioGate.WaitAsync(linked.Token).ConfigureAwait(false);
         try
         {
@@ -64,16 +65,21 @@ internal sealed class TelnetTerminal : IRemoteTerminal
         }
         catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException)
         {
-            Complete(exception);
+            fatal = exception;
             throw new ProtocolException("Could not write to the Telnet terminal.", ProtocolFailureKind.Network, exception);
         }
-        finally { _ioGate.Release(); }
+        finally
+        {
+            _ioGate.Release();
+            if (fatal is not null) Complete(fatal);
+        }
     }
 
     public async Task ResizeAsync(int columns, int rows, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        Exception? fatal = null;
         await _ioGate.WaitAsync(linked.Token).ConfigureAwait(false);
         try
         {
@@ -87,10 +93,14 @@ internal sealed class TelnetTerminal : IRemoteTerminal
         }
         catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException)
         {
-            Complete(exception);
+            fatal = exception;
             throw new ProtocolException("Could not resize the Telnet terminal.", ProtocolFailureKind.Network, exception);
         }
-        finally { _ioGate.Release(); }
+        finally
+        {
+            _ioGate.Release();
+            if (fatal is not null) Complete(fatal);
+        }
     }
 
     public ValueTask DisposeAsync()
@@ -149,7 +159,10 @@ internal sealed class TelnetTerminal : IRemoteTerminal
                 finally { _ioGate.Release(); }
 
                 if (data.Length > 0 && !_lifetime.IsCancellationRequested)
-                    OutputReceived?.Invoke(this, new TerminalOutputEventArgs(data));
+                {
+                    try { OutputReceived?.Invoke(this, new TerminalOutputEventArgs(data)); }
+                    catch (Exception exception) { _logger.LogDebug(exception, "A Telnet terminal output handler failed."); }
+                }
             }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }

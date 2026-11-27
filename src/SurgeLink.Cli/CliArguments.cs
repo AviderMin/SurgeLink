@@ -106,9 +106,22 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
         var textSources = (options.ContainsKey("--text") ? 1 : 0) + (textFile is not null ? 1 : 0) + (textFromStdin ? 1 : 0);
         if (textSources > 1) throw new ArgumentException("--text, --text-file and --text-stdin cannot be used together.");
         var offset = Number("--offset");
+        var maxBytes = Int("--max-bytes");
+        if (maxBytes is <= 0) throw new ArgumentException("--max-bytes must be a positive integer.");
+        var maxLines = Int("--max-lines");
+        if (maxLines is <= 0) throw new ArgumentException("--max-lines must be a positive integer.");
+        var tailRows = Int("--tail-rows");
+        if (tailRows is <= 0) throw new ArgumentException("--tail-rows must be a positive integer.");
+        var limit = Int("--limit");
+        if (limit is <= 0) throw new ArgumentException("--limit must be a positive integer.");
+        var idleMs = Int("--idle-ms");
+        if (idleMs is <= 0) throw new ArgumentException("--idle-ms must be a positive integer.");
+        var timeoutMs = Int("--timeout-ms");
+        if (timeoutMs is <= 0) throw new ArgumentException("--timeout-ms must be a positive integer.");
         var tailBytes = Int("--tail-bytes");
         if (tailBytes is <= 0) throw new ArgumentException("--tail-bytes must be a positive integer.");
         if (tailBytes is not null && offset is not null) throw new ArgumentException("--offset and --tail-bytes cannot be used together.");
+        if (tailBytes is not null && maxBytes is not null) throw new ArgumentException("--max-bytes and --tail-bytes cannot be used together.");
         if (method is "terminal.text" or "terminal.exec" or "terminal.key")
         {
             if (revision is null) throw new ArgumentException("--revision from terminal screen is required.");
@@ -125,11 +138,11 @@ public sealed record CliArguments(AgentRequest Request, int? Instance, string? T
         return new(new AgentRequest(method, session, path, Text: Get("--text"), Submit: flags.Contains("--submit") || method == "terminal.exec",
             Key: Get("--key"), Cursor: Number("--cursor"), ExpectedInputRevision: revision, OperationId: operationId,
             View: Get("--view"), CheckToken: Get("--check-token"), Brief: flags.Contains("--brief"),
-            StripAnsi: flags.Contains("--strip-ansi"), MaxBytes: Int("--max-bytes"), MaxLines: Int("--max-lines"),
-            TailRows: Int("--tail-rows"), Offset: offset, Limit: Int("--limit"),
+            StripAnsi: flags.Contains("--strip-ansi"), MaxBytes: maxBytes, MaxLines: maxLines,
+            TailRows: tailRows, Offset: offset, Limit: limit,
             Destination: Get("--destination"), Recursive: flags.Contains("--recursive"),
-            Overwrite: flags.Contains("--overwrite"), IdleMilliseconds: Int("--idle-ms"),
-            TimeoutMilliseconds: Int("--timeout-ms"), LocalPath: Get("--local-path"),
+            Overwrite: flags.Contains("--overwrite"), IdleMilliseconds: idleMs,
+            TimeoutMilliseconds: timeoutMs, LocalPath: Get("--local-path"),
             Minimal: flags.Contains("--minimal"), TailBytes: tailBytes), instance, textFile, textFromStdin);
     }
 

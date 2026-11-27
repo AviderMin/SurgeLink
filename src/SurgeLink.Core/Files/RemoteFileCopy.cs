@@ -9,6 +9,8 @@ public static class RemoteFileCopy
         source = source.TrimEnd('/');
         destination = destination.TrimEnd('/');
         if (!source.StartsWith('/') || !destination.StartsWith('/') ||
+            source.Contains("//", StringComparison.Ordinal) ||
+            destination.Contains("//", StringComparison.Ordinal) ||
             source.Split('/').Any(segment => segment is "." or "..") ||
             destination.Split('/').Any(segment => segment is "." or ".."))
         {

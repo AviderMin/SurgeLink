@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using SurgeLink.App.Components;
 using SurgeLink.App.Localization;
+using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Files;
 using static Microsoft.UI.Reactor.Factories;
@@ -50,7 +51,7 @@ internal static class SftpContent
             return Grid(
                 columns: [GridSize.Star()],
                 rows: [GridSize.Auto],
-                (InfoBar(Str.T("sftp.error.loadTitle", "Could not load the folder"), error) with
+                (InfoBar(Str.T("sftp.error.loadTitle", "Could not load the folder"), PrivacyDisplay.Mask(error)) with
                 {
                     Severity = InfoBarSeverity.Error,
                     ActionButtonContent = Str.T("sftp.error.retry", "Retry"),

@@ -42,10 +42,14 @@ public sealed class AgentPipeServer : IAsyncDisposable
                     pipe ??= CreatePipe();
                     await pipe.WaitForConnectionAsync(_shutdown.Token).ConfigureAwait(false);
 
-                    // Serve before allocating another instance. Even at saturation,
-                    // the last accepted client must have a reader and a deadline.
+                    // Allocate the replacement server instance before handing off the accepted
+                    // client so closing an instant-EOF/invalid client never creates a zero-handle
+                    // gap where the pipe disappears in the global namespace. At saturation,
+                    // still serve the accepted client with its deadline and retry next iteration.
                     var accepted = pipe;
                     pipe = null;
+                    try { pipe = CreatePipe(); }
+                    catch (IOException) { }
                     TrackConnection(ServeAsync(accepted));
                 }
                 catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
@@ -121,10 +125,16 @@ public sealed class AgentPipeServer : IAsyncDisposable
         try
         {
             try { await _shutdown.CancelAsync().ConfigureAwait(false); }
-            finally { await _run.ConfigureAwait(false); }
-            Task[] connections;
-            lock (_connectionGate) connections = _connections.ToArray();
-            await Task.WhenAll(connections).ConfigureAwait(false);
+            finally
+            {
+                try { await _run.ConfigureAwait(false); }
+                finally
+                {
+                    Task[] connections;
+                    lock (_connectionGate) connections = _connections.ToArray();
+                    await Task.WhenAll(connections).ConfigureAwait(false);
+                }
+            }
         }
         finally { _shutdown.Dispose(); }
     }

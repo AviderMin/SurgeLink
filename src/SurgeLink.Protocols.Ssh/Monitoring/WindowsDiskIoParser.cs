@@ -40,10 +40,12 @@ public static class WindowsDiskIoParser
             write += lineWrite;
         }
 
-        return new DiskIoRates(read, write);
+        return new DiskIoRates(
+            double.IsFinite(read) ? read : 0d,
+            double.IsFinite(write) ? write : 0d);
     }
 
     private static bool TryParseRate(string text, out double value) =>
         double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value)
-        && value >= 0 && !double.IsInfinity(value);
+        && double.IsFinite(value) && value >= 0;
 }

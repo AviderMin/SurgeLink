@@ -133,6 +133,49 @@ public sealed class TelnetConnectionTests
         Assert.True(descriptor.AuthenticatesInTerminal);
     }
 
+    [Fact]
+    public async Task ThrowingOutputHandlerDoesNotStopReadLoopAndWriteFailureReleasesIoGateBeforeClosed()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        await using var session = await ConnectAsync(listener, timeout.Token);
+        using var peer = await listener.AcceptTcpClientAsync(timeout.Token);
+        var stream = peer.GetStream();
+        var terminal = session.Terminal!;
+
+        var firstHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondChunk = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var outputs = 0;
+        terminal.OutputReceived += (_, e) =>
+        {
+            if (Interlocked.Increment(ref outputs) == 1)
+            {
+                firstHandled.TrySetResult();
+                throw new InvalidOperationException("subscriber failed");
+            }
+
+            secondChunk.TrySetResult(Encoding.UTF8.GetString(e.Data.Span));
+        };
+
+        await terminal.StartAsync(new TerminalStartOptions(), timeout.Token);
+        await ReadExactlyAsync(stream, 24, timeout.Token);
+        await stream.WriteAsync("first"u8.ToArray(), timeout.Token);
+        await firstHandled.Task.WaitAsync(timeout.Token);
+        await stream.WriteAsync("second"u8.ToArray(), timeout.Token);
+        Assert.Equal("second", await secondChunk.Task.WaitAsync(timeout.Token));
+
+        var ioGate = (SemaphoreSlim)terminal.GetType().GetField("_ioGate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(terminal)!;
+        var observedGateFreeCount = -1;
+        terminal.Closed += (_, _) => observedGateFreeCount = ioGate.CurrentCount;
+
+        // Shut down the send side so WriteAsync fails while ReadLoopAsync stays idle.
+        var clientField = (TcpClient)terminal.GetType().GetField("_client", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(terminal)!;
+        clientField.Client.Shutdown(SocketShutdown.Send);
+        await Assert.ThrowsAsync<ProtocolException>(() => terminal.WriteAsync("fail"u8.ToArray(), timeout.Token).AsTask());
+        Assert.Equal(1, observedGateFreeCount);
+    }
+
     private static Task<IProtocolSession> ConnectAsync(TcpListener listener, CancellationToken token) =>
         new TelnetProtocolPlugin().ConnectAsync(new ConnectionRequest
         {

@@ -195,6 +195,61 @@ public sealed class RemoteMonitorSamplerTests
         Assert.Same(dashSample.Snapshot, sideSample.Snapshot);
     }
 
+    [Fact]
+    public async Task ProcessesSubscriberArrivingMidSampleReceivesFullProcessSampleAndPreservesOnce()
+    {
+        var monitor = new ProcessMidSampleMonitor();
+        var sampler = RemoteMonitorSampler.For(monitor);
+
+        for (var iteration = 0; iteration < 25; iteration++)
+        {
+            monitor.Reset();
+            var sidebarSample = new TaskCompletionSource<MonitorSample>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var dashboardSample = new TaskCompletionSource<MonitorSample>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            using var sidebar = sampler.Subscribe(TimeSpan.FromSeconds(1), processes: false, s => sidebarSample.TrySetResult(s), once: true);
+            await monitor.FirstSampleEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            monitor.ReleaseFirstSample.TrySetResult();
+
+            // Race intentionally around SampleAsync completion so dashboard lands either
+            // before needsProcesses check or between needsProcesses and delivery.
+            using var dashboard = sampler.Subscribe(TimeSpan.FromSeconds(1), processes: true, s => dashboardSample.TrySetResult(s), once: true);
+
+            _ = await sidebarSample.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var dash = await dashboardSample.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Single(dash.Processes);
+            Assert.Equal("sshd", dash.Processes[0].Name);
+        }
+    }
+
+    private sealed class ProcessMidSampleMonitor : IRemoteSystemMonitor
+    {
+        public TaskCompletionSource FirstSampleEntered { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseFirstSample { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _sampleInCycle;
+        public TimeSpan RecommendedInterval => TimeSpan.FromSeconds(1);
+
+        public void Reset()
+        {
+            Volatile.Write(ref _sampleInCycle, 0);
+            FirstSampleEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            ReleaseFirstSample = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public async Task<SystemSnapshot> SampleAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _sampleInCycle) == 1)
+            {
+                FirstSampleEntered.TrySetResult();
+                await ReleaseFirstSample.Task.WaitAsync(cancellationToken);
+            }
+            return new SystemSnapshot();
+        }
+
+        public Task<IReadOnlyList<RemoteProcessInfo>> GetTopProcessesAsync(int maxCount, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RemoteProcessInfo>>([new RemoteProcessInfo { ProcessId = 1, Name = "sshd" }]);
+    }
+
     private sealed class FakeMonitor : IRemoteSystemMonitor
     {
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

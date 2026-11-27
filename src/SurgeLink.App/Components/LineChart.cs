@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using SurgeLink.App.Localization;
+using SurgeLink.App.Services;
 using Windows.Foundation;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -45,15 +46,20 @@ internal sealed class LineChart : Component<LineChartProps>
     public override Element Render()
     {
         _ = UseColorScheme(); // repaint on light/dark/high contrast change
+        var highContrast = UseHighContrast();
+        var settingsStore = AppServices.Current?.Settings;
+        _ = UseExternalStore(
+            listener => settingsStore is null ? static () => { } : settingsStore.Subscribe(listener),
+            () => settingsStore?.Current.Theme ?? ThemeMode.System);
 
         var (measuredWidth, setMeasuredWidth) = UseState(160d);
-        var height = Math.Max(24, Props.Height);
-        var width = Math.Max(32, measuredWidth);
+        var height = double.IsFinite(Props.Height) ? Math.Max(24, Props.Height) : 96d;
+        var width = double.IsFinite(measuredWidth) ? Math.Max(32, measuredWidth) : 160d;
         var slots = Math.Max(2, Props.WindowSize);
 
-        var min = Props.MinValue ?? 0;
-        var max = Props.MaxValue ?? ResolveMax();
-        if (max - min < 0.001)
+        var min = Props.MinValue is { } lo && double.IsFinite(lo) ? lo : 0d;
+        var max = Props.MaxValue is { } hi && double.IsFinite(hi) ? hi : ResolveMax();
+        if (!double.IsFinite(max) || max - min < 0.001)
         {
             max = min + 1;
         }
@@ -65,7 +71,8 @@ internal sealed class LineChart : Component<LineChartProps>
             for (var i = 1; i <= 3; i++)
             {
                 var y = Math.Round(height * i / 4d) + 0.5;
-                children.Add(Line(0, y, width, y).Stroke(ChartPalette.GridLine).StrokeThickness(1)
+                children.Add(Line(0, y, width, y).StrokeThickness(1)
+                    .Set(line => line.Stroke = ChartPalette.ResolveGridLine(line, highContrast))
                     .WithKey("grid:" + i));
             }
         }
@@ -79,11 +86,11 @@ internal sealed class LineChart : Component<LineChartProps>
             }
 
             var geometry = BuildGeometry(values, slots, min, max, width, height);
-            var stroke = ChartPalette.Series(index);
+            var seriesIndex = index;
             children.Add(Path2D().Set(path =>
             {
                 path.Data = geometry;
-                path.Stroke = stroke;
+                path.Stroke = ChartPalette.ResolveSeries(seriesIndex, path, highContrast);
                 path.StrokeThickness = 1.6;
                 path.StrokeLineJoin = PenLineJoin.Round;
             }).WithKey("series:" + index));
@@ -120,14 +127,14 @@ internal sealed class LineChart : Component<LineChartProps>
         {
             foreach (var value in series.Values)
             {
-                if (value > max)
+                if (double.IsFinite(value) && value > max)
                 {
                     max = value;
                 }
             }
         }
 
-        return max <= 0 ? 100 : max * 1.05;
+        return !double.IsFinite(max) || max <= 0 ? 100 : max * 1.05;
     }
 
     /// <summary>Maps a sample window onto a path geometry in pixel space.</summary>
@@ -139,10 +146,12 @@ internal sealed class LineChart : Component<LineChartProps>
         double width,
         double height)
     {
+        var startIndex = Math.Max(0, values.Count - slots);
+        var count = values.Count - startIndex;
         var usableWidth = Math.Max(1, width - (PlotPadding * 2));
         var usableHeight = Math.Max(1, height - (PlotPadding * 2));
         var step = usableWidth / (slots - 1);
-        var offset = Math.Max(0, slots - values.Count);
+        var offset = Math.Max(0, slots - count);
         var range = max - min;
 
         var figure = new PathFigure
@@ -151,10 +160,12 @@ internal sealed class LineChart : Component<LineChartProps>
             IsFilled = false,
         };
 
-        for (var i = 0; i < values.Count; i++)
+        for (var i = 0; i < count; i++)
         {
+            var sample = values[startIndex + i];
+            var safe = double.IsFinite(sample) ? sample : min;
             var x = PlotPadding + ((offset + i) * step);
-            var normalized = Math.Clamp((values[i] - min) / range, 0d, 1d);
+            var normalized = Math.Clamp((safe - min) / range, 0d, 1d);
             var y = PlotPadding + ((1 - normalized) * usableHeight);
             var point = new Point(x, y);
 
@@ -168,7 +179,7 @@ internal sealed class LineChart : Component<LineChartProps>
             }
         }
 
-        if (values.Count == 1)
+        if (count == 1)
         {
             // Keep the first sample at its actual height on the right edge.
             var point = figure.StartPoint;

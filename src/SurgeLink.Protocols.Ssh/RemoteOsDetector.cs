@@ -95,7 +95,7 @@ public static partial class RemoteOsDetector
         {
             var result = await executeCommand(command, cancellationToken).ConfigureAwait(false);
             var output = result.StandardOutput.Trim();
-            return output.Length > 0 ? output : result.CombinedOutput.Trim();
+            return output.Length > 0 ? output : (result.ExitStatus == 0 ? result.CombinedOutput.Trim() : null);
         }
         catch (OperationCanceledException)
         {

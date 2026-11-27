@@ -35,6 +35,8 @@ public sealed class LoadAvgParserTests
     [InlineData("abc def ghi")]
     [InlineData("0.5 0.6")]
     [InlineData("-1 0 0")]
+    [InlineData("Infinity 0 0")]
+    [InlineData("NaN 0 0")]
     public void ParseReturnsNullForUnusableInput(string? text)
     {
         Assert.Null(LoadAvgParser.Parse(text));
@@ -63,6 +65,8 @@ public sealed class UptimeParserTests
     [InlineData("")]
     [InlineData("not-a-number")]
     [InlineData("-5.0 9.0")]
+    [InlineData("Infinity 0")]
+    [InlineData("NaN 0")]
     public void ParseReturnsNullForUnusableInput(string? text)
     {
         Assert.Null(UptimeParser.Parse(text));

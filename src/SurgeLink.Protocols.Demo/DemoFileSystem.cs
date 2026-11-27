@@ -55,7 +55,8 @@ public sealed class DemoFileSystem : IRemoteFileSystem
     {
         lock (_gate)
         {
-            var node = Resolve(path);
+            var normalized = PosixPath.Normalize(path, _current);
+            var node = Resolve(normalized);
             if (!node.IsDirectory)
             {
                 throw new ProtocolException($"'{path}' is not a directory.", ProtocolFailureKind.Configuration);
@@ -64,7 +65,7 @@ public sealed class DemoFileSystem : IRemoteFileSystem
             var result = node.Children.Values
                 .OrderByDescending(n => n.IsDirectory)
                 .ThenBy(n => n.Name, StringComparer.Ordinal)
-                .Select(n => ToEntry(path, n))
+                .Select(n => ToEntry(normalized, n))
                 .ToList();
             return Task.FromResult<IReadOnlyList<RemoteFileEntry>>(result);
         }
@@ -100,6 +101,12 @@ public sealed class DemoFileSystem : IRemoteFileSystem
     public Task<Stream> OpenWriteAsync(string path, long? expectedSize, IProgress<TransferProgress>? progress, CancellationToken cancellationToken)
     {
         var normalized = PosixPath.Normalize(path, _current);
+        var name = PosixPath.Name(normalized);
+        if (normalized == "/" || string.IsNullOrEmpty(name))
+        {
+            throw new ProtocolException($"'{path}' is not a valid file path.", ProtocolFailureKind.Configuration);
+        }
+
         var stream = new UploadStream(this, normalized, expectedSize, progress);
         return Task.FromResult<Stream>(stream);
     }
@@ -110,8 +117,18 @@ public sealed class DemoFileSystem : IRemoteFileSystem
         lock (_gate)
         {
             var normalized = PosixPath.Normalize(path, _current);
-            var parent = Resolve(PosixPath.Parent(normalized));
             var name = PosixPath.Name(normalized);
+            if (normalized == "/" || string.IsNullOrEmpty(name))
+            {
+                throw new ProtocolException($"'{path}' already exists.", ProtocolFailureKind.Configuration);
+            }
+
+            var parent = Resolve(PosixPath.Parent(normalized));
+            if (!parent.IsDirectory)
+            {
+                throw new ProtocolException($"'{PosixPath.Parent(normalized)}' is not a directory.", ProtocolFailureKind.Configuration);
+            }
+
             if (parent.Children.ContainsKey(name))
             {
                 throw new ProtocolException($"'{path}' already exists.", ProtocolFailureKind.Configuration);
@@ -128,8 +145,13 @@ public sealed class DemoFileSystem : IRemoteFileSystem
         lock (_gate)
         {
             var normalized = PosixPath.Normalize(path, _current);
-            var parent = Resolve(PosixPath.Parent(normalized));
             var name = PosixPath.Name(normalized);
+            if (normalized == "/" || string.IsNullOrEmpty(name))
+            {
+                throw new ProtocolException("The root directory cannot be deleted.", ProtocolFailureKind.Configuration);
+            }
+
+            var parent = Resolve(PosixPath.Parent(normalized));
             if (!parent.Children.TryGetValue(name, out var node))
             {
                 throw new ProtocolException($"'{path}' does not exist.", ProtocolFailureKind.Configuration);
@@ -156,20 +178,36 @@ public sealed class DemoFileSystem : IRemoteFileSystem
         {
             var source = PosixPath.Normalize(sourcePath, _current);
             var destination = PosixPath.Normalize(destinationPath, _current);
-            var sourceParent = Resolve(PosixPath.Parent(source));
             var name = PosixPath.Name(source);
+            var destinationName = PosixPath.Name(destination);
+            if (source == "/" || string.IsNullOrEmpty(name) || destination == "/" || string.IsNullOrEmpty(destinationName))
+            {
+                throw new ProtocolException("Cannot rename to or from the root directory.", ProtocolFailureKind.Configuration);
+            }
+
+            var sourceParent = Resolve(PosixPath.Parent(source));
             if (!sourceParent.Children.TryGetValue(name, out var node))
             {
                 throw new ProtocolException($"'{sourcePath}' does not exist.", ProtocolFailureKind.Configuration);
             }
 
+            if (node.IsDirectory && (destination == source || destination.StartsWith(source + "/", StringComparison.Ordinal)))
+            {
+                throw new ProtocolException("Cannot move a directory into itself.", ProtocolFailureKind.Configuration);
+            }
+
             var destinationParent = Resolve(PosixPath.Parent(destination));
-            if (!overwrite && destinationParent.Children.ContainsKey(PosixPath.Name(destination)))
+            if (!destinationParent.IsDirectory)
+            {
+                throw new ProtocolException($"'{PosixPath.Parent(destination)}' is not a directory.", ProtocolFailureKind.Configuration);
+            }
+
+            if (!overwrite && destinationParent.Children.ContainsKey(destinationName))
                 throw new IOException("Destination already exists.");
             sourceParent.Children.Remove(name);
             var moved = new Node
             {
-                Name = PosixPath.Name(destination),
+                Name = destinationName,
                 IsDirectory = node.IsDirectory,
                 Content = node.Content,
                 ModifiedUtc = DateTimeOffset.UtcNow,
@@ -213,11 +251,11 @@ public sealed class DemoFileSystem : IRemoteFileSystem
 
     private RemoteFileEntry ToEntry(string directory, Node node)
     {
-        var full = directory.TrimEnd('/') + "/" + node.Name;
-        if (directory == "/")
-        {
-            full = "/" + node.Name;
-        }
+        var full = node.Name == "/"
+            ? "/"
+            : directory == "/"
+                ? "/" + node.Name
+                : directory.TrimEnd('/') + "/" + node.Name;
 
         return new RemoteFileEntry
         {
@@ -286,6 +324,7 @@ public sealed class DemoFileSystem : IRemoteFileSystem
         private readonly string _path;
         private readonly long? _expected;
         private readonly IProgress<TransferProgress>? _progress;
+        private int _disposed;
 
         public UploadStream(DemoFileSystem owner, string path, long? expected, IProgress<TransferProgress>? progress)
         {
@@ -297,15 +336,21 @@ public sealed class DemoFileSystem : IRemoteFileSystem
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing)
+            if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
             {
                 var bytes = ToArray();
                 lock (_owner._gate)
                 {
                     var parent = _owner.Resolve(PosixPath.Parent(_path));
-                    parent.Children[PosixPath.Name(_path)] = new Node
+                    if (!parent.IsDirectory)
                     {
-                        Name = PosixPath.Name(_path),
+                        throw new ProtocolException($"'{PosixPath.Parent(_path)}' is not a directory.", ProtocolFailureKind.Configuration);
+                    }
+
+                    var name = PosixPath.Name(_path);
+                    parent.Children[name] = new Node
+                    {
+                        Name = name,
                         IsDirectory = false,
                         Content = bytes,
                         ModifiedUtc = DateTimeOffset.UtcNow,

@@ -60,6 +60,18 @@ public sealed class SshPortForwardSpecTests
         Assert.Equal(new SshPortForwardSpec(SshPortForwardKind.Dynamic, "127.0.0.1", 1080, null, 0), specs[2]);
     }
 
+    [Fact]
+    public void ParsesIpv6AndWildcardPortForwards()
+    {
+        var specs = SshPortForwardSpec.ParseList("L:[::1]:8080:[::1]:80; L:*:8081:localhost:80; D:*:1080; D:[::1]:1081");
+
+        Assert.Equal(4, specs.Count);
+        Assert.Equal(new SshPortForwardSpec(SshPortForwardKind.Local, "::1", 8080, "::1", 80), specs[0]);
+        Assert.Equal(new SshPortForwardSpec(SshPortForwardKind.Local, "0.0.0.0", 8081, "localhost", 80), specs[1]);
+        Assert.Equal(new SshPortForwardSpec(SshPortForwardKind.Dynamic, "0.0.0.0", 1080, null, 0), specs[2]);
+        Assert.Equal(new SshPortForwardSpec(SshPortForwardKind.Dynamic, "::1", 1081, null, 0), specs[3]);
+    }
+
     [Theory]
     [InlineData("X:8080:localhost:80")]
     [InlineData("L:0:localhost:80")]
@@ -75,6 +87,7 @@ public sealed class SshPortForwardSpecTests
     [InlineData("bastion.example.com", "alice", "bastion.example.com", 22, "alice")]
     [InlineData("ops@bastion.example.com:2222", "alice", "bastion.example.com", 2222, "ops")]
     [InlineData("ops@[::1]:2200", "alice", "::1", 2200, "ops")]
+    [InlineData("ops@2001:db8::1", "alice", "2001:db8::1", 22, "ops")]
     public void ParsesJumpTargets(string raw, string defaultUser, string host, int port, string user)
     {
         var target = SshJumpTarget.Parse(raw, defaultUser);

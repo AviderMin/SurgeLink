@@ -50,6 +50,9 @@ internal enum SftpDialogKind
 internal sealed record SftpDialogState(SftpDialogKind Kind, RemoteFileEntry? Target = null,
     IReadOnlyList<RemoteFileEntry>? Targets = null)
 {
+    /// <summary>Stable key for this dialog instance so distinct dialogs never reuse a closed QueuedDialog.</summary>
+    public Guid Id { get; init; } = Guid.NewGuid();
+
     /// <summary>Selection captured when the delete confirmation opens.</summary>
     public IReadOnlyList<RemoteFileEntry> DeleteTargets => Targets ?? (Target is null ? Array.Empty<RemoteFileEntry>() : new[] { Target });
 

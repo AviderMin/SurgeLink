@@ -1,12 +1,13 @@
 using System.Globalization;
-using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using SurgeLink.App.Components;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Files;
 using Windows.Foundation;
+using Windows.UI.ViewManagement;
 
 namespace SurgeLink.App.Views.Sftp;
 
@@ -26,6 +27,7 @@ internal sealed class FileEditorSurface : Grid
     private string _editorText = string.Empty;
     private int _documentRevision = -1;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _statisticsTimer;
+    private readonly AccessibilitySettings _accessibility = new();
     private ScrollViewer? _scroll;
     private bool _settingText;
     private bool _gutterQueued;
@@ -73,13 +75,12 @@ internal sealed class FileEditorSurface : Grid
         Loaded += (_, _) =>
         {
             _statisticsTimer.Start();
-            var scroll = FindScrollViewer(Editor);
-            if (!ReferenceEquals(_scroll, scroll))
-            {
-                if (_scroll is not null) { _scroll.ViewChanged -= OnViewChanged; }
-                _scroll = scroll;
-                if (_scroll is not null) { _scroll.ViewChanged += OnViewChanged; }
-            }
+            EnsureScrollViewer();
+            QueueGutter();
+        };
+        Editor.Loaded += (_, _) =>
+        {
+            EnsureScrollViewer();
             QueueGutter();
         };
         Unloaded += (_, _) =>
@@ -149,8 +150,20 @@ internal sealed class FileEditorSurface : Grid
         if (IsLoaded && !_statisticsTimer.IsRunning) { PaintGutter(); }
     }
 
+    private void EnsureScrollViewer()
+    {
+        var scroll = FindScrollViewer(Editor);
+        if (scroll is not null && !ReferenceEquals(_scroll, scroll))
+        {
+            if (_scroll is not null) { _scroll.ViewChanged -= OnViewChanged; }
+            _scroll = scroll;
+            _scroll.ViewChanged += OnViewChanged;
+        }
+    }
+
     private void PaintGutter()
     {
+        if (_scroll is null) { EnsureScrollViewer(); }
         var width = Math.Max(48, _lines.Count.ToString(CultureInfo.InvariantCulture).Length * 9 + 16);
         if (_gutterColumn.Width.Value != width) { _gutterColumn.Width = new GridLength(width); }
         var top = _scroll?.TransformToVisual(Editor).TransformPoint(new Point()).Y ?? 0;
@@ -158,8 +171,7 @@ internal sealed class FileEditorSurface : Grid
         _gutter.Clip = new RectangleGeometry { Rect = new Rect(0, top, width, height) };
         var verticalOffset = _scroll?.VerticalOffset ?? 0;
         var line = _lines.FirstVisibleLine(offset => LineRect(offset).Bottom, verticalOffset);
-        var foreground = ThemeRef.Resolve("TextFillColorSecondaryBrush", ActualTheme == ElementTheme.Dark) as Brush
-            ?? Editor.Foreground;
+        var foreground = ChartPalette.ResolveSecondary(this, _accessibility.HighContrast);
         var used = 0;
         for (; line < _lines.Count; line++)
         {

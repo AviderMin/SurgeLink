@@ -210,4 +210,16 @@ public sealed class AgentTextTests
         Assert.True(cache.TryGetValue("op-9", out var latest));
         Assert.Equal("fp", latest.Fingerprint);
     }
+
+    [Fact]
+    public void MalformedCsiDoesNotSwallowFollowingOutput()
+    {
+        var withNewline = AgentText.TrimHead("before\u001b[\nafter", stripAnsi: true, maxBytes: null, maxLines: null);
+        Assert.Equal("before\nafter", withNewline.Text);
+        Assert.False(withNewline.Truncated);
+
+        var abortedByEsc = AgentText.TrimHead("\u001b[31\u001b[0mhello", stripAnsi: true, maxBytes: null, maxLines: null);
+        Assert.Equal("hello", abortedByEsc.Text);
+        Assert.False(abortedByEsc.Truncated);
+    }
 }

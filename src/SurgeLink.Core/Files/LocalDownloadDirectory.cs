@@ -103,15 +103,17 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
 
     internal static bool IsSafeExistingFile(string path)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var fullPath = Path.GetFullPath(path);
         if (!OperatingSystem.IsWindows())
         {
-            try { ValidateFileType(File.GetAttributes(path), 0); }
+            try { ValidateFileType(File.GetAttributes(fullPath), 0); }
             catch (FileNotFoundException) { return false; }
             catch (DirectoryNotFoundException) { return false; }
             return true;
         }
 
-        using var handle = CreateFile(ToExtendedPath(path), ReadAttributes, FileShare.ReadWrite | FileShare.Delete,
+        using var handle = CreateFile(ToExtendedPath(fullPath), ReadAttributes, FileShare.ReadWrite | FileShare.Delete,
             0, FileMode.Open, OpenReparsePoint | 0x02000000, 0);
         if (handle.IsInvalid)
         {
@@ -124,6 +126,35 @@ internal sealed partial class LocalDownloadDirectory : IDisposable
         ValidateFileType((FileAttributes)info.Attributes, info.ReparseTag);
         RequireSingleLink(handle);
         return true;
+    }
+
+    internal static bool IsUnsafeReparsePoint(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var fullPath = Path.GetFullPath(path);
+        if ((File.GetAttributes(fullPath) & FileAttributes.ReparsePoint) == 0)
+        {
+            return false;
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return true;
+        }
+
+        using var handle = CreateFile(ToExtendedPath(fullPath), ReadAttributes, FileShare.ReadWrite | FileShare.Delete,
+            0, FileMode.Open, OpenReparsePoint | 0x02000000, 0);
+        if (handle.IsInvalid)
+        {
+            return true;
+        }
+
+        if (!GetFileInformationByHandleEx(handle, 9, out var info, 8))
+        {
+            return true;
+        }
+
+        return !IsCloudReparseTag(info.ReparseTag);
     }
 
     private static void RequireSingleLink(SafeFileHandle handle)

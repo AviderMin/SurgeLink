@@ -57,7 +57,9 @@ public sealed class TerminalBridgeResponseTests
 
         remote.Emit("\u001bP+q524742;544e\u001b\\");
 
-        Assert.Equal("\u001bP1+r524742=38;544E=787465726D2D646972656374\u001b\\", Assert.Single(remote.Writes));
+        Assert.Equal(
+            new[] { "\u001bP1+r524742=38\u001b\\", "\u001bP1+r544E=787465726D2D646972656374\u001b\\" },
+            remote.Writes);
     }
 
     [Fact]

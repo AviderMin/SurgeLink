@@ -14,6 +14,7 @@ internal static class SftpListInput
     {
         public IReadOnlyList<RemoteFileEntry> Entries = Array.Empty<RemoteFileEntry>();
         public Action<RemoteFileEntry>? Open;
+        public DoubleTappedEventHandler? Handler;
     }
 
     private static readonly ConditionalWeakTable<ListView, Binding> Bindings = new();
@@ -63,7 +64,7 @@ internal static class SftpListInput
         var binding = Bindings.GetValue(list, control =>
         {
             var state = new Binding();
-            control.AddHandler(UIElement.DoubleTappedEvent, new DoubleTappedEventHandler((_, args) =>
+            state.Handler = (_, args) =>
             {
                 var source = args.OriginalSource as DependencyObject;
                 while (source is not null && source is not ListViewItem && source != control)
@@ -79,10 +80,18 @@ internal static class SftpListInput
                         state.Open?.Invoke(state.Entries[index]);
                     }
                 }
-            }), handledEventsToo: true);
+            };
+            control.AddHandler(UIElement.DoubleTappedEvent, state.Handler, handledEventsToo: true);
             return state;
         });
         binding.Entries = entries;
         binding.Open = open;
+    }
+
+    public static void Detach(ListView list)
+    {
+        if (!Bindings.TryGetValue(list, out var binding)) return;
+        if (binding.Handler is not null) list.RemoveHandler(UIElement.DoubleTappedEvent, binding.Handler);
+        Bindings.Remove(list);
     }
 }

@@ -188,7 +188,12 @@ internal static class AgentFilePage
         while (end < total)
         {
             var status = Rune.DecodeFromUtf8(data.AsSpan(end, total - end), out _, out var used);
-            if (status == OperationStatus.NeedMoreData) break;
+            if (status == OperationStatus.NeedMoreData)
+            {
+                if (reachedEof)
+                    throw new DecoderFallbackException("The file ends with an incomplete UTF-8 character.");
+                break;
+            }
             if (status == OperationStatus.InvalidData)
                 throw new DecoderFallbackException("The file contains bytes that are not valid UTF-8.");
             if (end > start && end - start + used > limit) break;

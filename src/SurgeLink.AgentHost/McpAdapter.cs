@@ -49,12 +49,13 @@ public sealed class McpAdapter(Func<AgentRequest, CancellationToken, Task<AgentR
         },
     }).ToArray();
 
-    public async Task<CallToolResult> CallAsync(CallToolRequestParams request, CancellationToken ct)
+    public async Task<CallToolResult> CallAsync(CallToolRequestParams? request, CancellationToken ct)
     {
-        var definition = Definitions.FirstOrDefault(d => d.Name == request.Name);
-        var arguments = request.Arguments ?? new Dictionary<string, JsonElement>();
+        var definition = request is null ? null : Definitions.FirstOrDefault(d => d.Name == request.Name);
+        var arguments = request?.Arguments ?? new Dictionary<string, JsonElement>();
         AgentResponse response;
-        if (definition is null) response = AgentResponse.Error("unknown_tool", "Unknown SurgeLink tool.");
+        if (request is null) response = AgentResponse.Error("invalid_arguments", "Supply tool call parameters.");
+        else if (definition is null) response = AgentResponse.Error("unknown_tool", "Unknown SurgeLink tool.");
         else if (!ValidArguments(definition, arguments))
             response = AgentResponse.Error("invalid_arguments", "Supply only the required and optional arguments with the types in the tool schema.");
         else

@@ -40,7 +40,7 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           $version = $env:REQUESTED_VERSION
-          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+          if ([string]::IsNullOrWhiteSpace($version) -and $env:GITHUB_REF_TYPE -eq 'tag') {
             $version = $env:GITHUB_REF_NAME -replace '^v', ''
           }
           if ([string]::IsNullOrWhiteSpace($version)) {

@@ -14,16 +14,25 @@ internal sealed class InputReplayCache(int maximumEntries = InputReplayCache.Def
     internal const int DefaultMaximumEntries = 1024;
     internal const long DefaultMaximumBytes = 16L * 1024 * 1024;
 
-    private readonly Dictionary<string, (string Fingerprint, AgentResponse Response, long Bytes)> _entries = new(StringComparer.Ordinal);
-    private readonly Queue<string> _order = new();
+    private readonly Dictionary<string, (string Fingerprint, AgentResponse Response, long Bytes, long Generation)> _entries = new(StringComparer.Ordinal);
+    private readonly Queue<(string Key, long Generation)> _order = new();
     private long _bytes;
+    private long _generation;
 
     public int Count => _entries.Count;
 
     public long EstimatedBytes => _bytes;
 
-    public bool TryGetValue(string operationId, out (string Fingerprint, AgentResponse Response, long Bytes) value) =>
-        _entries.TryGetValue(operationId, out value);
+    public bool TryGetValue(string operationId, out (string Fingerprint, AgentResponse Response, long Bytes) value)
+    {
+        if (_entries.TryGetValue(operationId, out var entry))
+        {
+            value = (entry.Fingerprint, entry.Response, entry.Bytes);
+            return true;
+        }
+        value = default;
+        return false;
+    }
 
     public void Remember(string operationId, string fingerprint, AgentResponse response)
     {
@@ -33,16 +42,18 @@ internal sealed class InputReplayCache(int maximumEntries = InputReplayCache.Def
         }
 
         var size = SizeOf(response);
-        _entries[operationId] = (fingerprint, response, size);
+        var generation = ++_generation;
+        _entries[operationId] = (fingerprint, response, size, generation);
         _bytes += size;
-        _order.Enqueue(operationId);
+        _order.Enqueue((operationId, generation));
 
         while (_entries.Count > maximumEntries || _bytes > maximumBytes)
         {
             if (!_order.TryDequeue(out var oldest)) break;
-            if (_entries.Remove(oldest, out var evicted))
+            if (_entries.TryGetValue(oldest.Key, out var current) && current.Generation == oldest.Generation)
             {
-                _bytes -= evicted.Bytes;
+                _entries.Remove(oldest.Key);
+                _bytes -= current.Bytes;
             }
         }
     }

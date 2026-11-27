@@ -31,7 +31,13 @@ public static class RemoteFileWrite
         if (overwrite && destinationKnownAbsent)
             throw new ArgumentException("A destination known to be absent cannot be overwritten.", nameof(overwrite));
         var separator = destination.LastIndexOf('/');
-        if (!destination.StartsWith('/') || separator == destination.Length - 1) { throw new ArgumentException("An absolute file path is required.", nameof(destination)); }
+        if (!destination.StartsWith('/')
+            || separator == destination.Length - 1
+            || destination.Contains('\0')
+            || HasDotSegment(destination))
+        {
+            throw new ArgumentException("An absolute file path is required.", nameof(destination));
+        }
         var writer = Writers.GetValue(fileSystem, _ => new SemaphoreSlim(1, 1));
         await writer.WaitAsync(cancellationToken).ConfigureAwait(false);
         try { await WriteCoreAsync(fileSystem, destination, size, progress, overwrite, write, validateDestination, unixMode, destinationKnownAbsent, cancellationToken).ConfigureAwait(false); }
@@ -80,7 +86,7 @@ public static class RemoteFileWrite
             }
             cancellationToken.ThrowIfCancellationRequested();
             // Content replacement inherits ordinary access bits, never privilege bits.
-            if ((unixMode ?? (existing?.UnixMode & 0x1FF)) is int mode && fileSystem.SupportsPermissions)
+            if (((unixMode ?? existing?.UnixMode) & 0x1FF) is int mode && fileSystem.SupportsPermissions)
             {
                 await fileSystem.SetPermissionsAsync(temporary, mode, cancellationToken).ConfigureAwait(false);
             }
@@ -107,5 +113,18 @@ public static class RemoteFileWrite
                 catch (Exception) { /* Keep the original failure; never delete the final destination. */ }
             }
         }
+    }
+
+    private static bool HasDotSegment(string path)
+    {
+        foreach (var segment in path.Split('/'))
+        {
+            if (segment is "." or "..")
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

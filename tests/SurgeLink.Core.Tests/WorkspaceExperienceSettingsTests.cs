@@ -41,4 +41,28 @@ public sealed class WorkspaceExperienceSettingsTests
         Assert.Equal(draft, store.Current);
         Assert.Equal(draft, new AppSettingsStore(path).Current);
     }
+
+    [Fact]
+    public void SettingsDialogSavePreservesConcurrentUnrelatedChanges()
+    {
+        using var temp = new TempDirectory();
+        var path = temp.File("settings.json");
+        var store = new AppSettingsStore(path);
+        store.Update(current => current with { Theme = ThemeMode.Light, PrivacyMode = false });
+        var initial = store.Current;
+        var draft = initial with { Theme = ThemeMode.Dark };
+
+        store.Update(current => current with { PrivacyMode = true });
+
+        var failures = 0;
+        var saved = SettingsDialogSave.TryApply(store, initial, draft, _ => failures++);
+
+        Assert.True(saved);
+        Assert.Equal(0, failures);
+        Assert.Equal(ThemeMode.Dark, store.Current.Theme);
+        Assert.True(store.Current.PrivacyMode);
+        var reloaded = new AppSettingsStore(path).Current;
+        Assert.Equal(ThemeMode.Dark, reloaded.Theme);
+        Assert.True(reloaded.PrivacyMode);
+    }
 }

@@ -168,6 +168,55 @@ public sealed class FileTransferQueueTests
     }
 
     [Fact]
+    public async Task UploadConflictsNormalizesTrailingSlash()
+    {
+        using var temp = new TempDirectory();
+        var folder = temp.File("folder");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "config"), "new");
+        var fs = new FakeFileSystem();
+        fs.Listings["/"] = [new() { Name = "folder", FullPath = "/folder", Kind = RemoteEntryKind.Directory }];
+        fs.Listings["/folder"] = [new() { Name = "config", FullPath = "/folder/config" }];
+
+        var conflicts = await UploadConflicts.FindAsync(fs, folder, "/folder/", true, CancellationToken.None);
+
+        Assert.Equal(new[] { "/folder/config" }, conflicts);
+    }
+
+    [Fact]
+    public async Task UploadConflictsEnforcesMaximumDepth()
+    {
+        using var temp = new TempDirectory();
+        var root = temp.File("deep");
+        var current = root;
+        for (var i = 0; i <= RemoteFileLimits.MaximumDepth + 1; i++)
+        {
+            current = Path.Combine(current, "d");
+        }
+        Directory.CreateDirectory(current);
+
+        var fs = new FakeFileSystem();
+        var remote = "/deep";
+        var parent = "/";
+        fs.Listings[parent] = [new() { Name = "deep", FullPath = remote, Kind = RemoteEntryKind.Directory }];
+        for (var i = 0; i <= RemoteFileLimits.MaximumDepth + 1; i++)
+        {
+            fs.Listings[remote] = [new() { Name = "d", FullPath = remote + "/d", Kind = RemoteEntryKind.Directory }];
+            remote += "/d";
+        }
+
+        await Assert.ThrowsAsync<IOException>(() => UploadConflicts.FindAsync(fs, root, "/deep", true, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task RemoteFileCopyRejectsEmptySegmentsToPreventSelfCopyBypass()
+    {
+        var fs = new FakeFileSystem();
+        await Assert.ThrowsAsync<ArgumentException>(() => RemoteFileCopy.CopyAsync(fs, "/a/b", "/a//b/sub", CancellationToken.None));
+        Assert.Empty(fs.ListCalls);
+    }
+
+    [Fact]
     public async Task SubscriberFailuresDoNotStopFollowingTransfersOrOtherSubscribers()
     {
         using var temp = new TempDirectory();

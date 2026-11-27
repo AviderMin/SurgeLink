@@ -174,7 +174,8 @@ public sealed class FileTransferQueue : IAsyncDisposable
         foreach (var item in items)
         {
             if (item.Status == TransferStatus.Queued) { item.Status = TransferStatus.Cancelled; }
-            item.Cancellation.Cancel();
+            try { item.Cancellation.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
         Publish(force: true);
@@ -338,7 +339,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
             {
                 throw new IOException($"Folder uploads cannot exceed {RemoteFileLimits.MaximumDepth} directory levels.");
             }
-            if ((File.GetAttributes(directory.Local) & FileAttributes.ReparsePoint) != 0)
+            if (LocalDownloadDirectory.IsUnsafeReparsePoint(directory.Local))
             {
                 throw new IOException("Folder uploads cannot include symbolic links or junctions.");
             }
@@ -346,7 +347,7 @@ public sealed class FileTransferQueue : IAsyncDisposable
             foreach (var entry in new DirectoryInfo(directory.Local).EnumerateFileSystemInfos())
             {
                 token.ThrowIfCancellationRequested();
-                if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
+                if (LocalDownloadDirectory.IsUnsafeReparsePoint(entry.FullName))
                 {
                     throw new IOException("Folder uploads cannot include symbolic links or junctions: " + entry.FullName);
                 }
@@ -423,12 +424,12 @@ public sealed class FileTransferQueue : IAsyncDisposable
             if (stage is not null)
             {
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                try
+                if (!folderPublished)
                 {
-                    if (!folderPublished)
-                        await fileSystem.DeleteAsync(StagePath(destination), recursive: true, cleanup.Token).ConfigureAwait(false);
-                    await fileSystem.DeleteAsync(stage, recursive: false, cleanup.Token).ConfigureAwait(false);
+                    try { await fileSystem.DeleteAsync(StagePath(destination), recursive: true, cleanup.Token).ConfigureAwait(false); }
+                    catch (Exception ex) { _logger?.LogWarning(ex, "Could not clean up upload staging payload {Path}", StagePath(destination)); }
                 }
+                try { await fileSystem.DeleteAsync(stage, recursive: false, cleanup.Token).ConfigureAwait(false); }
                 catch (Exception ex) { _logger?.LogWarning(ex, "Could not clean up upload staging folder {Path}", stage); }
             }
         }

@@ -3,6 +3,7 @@ using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using SurgeLink.App.Components;
 using SurgeLink.App.Localization;
+using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Files;
 using static Microsoft.UI.Reactor.Factories;
@@ -124,7 +125,7 @@ internal static class SftpTransferRow
         TransferStatus.Failed => Str.F(
             "sftp.transfers.failed",
             "Failed · {0}",
-            item.Error ?? Str.T("sftp.transfers.unknownError", "unknown error")),
+            item.Error is null ? Str.T("sftp.transfers.unknownError", "unknown error") : PrivacyDisplay.Mask(item.Error)),
         _ => item.Status.ToString(),
     };
 }

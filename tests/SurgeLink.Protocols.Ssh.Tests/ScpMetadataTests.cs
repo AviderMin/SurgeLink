@@ -11,6 +11,17 @@ public sealed class ScpMetadataTests
 {
     private const string AttackName = "ghost\n-rw-r--r-- 1 root root 1 Oct 25 12:00 victim";
 
+    [Fact]
+    public void CommandsUsePosixLineEndingsWithoutChangingPathCharacters()
+    {
+        Assert.DoesNotContain('\r', ScpMetadata.BuildHomeCommand());
+        Assert.DoesNotContain('\r', ScpMetadata.BuildCommand("/dir", directory: true));
+        Assert.DoesNotContain('\r', ScpMetadata.BuildCommand("/dir/file", directory: false));
+
+        const string path = "/dir/name\r\nwith line break";
+        Assert.Contains(path, ScpMetadata.BuildCommand(path, directory: false), StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(AttackName)]
     [InlineData(" leading and trailing ")]

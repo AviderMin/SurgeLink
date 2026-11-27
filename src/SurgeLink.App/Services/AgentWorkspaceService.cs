@@ -46,6 +46,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
         // closed for local transfers: they need a real user decision.
         _gateway = new AgentGateway(confirmFile ?? DefaultFilePolicyAsync);
         _gateway.OperationCompleted += OnOperationCompleted;
+        _gateway.ControlExpired += OnControlExpired;
         _gateway.McpPeersChanged += Notify;
         workspace.SessionClosing += OnSessionClosingAsync;
         workspace.TerminalReplacing += OnTerminalReplacingAsync;
@@ -237,6 +238,21 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
     private static Task<bool> DefaultFilePolicyAsync(AgentFileAccess access, CancellationToken cancellationToken) =>
         Task.FromResult(access.Operation is not ("files.upload" or "files.download"));
 
+    private void OnControlExpired(string connectionKey, string expiredHandle)
+    {
+        if (!Guid.TryParse(connectionKey, out var tabId)) return;
+        string label;
+        lock (_gate)
+        {
+            var tab = _workspace.Snapshot.Tabs.FirstOrDefault(t => t.Id == tabId);
+            if (!_handles.TryGetValue(tabId, out var handle) || handle != expiredHandle) return;
+            label = tab?.Title ?? "";
+            if (_humanHandlers.Remove(tabId, out var handler) && tab?.Terminal is { } terminal)
+                terminal.UserInput -= handler;
+        }
+        Record(label, "access", "control_expired");
+    }
+
     private void OnOperationCompleted(string method, string? handle, string outcome)
     {
         string label;
@@ -316,6 +332,7 @@ public sealed class AgentWorkspaceService : IAsyncDisposable
             finally
             {
                 _gateway.OperationCompleted -= OnOperationCompleted;
+                _gateway.ControlExpired -= OnControlExpired;
                 _gateway.McpPeersChanged -= Notify;
             }
         }

@@ -53,6 +53,13 @@ public static class Program
                 }
             });
 
-        AppServices.Current?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        try
+        {
+            AppServices.Current?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            CrashLog.Write("Shutdown", ex);
+        }
     }
 }

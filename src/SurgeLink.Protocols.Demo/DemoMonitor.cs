@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using SurgeLink.Core.Monitoring;
 
 namespace SurgeLink.Protocols.Demo;
@@ -5,7 +6,7 @@ namespace SurgeLink.Protocols.Demo;
 /// <summary>Synthetic performance counters with a slow sine wave so charts animate.</summary>
 public sealed class DemoMonitor : IRemoteSystemMonitor
 {
-    private readonly DateTimeOffset _started = DateTimeOffset.UtcNow;
+    private readonly Stopwatch _uptime = Stopwatch.StartNew();
 
     /// <inheritdoc />
     public TimeSpan RecommendedInterval => TimeSpan.FromSeconds(2);
@@ -13,7 +14,8 @@ public sealed class DemoMonitor : IRemoteSystemMonitor
     /// <inheritdoc />
     public Task<SystemSnapshot> SampleAsync(CancellationToken cancellationToken)
     {
-        var elapsed = (DateTimeOffset.UtcNow - _started).TotalSeconds;
+        cancellationToken.ThrowIfCancellationRequested();
+        var elapsed = Math.Max(0d, _uptime.Elapsed.TotalSeconds);
         var wave = Math.Sin(elapsed / 6.0);
         var wave2 = Math.Sin(elapsed / 3.5 + 1.2);
 
@@ -83,6 +85,12 @@ public sealed class DemoMonitor : IRemoteSystemMonitor
     /// <inheritdoc />
     public Task<IReadOnlyList<RemoteProcessInfo>> GetTopProcessesAsync(int maxCount, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (maxCount <= 0)
+        {
+            return Task.FromResult<IReadOnlyList<RemoteProcessInfo>>(Array.Empty<RemoteProcessInfo>());
+        }
+
         var processes = new List<RemoteProcessInfo>
         {
             new() { ProcessId = 1411, Name = "surge-agent", User = "demo", CpuPercent = 12.4, MemoryPercent = 3.1, ResidentBytes = 512L * 1024 * 1024, CommandLine = "/usr/bin/surge-agent --daemon" },
@@ -94,6 +102,6 @@ public sealed class DemoMonitor : IRemoteSystemMonitor
             new() { ProcessId = 98, Name = "kworker/0:2", User = "root", CpuPercent = 0.4, MemoryPercent = 0.0, ResidentBytes = 0, CommandLine = "[kworker/0:2]" },
         };
 
-        return Task.FromResult<IReadOnlyList<RemoteProcessInfo>>(processes.Take(Math.Max(1, maxCount)).ToList());
+        return Task.FromResult<IReadOnlyList<RemoteProcessInfo>>(processes.Take(maxCount).ToList());
     }
 }

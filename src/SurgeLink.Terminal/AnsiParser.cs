@@ -146,6 +146,10 @@ internal sealed class AnsiParser
                 _state = ParserState.Ground;
                 ResetSequence();
             }
+            else
+            {
+                _terminal.ExecuteControl(value);
+            }
 
             return;
         }
@@ -213,8 +217,17 @@ internal sealed class AnsiParser
             }
         }
 
+        if (value == 0x7F)
+        {
+            return;
+        }
+
         _state = ParserState.Ground;
         ResetSequence();
+        if (value >= 0x80)
+        {
+            FeedGround(value);
+        }
     }
 
     private void FeedCsi(byte value)
@@ -232,6 +245,10 @@ internal sealed class AnsiParser
             {
                 _state = ParserState.Ground;
                 ResetSequence();
+            }
+            else
+            {
+                _terminal.ExecuteControl(value);
             }
 
             return;
@@ -324,6 +341,8 @@ internal sealed class AnsiParser
             // ESC [ is a new CSI, not more title text. Otherwise the following
             // control sequence and plain text would be swallowed until a BEL/ST.
             FinishOsc(terminated: false);
+            ResetSequence();
+            _state = ParserState.Escape;
             FeedEscape(value);
             return;
         }
@@ -390,7 +409,8 @@ internal sealed class AnsiParser
             // A non-ST escape aborts the unsupported string instead of treating
             // the rest of the stream as payload. FeedEscape then decides whether
             // the byte introduces a new CSI/OSC/string or is a plain final.
-            _state = ParserState.Ground;
+            ResetSequence();
+            _state = ParserState.Escape;
             FeedEscape(value);
             return;
         }

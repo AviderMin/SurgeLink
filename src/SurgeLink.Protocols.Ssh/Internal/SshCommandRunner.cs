@@ -71,8 +71,8 @@ internal sealed class SshCommandRunner
         // strict byte budget: a special file cannot stream forever, and a file
         // that changes size fails closed instead of producing a silently clipped
         // download.
-        var output = CopyWithIdleTimeoutAsync(sshCommand.OutputStream, destination,
-            FirstByteTimeout, ReadIdleTimeout, ct, expectedBytes);
+        var output = CopyWithIdleTimeoutCoreAsync(sshCommand.OutputStream, destination,
+            FirstByteTimeout, ReadIdleTimeout, expectedBytes, checkShrinkage: false, ct);
         var error = ReadBoundedOutputAsync(sshCommand.ExtendedOutputStream, _encoding, 2 * 1024 * 1024, ct);
         try
         {
@@ -80,10 +80,15 @@ internal sealed class SshCommandRunner
             // stdout reaches EOF, bound the command's exit and stderr drain too:
             // a lost exit status or a child that inherited stderr must not hold the
             // transfer lock forever.
-            await output.ConfigureAwait(false);
+            var copied = await output.ConfigureAwait(false);
             await WaitForCompletionAsync(execution, error, CommandExitTimeout, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             if (sshCommand.ExitStatus != 0) throw new IOException("The remote file read command failed.");
+            if (copied < expectedBytes)
+            {
+                throw new InvalidDataException(
+                    $"The remote file shrank below its reported size of {expectedBytes} bytes during the SCP download (only {copied} bytes arrived).");
+            }
         }
         catch
         {
@@ -123,8 +128,12 @@ internal sealed class SshCommandRunner
     /// When an expected size is supplied, more bytes fail as growth and fewer
     /// bytes at EOF fail as shrinkage; both are reported as server-side data
     /// changes rather than a successful but altered file.</summary>
-    internal static async Task CopyWithIdleTimeoutAsync(Stream source, Stream destination,
-        TimeSpan firstByteTimeout, TimeSpan idleTimeout, CancellationToken ct, long? expectedBytes = null)
+    internal static Task CopyWithIdleTimeoutAsync(Stream source, Stream destination,
+        TimeSpan firstByteTimeout, TimeSpan idleTimeout, CancellationToken ct, long? expectedBytes = null) =>
+        CopyWithIdleTimeoutCoreAsync(source, destination, firstByteTimeout, idleTimeout, expectedBytes, checkShrinkage: true, ct);
+
+    private static async Task<long> CopyWithIdleTimeoutCoreAsync(Stream source, Stream destination,
+        TimeSpan firstByteTimeout, TimeSpan idleTimeout, long? expectedBytes, bool checkShrinkage, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(destination);
@@ -166,13 +175,13 @@ internal sealed class SshCommandRunner
 
             if (count == 0)
             {
-                if (expectedBytes is long expectedEnd && total < expectedEnd)
+                if (checkShrinkage && expectedBytes is long expectedEnd && total < expectedEnd)
                 {
                     throw new InvalidDataException(
                         $"The remote file shrank below its reported size of {expectedEnd} bytes during the SCP download (only {total} bytes arrived).");
                 }
 
-                return;
+                return total;
             }
 
             if (expectedBytes is long expected && (total > expected || count > expected - total))

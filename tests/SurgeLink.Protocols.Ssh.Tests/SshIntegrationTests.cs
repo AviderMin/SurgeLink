@@ -31,6 +31,22 @@ public sealed class SshIntegrationTests
     }
 
     [SshIntegrationFact]
+    public async Task ScpResolvesRelativePathsBeforeAnyExplicitHomeLookup()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var files = SshIntegration.CreateScpFileSystem();
+        var before = await files.StatAsync(".", timeout.Token);
+        var home = await files.GetHomeDirectoryAsync(timeout.Token);
+        var after = await files.StatAsync(".", timeout.Token);
+        var tilde = await files.StatAsync("~", timeout.Token);
+
+        Assert.True(before.IsDirectory);
+        Assert.Equal(home.TrimEnd('/') + "/.", before.FullPath);
+        Assert.Equal(before.FullPath, after.FullPath);
+        Assert.Equal(home, tilde.FullPath);
+    }
+
+    [SshIntegrationFact]
     public async Task NewFolderUploadPublishesCompleteTreeFromOneStagingRoot()
     {
         await using var target = await SshIntegrationTarget.ConnectAsync();

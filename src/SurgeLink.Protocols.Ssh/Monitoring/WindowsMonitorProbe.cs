@@ -50,6 +50,7 @@ public sealed class WindowsMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
         await _sampleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             SshCommandResult result;
             try
             {
@@ -129,6 +130,7 @@ public sealed class WindowsMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
         await _processLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             foreach (var command in WindowsMonitorScript.BuildTopProcessCommands(maxCount))
             {
                 SshCommandResult result;
@@ -161,7 +163,7 @@ public sealed class WindowsMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
         }
     }
 
-    /// <summary>Releases the internal synchronisation primitives; safe to call twice.</summary>
+    /// <summary>Marks the probe as disposed; safe to call twice.</summary>
     public ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -169,8 +171,8 @@ public sealed class WindowsMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
             return ValueTask.CompletedTask;
         }
 
-        SafeDispose(_sampleLock);
-        SafeDispose(_processLock);
+        // Leave the managed semaphores undisposed so queued async waiters can wake
+        // cleanly and observe ObjectDisposedException instead of hanging forever.
         GC.SuppressFinalize(this);
         return ValueTask.CompletedTask;
     }
@@ -190,18 +192,6 @@ public sealed class WindowsMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
         catch (ObjectDisposedException)
         {
             // The probe was disposed while an operation was running.
-        }
-    }
-
-    private static void SafeDispose(SemaphoreSlim semaphore)
-    {
-        try
-        {
-            semaphore.Dispose();
-        }
-        catch (ObjectDisposedException)
-        {
-            // Already disposed.
         }
     }
 }

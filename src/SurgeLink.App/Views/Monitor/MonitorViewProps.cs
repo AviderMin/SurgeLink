@@ -119,7 +119,7 @@ internal sealed class MonitorHistory
 
     private static void Append(List<double> values, double value)
     {
-        values.Add(value);
+        values.Add(double.IsFinite(value) ? value : 0d);
         if (values.Count > Capacity)
         {
             values.RemoveAt(0);

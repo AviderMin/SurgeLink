@@ -44,4 +44,26 @@ public sealed class AgentAuditLogTests
         Assert.Equal("m4", entries[0].Method);
         Assert.Equal("m2", entries[2].Method);
     }
+
+    [Fact]
+    public async Task AuditRecordsIncludeSanitizedLocalPathAndDestination()
+    {
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, allowControl: true, allowFileRead: true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+
+        await gateway.ExecuteAsync(new("files.rename", handle, "/tmp/src", Destination: "/tmp/dst"), default);
+        await gateway.ExecuteAsync(new("files.upload", handle, "/tmp/dst", LocalPath: "relative.txt"), default);
+
+        var entries = gateway.GetAuditLog();
+        Assert.Equal(2, entries.Count);
+        Assert.Equal("files.upload", entries[0].Method);
+        Assert.Equal("relative.txt", entries[0].LocalPath);
+        Assert.Null(entries[0].Destination);
+        Assert.Equal("files.rename", entries[1].Method);
+        Assert.Equal("/tmp/src", entries[1].TargetPath);
+        Assert.Equal("/tmp/dst", entries[1].Destination);
+        Assert.Null(entries[1].LocalPath);
+    }
 }

@@ -90,6 +90,7 @@ internal static class SftpEntryList
                     list.ItemContainerStyle = style;
                 }
             })
+            .OnUnmountAdd(control => SftpListInput.Detach((ListView)control))
             .AutomationName(Str.T("sftp.list.automation", "Files in the current folder"));
 
     private static Element SortHeader(

@@ -53,5 +53,5 @@ public static class LoadAvgParser
     }
 
     private static bool TryParseDouble(string token, out double value) =>
-        double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out value) && !double.IsNaN(value) && value >= 0;
+        double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out value) && double.IsFinite(value) && value >= 0;
 }

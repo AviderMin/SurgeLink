@@ -160,7 +160,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             VStack(AppTheme.SpacingXl, saveFailed
                 ? [InfoBar(Str.T("shell.error.saveFailed", "Could not save changes"),
                        Str.T("shell.editor.retrySave", "Check folder access and available disk space, then try saving again."))
-                       .Severity(InfoBarSeverity.Error).IsClosable(false), .. BuildFields()]
+                       .Severity(InfoBarSeverity.Error).IsClosable(false).WithKey("save-failed"), .. BuildFields()]
                 : BuildFields()),
             "SessionEditor",
             _ =>
@@ -235,7 +235,8 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             var connection = SessionEditorLayout.Section(
                 Str.T("shell.editor.section.connection", "Connection"),
                 Str.T("shell.editor.section.connectionHint", "Choose a protocol and the server you want to connect to."),
-                ComboBox(plugins.Select(p => p.Descriptor.DisplayName).ToArray(), Optional<int>.Of(protocolIndex), setProtocolIndex)
+                ComboBox(plugins.Select(p => p.Descriptor.DisplayName).ToArray(), Optional<int>.Of(protocolIndex),
+                        index => { if (index >= 0 && index < plugins.Count) setProtocolIndex(index); })
                     .Set(combo => combo.Header = Str.T("shell.editor.protocol", "Protocol"))
                     .HAlign(HorizontalAlignment.Stretch)
                     .AutomationName(Str.T("shell.editor.protocol", "Protocol"))
@@ -249,6 +250,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                         ? (Element)PasswordBox(Optional<string>.Of(host), setHost,
                                 placeholderText: Str.T("shell.editor.hostPlaceholder", "host name or IP address"))
                             .Set(control => { control.Header = hostLabel; PrivacyDisplay.HideInput(control); })
+                            .OnUnmountAdd(control => PrivacyDisplay.DetachInput((PasswordBox)control))
                             .AutomationName(hostLabel).AutomationId("SessionEditorHost")
                         : TextBox(Optional<string>.Of(host), setHost, header: hostLabel,
                                 placeholderText: Str.T("shell.editor.hostPlaceholder", "host name or IP address"))
@@ -282,7 +284,8 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
             };
             if (!terminalLogin)
             {
-                authentication.Add(ComboBox(authNames, Optional<int>.Of(authIndex), setAuthIndex)
+                authentication.Add(ComboBox(authNames, Optional<int>.Of(authIndex),
+                        index => { if (index >= 0 && index < authNames.Length) setAuthIndex(index); })
                     .Set(combo => combo.Header = authLabel)
                     .HAlign(HorizontalAlignment.Stretch)
                     .AutomationName(authLabel).AutomationId("SessionEditorAuthentication"));
@@ -338,6 +341,7 @@ internal sealed class SessionEditorDialog : Component<SessionEditorProps>
                     ? (Element)PasswordBox(Optional<string>.Of(name), setName,
                             placeholderText: namePlaceholder)
                         .Set(control => { control.Header = nameLabel; PrivacyDisplay.HideInput(control); })
+                        .OnUnmountAdd(control => PrivacyDisplay.DetachInput((PasswordBox)control))
                         .AutomationName(nameLabel).AutomationId("SessionEditorName")
                     : TextBox(Optional<string>.Of(name), setName, header: nameLabel,
                             placeholderText: namePlaceholder)

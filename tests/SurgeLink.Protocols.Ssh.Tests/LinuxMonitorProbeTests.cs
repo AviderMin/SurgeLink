@@ -225,6 +225,74 @@ public sealed class LinuxMonitorProbeTests
         Assert.Throws<ArgumentNullException>(() => new LinuxMonitorProbe(null!));
     }
 
+    [Fact]
+    public async Task HighSectorCountsComputePositiveDeltaAndResetToZeroWithoutOverflow()
+    {
+        const long highBase = 1L << 54;
+        var diskStats = $"   8       0 sda 100 0 {highBase} 30 400 0 {highBase} 60 1 70 80\n";
+        var executor = new FakeExecutor(_ => Task.FromResult(new SshCommandResult(
+            MonitorScript.Command,
+            BuildOutput(StatFirstSample, MemInfo, "0.10 0.20 0.30 1/100 1\n", string.Empty, NetDev, diskStats, Df),
+            string.Empty,
+            0)));
+        await using var probe = new LinuxMonitorProbe(executor.ExecuteAsync);
+
+        var first = await probe.SampleAsync(CancellationToken.None);
+        Assert.Equal(0d, first.DiskReadBytesPerSecond);
+        Assert.Equal(0d, first.DiskWriteBytesPerSecond);
+
+        await Task.Delay(80);
+        diskStats = $"   8       0 sda 101 0 {highBase + 1000} 30 401 0 {highBase + 2000} 60 1 70 80\n";
+        var second = await probe.SampleAsync(CancellationToken.None);
+        Assert.True(double.IsFinite(second.DiskReadBytesPerSecond) && second.DiskReadBytesPerSecond > 0d);
+        Assert.True(double.IsFinite(second.DiskWriteBytesPerSecond) && second.DiskWriteBytesPerSecond > 0d);
+
+        await Task.Delay(80);
+        diskStats = "   8       0 sda 10 0 100 30 20 0 200 60 1 70 80\n";
+        var third = await probe.SampleAsync(CancellationToken.None);
+        Assert.Equal(0d, third.DiskReadBytesPerSecond);
+        Assert.Equal(0d, third.DiskWriteBytesPerSecond);
+    }
+
+    [Fact]
+    public async Task DisposeWhileSecondSampleIsQueuedUnblocksWaiterWithObjectDisposed()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<SshCommandResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var executor = new FakeExecutor(_ =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                started.TrySetResult();
+                return release.Task;
+            }
+
+            return Task.FromResult(new SshCommandResult(
+                MonitorScript.Command,
+                BuildOutput(StatFirstSample, MemInfo, "0.10 0.20 0.30 1/100 1\n", string.Empty, NetDev, DiskStats, Df),
+                string.Empty,
+                0));
+        });
+        var probe = new LinuxMonitorProbe(executor.ExecuteAsync);
+
+        var first = probe.SampleAsync(CancellationToken.None);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = probe.SampleAsync(CancellationToken.None);
+        await Task.Delay(25);
+
+        await probe.DisposeAsync();
+        release.SetResult(new SshCommandResult(
+            MonitorScript.Command,
+            BuildOutput(StatFirstSample, MemInfo, "0.10 0.20 0.30 1/100 1\n", string.Empty, NetDev, DiskStats, Df),
+            string.Empty,
+            0));
+
+        await first.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => second).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, calls);
+    }
+
     private static string BuildOutput(
         string stat,
         string memInfo,

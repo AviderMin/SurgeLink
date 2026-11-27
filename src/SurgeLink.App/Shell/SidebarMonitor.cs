@@ -140,7 +140,7 @@ internal sealed class SidebarMonitor : Component<SidebarMonitorProps>
                         .Foreground(Theme.SecondaryText),
                     gauges,
                     throughput,
-                    error is null ? null : Caption(error)
+                    error is null ? null : Caption(PrivacyDisplay.Mask(error))
                         .Foreground(Theme.SystemCritical)
                         .TextTrimming(TextTrimming.CharacterEllipsis)))
             .Padding(AppTheme.SpacingM)

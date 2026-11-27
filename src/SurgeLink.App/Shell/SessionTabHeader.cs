@@ -129,7 +129,7 @@ internal static class SessionTabHeader
         AutomationProperties.SetHelpText(item, agentControlled && hasActivity
             ? agentStatus + "\n" + activityStatus
             : agentControlled ? agentStatus : activityStatus);
-        var tooltip = title;
+        var tooltip = PrivacyDisplay.Mask(title);
         if (agentControlled) { tooltip += "\n" + agentStatus; }
         if (hasActivity) { tooltip += "\n" + activityStatus; }
         ToolTipService.SetToolTip(item, tooltip);

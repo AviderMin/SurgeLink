@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
@@ -16,6 +17,10 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
     private readonly ILogger<SessionManager> _logger;
     private readonly object _gate = new();
     private readonly List<IProtocolSession> _sessions = new();
+    private readonly HashSet<string> _publishing = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCompletionSource> _deferredCloseWaiters = new(StringComparer.Ordinal);
+    private TaskCompletionSource? _disposePublishWaiter;
+    private int _activePublishes;
     private bool _disposed;
     private readonly CancellationTokenSource _lifetime = new();
 
@@ -80,25 +85,85 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
             {
                 session.StateChanged += OnSessionStateChanged;
                 _sessions.Add(session);
+                _publishing.Add(session.SessionId);
+                _activePublishes++;
                 accepted = true;
             }
         }
         if (!accepted)
         {
-            await session.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to dispose rejected session {SessionId}", session.SessionId);
+            }
             lock (_gate) { ObjectDisposedException.ThrowIf(_disposed, this); }
-            connection.Token.ThrowIfCancellationRequested();
-            throw new OperationCanceledException();
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new OperationCanceledException(cancellationToken);
         }
+
+        TaskCompletionSource? deferredClose = null;
         try
         {
-            SessionOpened?.Invoke(this, new SessionOpenedEventArgs(profile, session));
+            Exception? openedFailure = null;
+            try
+            {
+                SessionOpened?.Invoke(this, new SessionOpenedEventArgs(profile, session));
+            }
+            catch (Exception ex)
+            {
+                openedFailure = ex;
+            }
+
+            bool disposedDuringPublish;
+            lock (_gate)
+            {
+                _publishing.Remove(session.SessionId);
+                _deferredCloseWaiters.Remove(session.SessionId, out deferredClose);
+                disposedDuringPublish = _disposed;
+            }
+
+            if (openedFailure is not null)
+            {
+                try
+                {
+                    await CloseCoreAsync(session.SessionId).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to clean up session {SessionId} after open subscriber failure", session.SessionId);
+                }
+                ExceptionDispatchInfo.Capture(openedFailure).Throw();
+            }
+
+            if (deferredClose is not null)
+            {
+                await CloseCoreAsync(session.SessionId).ConfigureAwait(false);
+            }
+
+            if (disposedDuringPublish)
+            {
+                await CloseCoreAsync(session.SessionId).ConfigureAwait(false);
+                throw new ObjectDisposedException(nameof(SessionManager));
+            }
+
             return session;
         }
-        catch
+        finally
         {
-            await CloseCoreAsync(session.SessionId).ConfigureAwait(false);
-            throw;
+            deferredClose?.TrySetResult();
+            lock (_gate)
+            {
+                _publishing.Remove(session.SessionId);
+                _activePublishes--;
+                if (_activePublishes == 0 && _disposePublishWaiter is not null)
+                {
+                    _disposePublishWaiter.TrySetResult();
+                }
+            }
         }
     }
 
@@ -107,14 +172,33 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
 
     private async Task CloseCoreAsync(string sessionId)
     {
-        IProtocolSession? session;
+        IProtocolSession? session = null;
+        Task? deferredWait = null;
         lock (_gate)
         {
-            session = _sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.Ordinal));
-            if (session is not null)
+            if (_publishing.Contains(sessionId))
             {
-                _sessions.Remove(session);
+                if (!_deferredCloseWaiters.TryGetValue(sessionId, out var waiter))
+                {
+                    waiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _deferredCloseWaiters[sessionId] = waiter;
+                }
+                deferredWait = waiter.Task;
             }
+            else
+            {
+                session = _sessions.FirstOrDefault(s => string.Equals(s.SessionId, sessionId, StringComparison.Ordinal));
+                if (session is not null)
+                {
+                    _sessions.Remove(session);
+                }
+            }
+        }
+
+        if (deferredWait is not null)
+        {
+            await deferredWait.ConfigureAwait(false);
+            return;
         }
 
         if (session is null)
@@ -205,18 +289,44 @@ public sealed class SessionManager : ISessionManager, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         IProtocolSession[] snapshot;
+        Task? publishWait = null;
         lock (_gate)
         {
             if (_disposed) { return; }
             _disposed = true;
-            snapshot = _sessions.ToArray();
-            _sessions.Clear();
+            snapshot = _sessions.Where(s => !_publishing.Contains(s.SessionId)).ToArray();
+            foreach (var session in snapshot)
+            {
+                _sessions.Remove(session);
+            }
+            if (_activePublishes > 0)
+            {
+                _disposePublishWaiter ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                publishWait = _disposePublishWaiter.Task;
+            }
         }
         try { _lifetime.Cancel(); }
         catch (AggregateException exception) { _logger.LogWarning(exception, "A connection cancellation callback failed."); }
         finally { _lifetime.Dispose(); }
 
-        foreach (var session in snapshot)
+        await DisposeSessionsAsync(snapshot).ConfigureAwait(false);
+
+        if (publishWait is not null)
+        {
+            await publishWait.ConfigureAwait(false);
+            IProtocolSession[] remaining;
+            lock (_gate)
+            {
+                remaining = _sessions.ToArray();
+                _sessions.Clear();
+            }
+            await DisposeSessionsAsync(remaining).ConfigureAwait(false);
+        }
+    }
+
+    private async Task DisposeSessionsAsync(IProtocolSession[] sessions)
+    {
+        foreach (var session in sessions)
         {
             session.StateChanged -= OnSessionStateChanged;
             try

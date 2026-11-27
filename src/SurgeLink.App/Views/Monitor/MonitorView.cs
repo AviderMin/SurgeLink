@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SurgeLink.App.Components;
 using SurgeLink.App.Localization;
+using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using SurgeLink.Core.Monitoring;
 using static Microsoft.UI.Reactor.Factories;
@@ -105,7 +106,7 @@ internal sealed class MonitorView : Component<MonitorViewProps>
 
         var banner = error is null
             ? null
-            : (InfoBar(Str.T("monitor.unavailable.title", "Monitor unavailable"), error) with
+            : (InfoBar(Str.T("monitor.unavailable.title", "Monitor unavailable"), PrivacyDisplay.Mask(error)) with
             {
                 Severity = InfoBarSeverity.Error,
                 ActionButtonContent = Str.T("monitor.retry", "Retry"),

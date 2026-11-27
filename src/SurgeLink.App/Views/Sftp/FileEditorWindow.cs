@@ -228,10 +228,14 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             }
             catch (OperationCanceledException)
             {
+                surfaceRef.Current = null;
+                editorRef.Current = null;
                 setLoadFailed(true);
             }
             catch (Exception exception)
             {
+                surfaceRef.Current = null;
+                editorRef.Current = null;
                 setError(exception.Message);
                 setLoadFailed(true);
             }
@@ -358,21 +362,24 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             ThemeController.ToElementTheme(settings.Theme));
 
         var (lineCount, characterCount) = statistics;
-        var statusText = error ?? (loading
+        var maskedError = error is null ? null : PrivacyDisplay.Mask(error);
+        var maskedName = PrivacyDisplay.Mask(target.Name);
+        var maskedFullPath = PrivacyDisplay.Mask(target.FullPath);
+        var statusText = maskedError ?? (loading
             ? Str.T("sftp.editor.loading", "Loading file…")
             : saving
                 ? Str.T("sftp.editor.saving", "Saving…")
                 : dirty
                     ? Str.T("sftp.editor.unsaved", "Unsaved changes")
-                    : status ?? Str.T("sftp.editor.ready", "Ready"));
+                    : status is null ? Str.T("sftp.editor.ready", "Ready") : PrivacyDisplay.Mask(status));
 
         var header = Grid(
             columns: [GridSize.Star(), GridSize.Auto],
             rows: [GridSize.Auto],
             VStack(
                     AppTheme.SpacingXs,
-                    BodyStrong(target.Name).TextTrimming(TextTrimming.CharacterEllipsis),
-                    TextBlock(target.FullPath)
+                    BodyStrong(maskedName).TextTrimming(TextTrimming.CharacterEllipsis),
+                    TextBlock(maskedFullPath)
                         .FontFamily(AppTheme.Monospace)
                         .FontSize(12)
                         .Foreground(Theme.SecondaryText)
@@ -418,7 +425,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         }
         else if (loadFailed)
         {
-            body = InfoBar(Str.T("sftp.editor.openFailed", "Could not open the file"), error)
+            body = InfoBar(Str.T("sftp.editor.openFailed", "Could not open the file"), maskedError)
                 .Severity(InfoBarSeverity.Error)
                 .IsClosable(false)
                 .VAlign(VerticalAlignment.Top);
@@ -526,7 +533,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
         return Grid(
             columns: [GridSize.Star()],
             rows: [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto],
-            TitleBar(Str.F("sftp.editor.windowTitle", "{0} — Text editor", target.Name))
+            TitleBar(PrivacyDisplay.Mask(Str.F("sftp.editor.windowTitle", "{0} — Text editor", target.Name)))
                 .Icon(new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "AppLogo.png")).AbsoluteUri)
                 .Grid(row: 0),
             header.Grid(row: 1),
@@ -535,7 +542,7 @@ internal sealed class FileEditorWindow : Component<FileEditorWindowProps>
             !connected ? InfoBar(Str.T("sftp.offline.title", "Connection closed"),
                 Str.T("sftp.editor.sessionClosed", "The session has closed. Keep a copy of any unsaved text before closing this window."))
                 .Severity(InfoBarSeverity.Warning).IsClosable(false).Grid(row: 4)
-            : error is not null && !loadFailed ? InfoBar(Str.T("sftp.editor.saveFailed", "Could not save the file"), error)
+            : maskedError is not null && !loadFailed ? InfoBar(Str.T("sftp.editor.saveFailed", "Could not save the file"), maskedError)
                 .Severity(InfoBarSeverity.Error).IsClosable(false).Grid(row: 4) : null,
             footer.Grid(row: 5),
             confirmationDialog?.Grid(row: 0, rowSpan: 6))

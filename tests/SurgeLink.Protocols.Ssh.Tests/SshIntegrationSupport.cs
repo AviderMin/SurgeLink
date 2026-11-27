@@ -5,6 +5,7 @@ using SurgeLink.Core.Files;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
 using SurgeLink.Core.Sessions;
+using SurgeLink.Protocols.Ssh.Internal;
 using Xunit;
 
 namespace SurgeLink.Protocols.Ssh.Tests;
@@ -62,7 +63,21 @@ public sealed class SshJumpIntegrationFactAttribute : FactAttribute
 
 internal static class SshIntegration
 {
-    public static async Task<IProtocolSession> ConnectSessionAsync(bool viaJump = false)
+    public static Task<IProtocolSession> ConnectSessionAsync(bool viaJump = false)
+    {
+        var (request, context) = ConnectionSettings(viaJump);
+        return new SshProtocolPlugin().ConnectAsync(request, context, CancellationToken.None);
+    }
+
+    public static ScpFileSystem CreateScpFileSystem()
+    {
+        var (request, context) = ConnectionSettings(viaJump: false);
+        var options = new SshProtocolOptions(request);
+        var factory = new SshConnectionFactory(request, options, context, NullLogger.Instance);
+        return new ScpFileSystem(factory, options, NullLogger.Instance);
+    }
+
+    private static (ConnectionRequest Request, ProtocolHostContext Context) ConnectionSettings(bool viaJump)
     {
         var key = SshIntegrationEnvironment.KeyPath;
         var request = new ConnectionRequest
@@ -93,7 +108,7 @@ internal static class SshIntegration
             Path.Combine(Path.GetTempPath(), "surge-ssh-integration-" + Guid.NewGuid().ToString("N"), "hosts.json"));
         var context = new ProtocolHostContext(NullLoggerFactory.Instance, store,
             (_, _) => Task.FromResult(viaJump ? HostKeyDecision.TrustOnce : HostKeyDecision.TrustAlways));
-        return await new SshProtocolPlugin().ConnectAsync(request, context, CancellationToken.None);
+        return (request, context);
     }
 
     /// <summary>Second connection used only to set up filesystem states SFTP cannot create (links, FIFOs).</summary>

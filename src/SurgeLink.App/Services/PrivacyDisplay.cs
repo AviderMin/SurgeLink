@@ -5,6 +5,8 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SurgeLink.App.Sessions;
+using SurgeLink.Core.Protocols;
+using SurgeLink.Protocols.Ssh;
 
 namespace SurgeLink.App.Services;
 
@@ -13,12 +15,117 @@ internal static class PrivacyDisplay
 {
     private sealed class Masker(WorkspaceSnapshot snapshot)
     {
-        private readonly System.Text.RegularExpressions.Regex? _regex = AddressMasker.CreateMatcher(
-            snapshot.Profiles.Select(profile => profile.Host)
-                .Concat(snapshot.Tabs.Select(tab => tab.Profile.Host))
-                .Concat(snapshot.Tabs.Select(tab => tab.Session.HostInfo.HostName ?? string.Empty)));
+        private readonly System.Text.RegularExpressions.Regex? _regex = AddressMasker.CreateMatcher(ExtractHosts(snapshot));
 
         internal string Apply(string text) => _regex?.Replace(text, "***") ?? text;
+
+        private static IEnumerable<string> ExtractHosts(WorkspaceSnapshot snapshot)
+        {
+            foreach (var profile in snapshot.Profiles)
+            {
+                yield return profile.Host;
+                var stripped = StripBrackets(profile.Host);
+                if (!string.Equals(stripped, profile.Host, StringComparison.Ordinal)) yield return stripped;
+                foreach (var extra in ExtractOptionHosts(profile.Options)) yield return extra;
+            }
+            foreach (var tab in snapshot.Tabs)
+            {
+                yield return tab.Profile.Host;
+                var stripped = StripBrackets(tab.Profile.Host);
+                if (!string.Equals(stripped, tab.Profile.Host, StringComparison.Ordinal)) yield return stripped;
+                if (tab.Session.HostInfo.HostName is { } hostName) yield return hostName;
+                foreach (var extra in ExtractOptionHosts(tab.Profile.Options)) yield return extra;
+            }
+        }
+
+        private static IEnumerable<string> ExtractOptionHosts(IReadOnlyDictionary<string, string> options)
+        {
+            if (options.TryGetValue("proxyJump", out var jump) && !string.IsNullOrWhiteSpace(jump))
+            {
+                foreach (var hop in jump.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var host = ExtractJumpHost(hop);
+                    if (!IsCommonLoopbackOrWildcard(host)) yield return host;
+                }
+            }
+
+            if (options.TryGetValue("portForwards", out var forwards) && !string.IsNullOrWhiteSpace(forwards))
+            {
+                foreach (var entry in forwards.Split([';', ',', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var parts = SplitOutsideBrackets(entry);
+                    if (parts.Count < 2) continue;
+                    var prefix = parts[0].ToUpperInvariant();
+                    if (prefix is "L" or "R")
+                    {
+                        if (parts.Count == 4 && !IsCommonLoopbackOrWildcard(parts[2])) yield return StripBrackets(parts[2]);
+                        else if (parts.Count == 5)
+                        {
+                            if (!IsCommonLoopbackOrWildcard(parts[1])) yield return StripBrackets(parts[1]);
+                            if (!IsCommonLoopbackOrWildcard(parts[3])) yield return StripBrackets(parts[3]);
+                        }
+                    }
+                    else if (prefix == "D" && parts.Count == 3 && !IsCommonLoopbackOrWildcard(parts[1]))
+                    {
+                        yield return StripBrackets(parts[1]);
+                    }
+                }
+            }
+        }
+
+        private static string ExtractJumpHost(string text)
+        {
+            try { return SshJumpTarget.Parse(text, string.Empty).Host; }
+            catch (ProtocolException)
+            {
+                // The rejected setting can also appear verbatim in a connection error.
+                var host = text[(text.LastIndexOf('@') + 1)..].Trim();
+                if (host.StartsWith('['))
+                {
+                    var close = host.IndexOf(']');
+                    return close > 1 ? host[1..close] : string.Empty;
+                }
+                var colon = host.IndexOf(':');
+                return colon >= 0 && colon == host.LastIndexOf(':') ? host[..colon].Trim() : host;
+            }
+        }
+
+        private static List<string> SplitOutsideBrackets(string text)
+        {
+            var result = new List<string>();
+            var depth = 0;
+            var start = 0;
+            for (var i = 0; i < text.Length; i++)
+            {
+                switch (text[i])
+                {
+                    case '[': depth++; break;
+                    case ']' when depth > 0: depth--; break;
+                    case ':' when depth == 0:
+                        result.Add(text[start..i].Trim());
+                        start = i + 1;
+                        break;
+                }
+            }
+            result.Add(text[start..].Trim());
+            return result;
+        }
+
+        private static string StripBrackets(string value)
+        {
+            var trimmed = value.Trim();
+            return trimmed.StartsWith('[') && trimmed.EndsWith(']') && trimmed.Length > 2
+                ? trimmed[1..^1]
+                : trimmed;
+        }
+
+        private static bool IsCommonLoopbackOrWildcard(string rawHost)
+        {
+            var host = StripBrackets(rawHost);
+            return string.IsNullOrWhiteSpace(host)
+                || host is "*" or "0.0.0.0" or "::" or "::1" or "127.0.0.1"
+                || string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<WorkspaceSnapshot, Masker> Matchers = new();
@@ -152,11 +259,30 @@ internal static class PrivacyDisplay
         var state = Inputs.GetValue(input, control =>
         {
             var value = new HoverState();
-            control.PointerEntered += (_, _) => { value.Hovered = true; control.PasswordRevealMode = PasswordRevealMode.Visible; };
-            control.PointerExited += (_, _) => { value.Hovered = false; control.PasswordRevealMode = PasswordRevealMode.Hidden; };
-            control.Unloaded += (_, _) => { value.Hovered = false; control.PasswordRevealMode = PasswordRevealMode.Hidden; };
+            control.PointerEntered += OnInputEntered;
+            control.PointerExited += OnInputExited;
+            control.Unloaded += OnInputExited;
             return value;
         });
         input.PasswordRevealMode = state.Hovered ? PasswordRevealMode.Visible : PasswordRevealMode.Hidden;
+    }
+
+    public static void DetachInput(PasswordBox input)
+    {
+        if (!Inputs.Remove(input)) return;
+        input.PointerEntered -= OnInputEntered;
+        input.PointerExited -= OnInputExited;
+        input.Unloaded -= OnInputExited;
+        input.PasswordRevealMode = PasswordRevealMode.Hidden;
+    }
+
+    private static void OnInputEntered(object sender, RoutedEventArgs args) => SetInputHover((PasswordBox)sender, true);
+    private static void OnInputExited(object sender, RoutedEventArgs args) => SetInputHover((PasswordBox)sender, false);
+
+    private static void SetInputHover(PasswordBox input, bool hovered)
+    {
+        if (!Inputs.TryGetValue(input, out var state)) return;
+        state.Hovered = hovered;
+        input.PasswordRevealMode = hovered ? PasswordRevealMode.Visible : PasswordRevealMode.Hidden;
     }
 }

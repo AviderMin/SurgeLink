@@ -1,11 +1,19 @@
-using System.Text.Json;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace SurgeLink.Core.Storage;
 
 /// <summary>Reads and writes small JSON documents without corrupting them on crash.</summary>
 public static class AtomicJsonFile
 {
+    private const int ErrorSharingViolation = unchecked((int)0x80070020);
+    private const int ErrorLockViolation = unchecked((int)0x80070021);
+    private static readonly StringComparer LockPathComparer =
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    [ThreadStatic]
+    private static HashSet<string>? _heldLocks;
+
     /// <summary>Default serializer settings shared by every store.</summary>
     public static JsonSerializerOptions SerializerOptions { get; } = new(JsonSerializerDefaults.Web)
     {
@@ -18,6 +26,7 @@ public static class AtomicJsonFile
     {
         try
         {
+            using var readLease = AcquireSharedReadLease(path);
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
             var value = JsonSerializer.Deserialize<T>(stream, SerializerOptions);
             if (value is null && !tolerateErrors) throw new JsonException("The stored document is null.");
@@ -52,7 +61,7 @@ public static class AtomicJsonFile
                 JsonSerializer.Serialize(stream, value, SerializerOptions);
                 stream.Flush(flushToDisk: true);
             }
-            File.Move(temp, path, overwrite: true);
+            MoveWithBriefRetry(temp, path);
         }
         finally
         {
@@ -65,15 +74,78 @@ public static class AtomicJsonFile
     public static TResult WithExclusiveAccess<TResult>(string path, Func<TResult> mutate)
     {
         var fullPath = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        var held = _heldLocks ??= new HashSet<string>(LockPathComparer);
+        if (!held.Add(fullPath))
+        {
+            return mutate();
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            var started = Stopwatch.StartNew();
+            FileStream lease;
+            while (true)
+            {
+                try { lease = new FileStream(fullPath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); break; }
+                catch (IOException ex) when (IsLockContention(ex) && started.Elapsed < TimeSpan.FromSeconds(5)) { Thread.Sleep(20); }
+            }
+            // Keep the lock file: deleting it could let another process lock a different inode.
+            using (lease) return mutate();
+        }
+        finally
+        {
+            held.Remove(fullPath);
+        }
+    }
+
+    private static FileStream? AcquireSharedReadLease(string path)
+    {
+        string fullPath;
+        try { fullPath = Path.GetFullPath(path); }
+        catch { return null; }
+
+        if (_heldLocks?.Contains(fullPath) == true)
+        {
+            return null;
+        }
+
+        var lockPath = fullPath + ".lock";
         var started = Stopwatch.StartNew();
-        FileStream lease;
         while (true)
         {
-            try { lease = new FileStream(fullPath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); break; }
-            catch (IOException) when (started.Elapsed < TimeSpan.FromSeconds(5)) { Thread.Sleep(20); }
+            try
+            {
+                return new FileStream(lockPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+            catch (IOException ex) when (IsLockContention(ex) && started.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                Thread.Sleep(20);
+            }
         }
-        // Keep the lock file: deleting it could let another process lock a different inode.
-        using (lease) return mutate();
     }
+
+    private static void MoveWithBriefRetry(string source, string destination)
+    {
+        var started = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                File.Move(source, destination, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when (started.Elapsed < TimeSpan.FromMilliseconds(120)
+                && (ex is UnauthorizedAccessException || (ex is IOException io && IsLockContention(io))))
+            {
+                Thread.Sleep(15);
+            }
+        }
+    }
+
+    private static bool IsLockContention(IOException exception) =>
+        !OperatingSystem.IsWindows()
+        || exception.HResult is ErrorSharingViolation or ErrorLockViolation;
 }

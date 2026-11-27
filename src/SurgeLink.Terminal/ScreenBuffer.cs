@@ -361,6 +361,10 @@ internal sealed class ScreenBuffer
 
         CellLine line = _lines[_cursorRow];
         line.PrepareForEdit();
+        if (insertMode || (line.WrappedColumns > 0 && _cursorColumn + width > line.WrappedColumns))
+        {
+            line.WrappedColumns = 0;
+        }
         if (insertMode)
         {
             InsertCellsInternal(_cursorRow, _cursorColumn, width);
@@ -421,6 +425,10 @@ internal sealed class ScreenBuffer
             line.PrepareForEdit();
             var cells = line.Cells;
             int count = Math.Min(text.Length, _columns - _cursorColumn);
+            if (line.WrappedColumns > 0 && _cursorColumn + count > line.WrappedColumns)
+            {
+                line.WrappedColumns = 0;
+            }
             for (var index = 0; index < count; index++)
             {
                 int column = _cursorColumn + index;
@@ -473,6 +481,11 @@ internal sealed class ScreenBuffer
     /// <summary>Erase in display: 0 to end, 1 to start, 2/3 whole screen.</summary>
     public void EraseInDisplay(int mode)
     {
+        if (mode is not (0 or 1 or 2 or 3))
+        {
+            return;
+        }
+
         _pendingWrap = false;
         _lines[_cursorRow].PrepareForEdit();
         switch (mode)
@@ -493,7 +506,7 @@ internal sealed class ScreenBuffer
                 }
 
                 break;
-            default:
+            case 0:
                 ClearCells(_cursorRow, _cursorColumn, _columns);
                 _lines[_cursorRow].WrappedColumns = 0;
                 for (int row = _cursorRow + 1; row < _rows; row++)
@@ -510,6 +523,11 @@ internal sealed class ScreenBuffer
     /// <summary>Erase in line: 0 to end, 1 to start, 2 whole line.</summary>
     public void EraseInLine(int mode)
     {
+        if (mode is not (0 or 1 or 2))
+        {
+            return;
+        }
+
         _pendingWrap = false;
         _lines[_cursorRow].PrepareForEdit();
         switch (mode)
@@ -520,7 +538,7 @@ internal sealed class ScreenBuffer
             case 2:
                 ClearRow(_cursorRow);
                 break;
-            default:
+            case 0:
                 ClearCells(_cursorRow, _cursorColumn, _columns);
                 _lines[_cursorRow].WrappedColumns = 0;
                 break;
@@ -545,6 +563,7 @@ internal sealed class ScreenBuffer
         _pendingWrap = false;
         count = Math.Max(1, count);
         _lines[_cursorRow].PrepareForEdit();
+        _lines[_cursorRow].WrappedColumns = 0;
         InsertCellsInternal(_cursorRow, _cursorColumn, Math.Min(count, _columns));
         _host.OnScreenChanged();
     }
@@ -555,6 +574,7 @@ internal sealed class ScreenBuffer
         _pendingWrap = false;
         count = Math.Max(1, count);
         _lines[_cursorRow].PrepareForEdit();
+        _lines[_cursorRow].WrappedColumns = 0;
         TerminalCell[] cells = _lines[_cursorRow].Cells;
         int column = _cursorColumn;
         int shift = Math.Min(count, _columns - column);
@@ -595,6 +615,8 @@ internal sealed class ScreenBuffer
             return;
         }
 
+        _pendingWrap = false;
+        _cursorColumn = 0;
         count = Math.Clamp(count, 1, _scrollBottom - _cursorRow + 1);
         PrepareRegionForEdit();
         for (int i = 0; i < count; i++)
@@ -616,6 +638,8 @@ internal sealed class ScreenBuffer
             return;
         }
 
+        _pendingWrap = false;
+        _cursorColumn = 0;
         count = Math.Clamp(count, 1, _scrollBottom - _cursorRow + 1);
         PrepareRegionForEdit();
         for (int i = 0; i < count; i++)
@@ -632,6 +656,7 @@ internal sealed class ScreenBuffer
     /// <summary>Scrolls the scrolling region up by <paramref name="count"/> lines.</summary>
     public void ScrollUpRegion(int count)
     {
+        _pendingWrap = false;
         PrepareRegionForEdit();
         ScrollUpInternal(Math.Max(1, count));
         _host.OnScreenChanged();
@@ -640,6 +665,7 @@ internal sealed class ScreenBuffer
     /// <summary>Scrolls the scrolling region down by <paramref name="count"/> lines.</summary>
     public void ScrollDownRegion(int count)
     {
+        _pendingWrap = false;
         PrepareRegionForEdit();
         ScrollDownInternal(Math.Max(1, count));
         _host.OnScreenChanged();

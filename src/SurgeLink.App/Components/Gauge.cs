@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using SurgeLink.App.Localization;
+using SurgeLink.App.Services;
 using SurgeLink.App.Styling;
 using Windows.Foundation;
 using static Microsoft.UI.Reactor.Factories;
@@ -42,9 +43,14 @@ internal sealed class Gauge : Component<GaugeProps>
     public override Element Render()
     {
         _ = UseColorScheme(); // repaint when the theme changes
+        var highContrast = UseHighContrast();
+        var settingsStore = AppServices.Current?.Settings;
+        _ = UseExternalStore(
+            listener => settingsStore is null ? static () => { } : settingsStore.Subscribe(listener),
+            () => settingsStore?.Current.Theme ?? ThemeMode.System);
 
-        var size = Math.Max(48, Props.Size);
-        var fraction = Math.Clamp(Props.Fraction, 0d, 1d);
+        var size = double.IsFinite(Props.Size) ? Math.Max(48, Props.Size) : 120d;
+        var fraction = double.IsFinite(Props.Fraction) ? Math.Clamp(Props.Fraction, 0d, 1d) : 0d;
         var thickness = Math.Max(4, Math.Round(size * 0.09));
         var radius = (size - thickness) / 2;
         var center = size / 2;
@@ -55,7 +61,7 @@ internal sealed class Gauge : Component<GaugeProps>
                 .Set(path =>
                 {
                     path.Data = BuildArc(center, radius, 1);
-                    path.Stroke = ChartPalette.Track;
+                    path.Stroke = ChartPalette.ResolveTrack(path, highContrast);
                     path.StrokeThickness = thickness;
                     path.StrokeStartLineCap = PenLineCap.Round;
                     path.StrokeEndLineCap = PenLineCap.Round;
@@ -70,7 +76,7 @@ internal sealed class Gauge : Component<GaugeProps>
                     .Set(path =>
                     {
                         path.Data = BuildArc(center, radius, fraction);
-                        path.Stroke = ChartPalette.Severity(fraction);
+                        path.Stroke = ChartPalette.ResolveSeverity(fraction, path, highContrast);
                         path.StrokeThickness = thickness;
                         path.StrokeStartLineCap = PenLineCap.Round;
                         path.StrokeEndLineCap = PenLineCap.Round;

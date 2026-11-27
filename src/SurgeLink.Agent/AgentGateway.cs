@@ -44,6 +44,7 @@ public sealed partial class AgentGateway
     }
 
     public event Action<string, string?, string>? OperationCompleted;
+    public event Action<string, string>? ControlExpired;
 
     public string GrantSession(string connectionKey, string label, IProtocolSession session, Func<string>? readScreen,
         ITerminalAutomation? terminal = null, bool allowControl = false,
@@ -76,15 +77,19 @@ public sealed partial class AgentGateway
 
     public AgentAccessMode GetMode(string connectionKey)
     {
+        string? expiredHandle = null;
+        AgentAccessMode mode;
         lock (_gate)
         {
             var grant = _grants.Values.FirstOrDefault(g => g.ConnectionKey == connectionKey);
             if (grant is null) return AgentAccessMode.None;
-            ExpireControlIfIdle(grant);
-            return grant.Info.TerminalControl ? AgentAccessMode.Control
+            if (ExpireControlIfIdle(grant)) expiredHandle = grant.Info.Handle;
+            mode = grant.Info.TerminalControl ? AgentAccessMode.Control
                 : grant.Info.FileRead ? AgentAccessMode.FileRead
                 : AgentAccessMode.Observe;
         }
+        if (expiredHandle is not null) RaiseControlExpired(connectionKey, expiredHandle);
+        return mode;
     }
 
     /// <summary>Pauses every grant for this connection while a human types; returns true only when one was running.</summary>
@@ -165,7 +170,11 @@ public sealed partial class AgentGateway
         catch (OperationCanceledException) { result = AgentResponse.Error("cancelled", "The request expired or session access was revoked."); }
         catch (NotSupportedException) { result = AgentResponse.Error("unsupported", "This session does not support that operation."); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.DecoderFallbackException)
-        { result = AgentResponse.Error("read_failed", "The remote data could not be read as bounded text."); }
+        {
+            result = IsFileMutation(request.Method)
+                ? AgentResponse.Error("write_failed", "The remote file operation failed.")
+                : AgentResponse.Error("read_failed", "The remote data could not be read as bounded text.");
+        }
         catch (Exception)
         { result = AgentResponse.Error("operation_failed", "The operation failed. Check the desktop connection."); }
         // Never log arbitrary caller-supplied strings or file/terminal payloads.
@@ -173,7 +182,9 @@ public sealed partial class AgentGateway
         if (request.Method is "client.heartbeat" or "client.disconnect") return result;
         var auditMethod = IsKnownMethod(request.Method) ? request.Method : "unknown";
         var auditHandle = request.Session is { Length: 48 } handle && handle.All(char.IsAsciiHexDigit) ? handle : null;
-        var auditPath = request.Path is { Length: <= 512 } p && !p.Any(char.IsControl) ? p : null;
+        var auditPath = SanitizeAuditPath(request.Path);
+        var auditLocalPath = SanitizeAuditPath(request.LocalPath);
+        var auditDestination = SanitizeAuditPath(request.Destination);
         var auditOpId = request.OperationId is { Length: <= 128 } op && !op.Any(char.IsControl) ? op : null;
         _audit.Record(new AgentAuditEntry(
             _timeProvider.GetUtcNow(),
@@ -182,7 +193,9 @@ public sealed partial class AgentGateway
             auditPath,
             auditOpId,
             result.Success,
-            result.ErrorCode ?? "ok"));
+            result.ErrorCode ?? "ok",
+            auditLocalPath,
+            auditDestination));
         if (OperationCompleted is { } completed)
             foreach (Action<string, string?, string> handler in completed.GetInvocationList())
                 try { handler(auditMethod, auditHandle, result.ErrorCode ?? "ok"); }
@@ -198,13 +211,25 @@ public sealed partial class AgentGateway
         if (request.Method is "client.heartbeat" or "client.disconnect") return UpdateMcpPresence(request);
         if (request.Method == "sessions.list")
         {
+            List<(string ConnectionKey, string Handle)>? expiredGrants = null;
+            AgentSessionInfo[] list;
             lock (_gate)
             {
-                foreach (var shared in _grants.Values) ExpireControlIfIdle(shared);
-                return AgentResponse.Ok(_grants.Values
+                foreach (var shared in _grants.Values)
+                {
+                    if (ExpireControlIfIdle(shared))
+                    {
+                        (expiredGrants ??= []).Add((shared.ConnectionKey, shared.Info.Handle));
+                    }
+                }
+                list = _grants.Values
                     .Where(g => g.Session.State == ConnectionState.Connected)
-                    .Select(g => g.Info with { IsActive = g.IsActive?.Invoke() ?? false, UserOperating = g.HumanOperating }).ToArray());
+                    .Select(g => g.Info with { IsActive = g.IsActive?.Invoke() ?? false, UserOperating = g.HumanOperating }).ToArray();
             }
+            if (expiredGrants is not null)
+                foreach (var (connectionKey, handle) in expiredGrants)
+                    RaiseControlExpired(connectionKey, handle);
+            return AgentResponse.Ok(list);
         }
         if (!IsKnownMethod(request.Method))
             return AgentResponse.Error("unknown_method", "Unknown Agent operation.");
@@ -216,6 +241,7 @@ public sealed partial class AgentGateway
             controlExpired = grant is not null && ExpireControlIfIdle(grant);
         }
         if (grant is null) return AgentResponse.Error("session_unavailable", "The session is not shared or its handle has expired.");
+        if (controlExpired) RaiseControlExpired(grant.ConnectionKey, grant.Info.Handle);
         if (controlExpired && IsControlOperation(request.Method))
             return AgentResponse.Error("control_expired", "Terminal control expired after inactivity. Allow control again in the desktop Agent panel.");
         // A human owns the terminal now: fail fast before any IO or queueing behind Agent work.
@@ -261,8 +287,8 @@ public sealed partial class AgentGateway
                     if (request.Method == "files.rename"
                         && (string.IsNullOrWhiteSpace(request.Destination) || request.Destination.Length > 4096 || request.Destination.Any(char.IsControl)))
                         return AgentResponse.Error("invalid_path", "Supply a destination path without control characters (maximum 4096 characters).");
-                    // Check the grant before showing a host confirmation. A user must
-                    // never approve an upload/download that the gateway will reject.
+                    // Check the grant and request arguments before showing a host confirmation.
+                    // A user must never approve an upload/download/write that the gateway will reject.
                     if (CheckFilePermission(grant, request.Method) is { } permissionFailure)
                         return permissionFailure;
                     if (request.Method is "files.upload" or "files.download")
@@ -272,6 +298,8 @@ public sealed partial class AgentGateway
                         else
                             return localPathError!;
                     }
+                    if (ValidateRemoteFileArguments(request) is { } argumentFailure)
+                        return argumentFailure;
                     if (IsFileMutation(request.Method) && !grant.InputRate.TryAcquire())
                         return AgentResponse.Error("input_rate_limited", "Too many control operations in a short period. Wait before retrying.");
                     // Evaluate the host policy for every exact path and operation. The desktop
@@ -363,11 +391,11 @@ public sealed partial class AgentGateway
     }
 
     private static int RemainingWaitMilliseconds(Stopwatch requestClock) =>
-        (int)Math.Clamp(50_000 - requestClock.ElapsedMilliseconds, 100, 50_000);
+        (int)Math.Clamp(50_000 - requestClock.ElapsedMilliseconds, 0, 50_000);
 
     private async Task<(AgentResponse Response, int? ExitCode)> WaitOutputAsync(
         Grant grant, AgentRequest request, CancellationToken ct, string? expectText = null,
-        int maxTimeoutMilliseconds = 50_000)
+        int maxTimeoutMilliseconds = 50_000, string? execEcho = null)
     {
         if (grant.Terminal is null) throw new NotSupportedException();
         if (request.Cursor is < 0) return (AgentResponse.Error("invalid_cursor", "The output cursor must be non-negative."), null);
@@ -382,6 +410,7 @@ public sealed partial class AgentGateway
         var gap = false;
         var hasMore = false;
         var capped = false;
+        var capturedCharacters = 0;
         int? exitCode = null;
         var total = Stopwatch.StartNew();
         var sinceOutput = Stopwatch.StartNew();
@@ -400,15 +429,23 @@ public sealed partial class AgentGateway
             {
                 if (page.Gap && text.Length > 0)
                 {
-                    // The retained history skipped a range. Keep the first
-                    // contiguous segment; the next call continues from its end.
-                    hasMore = true;
-                    break;
+                    if (expectText is null)
+                    {
+                        // The retained history skipped a range. Keep the first
+                        // contiguous segment; the next call continues from its end.
+                        hasMore = true;
+                        break;
+                    }
+
+                    // For terminal.exec, keep scanning post-gap output for the completion
+                    // sentinel and exit code while still enforcing the capture cap.
+                    text.Clear();
                 }
                 if (text.Length == 0) pageStart = page.Cursor - page.Text.Length;
                 // An Int32 status can use 11 characters, followed by CRLF.
                 var scanStart = Math.Max(0, text.Length - (expectText?.Length ?? 0) - 13);
                 text.Append(page.Text);
+                capturedCharacters += page.Text.Length;
                 cursor = page.Cursor;
                 hasMore = page.HasMore;
                 sinceOutput.Restart();
@@ -420,7 +457,7 @@ public sealed partial class AgentGateway
                     text.Remove(scanStart + completion.Start, completion.Length);
                     break;
                 }
-                if (text.Length > 512 * 1024) { capped = true; break; }
+                if (text.Length > 512 * 1024 || capturedCharacters > 512 * 1024) { capped = true; break; }
                 if (page.HasMore) continue;
             }
             // terminal.exec waits for its sentinel: a quiet gap in a long-running
@@ -435,17 +472,21 @@ public sealed partial class AgentGateway
         var timedOut = exitCode is null && total.ElapsedMilliseconds >= timeoutMilliseconds
             && (expectText is not null || text.Length == 0 || sinceOutput.ElapsedMilliseconds < idleMilliseconds);
         var rawText = text.ToString();
+        if (execEcho is not null && pageStart == fromCursor)
+            rawText = AgentText.StripWrappedExecEcho(rawText, execEcho);
+        // JSON can expand a single UTF-8 byte to six bytes. Leave room for the screen and receipt.
+        var maxBytes = Math.Clamp(request.MaxBytes ?? 65536, 1, 128 * 1024);
         // A command result keeps the final output. Incremental waits keep the head and report the cursor just after
         // the returned characters, which makes repeated pages lossless. Trimming
         // accepts ANSI-aware limits so a page never ends inside an escape.
         var trimmed = expectText is not null
-            ? AgentText.TrimTail(rawText, request.StripAnsi, request.MaxBytes ?? 65536, request.MaxLines)
-            : AgentText.TrimHead(rawText, request.StripAnsi, request.MaxBytes ?? 65536, request.MaxLines);
+            ? AgentText.TrimTail(rawText, request.StripAnsi, maxBytes, request.MaxLines)
+            : AgentText.TrimHead(rawText, request.StripAnsi, maxBytes, request.MaxLines);
         var visible = trimmed.Text;
         // Only the segment that starts at the wait's original cursor can begin
         // with the just-sent echo; a later page must not lose real output that
         // happens to repeat the command text near its start.
-        if (grant.LastInputText is { } echoText && (expectText is not null || pageStart == fromCursor))
+        if (expectText is null && grant.LastInputText is { } echoText && pageStart == fromCursor)
             visible = AgentText.StripLeadingEcho(visible, echoText);
         var nextCursor = expectText is not null ? cursor : pageStart + trimmed.KeptCharacters;
         var screen = grant.Terminal.ReadScreen();
@@ -458,8 +499,8 @@ public sealed partial class AgentGateway
             latestCursor,
             gap,
             hasMore = hasMore || capped || expectText is null && trimmed.Truncated,
-            truncated = trimmed.Truncated || capped,
-            idle = !timedOut && !capped,
+            truncated = trimmed.Truncated || capped || (expectText is not null && gap),
+            idle = expectText is null && !timedOut && !capped && !gap && !hasMore,
             timedOut,
             elapsedMilliseconds = total.ElapsedMilliseconds,
             commandCompletionKnown = false,
@@ -530,13 +571,23 @@ public sealed partial class AgentGateway
             case "files.write":
             {
                 if (request.Text is null) return AgentResponse.Error("invalid_arguments", "Supply text to write.");
-                if (!request.Path!.StartsWith('/')) return AgentResponse.Error("invalid_path", "A remote write path must be absolute.");
-                var bytes = new UTF8Encoding(false, true).GetBytes(request.Text);
+                if (!IsValidRemoteFileWritePath(request.Path!))
+                    return AgentResponse.Error("invalid_path", "A remote write path must be an absolute file path without dot segments.");
+                byte[] bytes;
+                try { bytes = new UTF8Encoding(false, true).GetBytes(request.Text); }
+                catch (EncoderFallbackException)
+                {
+                    return AgentResponse.Error("invalid_arguments", "Supply valid Unicode text without unpaired UTF-16 surrogates.");
+                }
                 try
                 {
-                    await RemoteFileWrite.WriteAsync(files, request.Path, bytes.Length, null, request.Overwrite,
+                    await RemoteFileWrite.WriteAsync(files, request.Path!, bytes.Length, null, request.Overwrite,
                         async (stream, token) => await stream.WriteAsync(bytes, token).ConfigureAwait(false), ct,
                         validateDestination: token => CheckTransferControlAsync(grant, token)).ConfigureAwait(false);
+                }
+                catch (ArgumentException ex)
+                {
+                    return AgentResponse.Error("invalid_path", ex.Message);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -550,6 +601,8 @@ public sealed partial class AgentGateway
                 await files.DeleteAsync(request.Path!, request.Recursive, ct).ConfigureAwait(false);
                 return AgentResponse.Ok(new { path = request.Path, deleted = true, recursive = request.Recursive });
             case "files.rename":
+                if (!request.Path!.StartsWith('/') || !request.Destination!.StartsWith('/'))
+                    return AgentResponse.Error("invalid_path", "A remote rename requires absolute paths.");
                 await files.RenameAsync(request.Path!, request.Destination!, ct).ConfigureAwait(false);
                 return AgentResponse.Ok(new { path = request.Path, destination = request.Destination, moved = true });
             case "files.mkdir":
@@ -561,6 +614,56 @@ public sealed partial class AgentGateway
                 return await DownloadFileAsync(grant, files, request, ct).ConfigureAwait(false);
             default:
                 throw new NotSupportedException();
+        }
+    }
+
+    private static bool IsValidRemoteFileWritePath(string path)
+    {
+        if (!path.StartsWith('/') || path.EndsWith('/') || path.Contains('\0'))
+        {
+            return false;
+        }
+
+        foreach (var segment in path.Split('/'))
+        {
+            if (segment is "." or "..")
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static AgentResponse? ValidateRemoteFileArguments(AgentRequest request)
+    {
+        switch (request.Method)
+        {
+            case "files.write":
+                if (request.Text is null)
+                    return AgentResponse.Error("invalid_arguments", "Supply text to write.");
+                if (!IsValidRemoteFileWritePath(request.Path!))
+                    return AgentResponse.Error("invalid_path", "A remote write path must be an absolute file path without dot segments.");
+                try { _ = new UTF8Encoding(false, true).GetByteCount(request.Text); }
+                catch (EncoderFallbackException)
+                {
+                    return AgentResponse.Error("invalid_arguments", "Supply valid Unicode text without unpaired UTF-16 surrogates.");
+                }
+                return null;
+            case "files.upload":
+                return IsValidRemoteFileWritePath(request.Path!)
+                    ? null
+                    : AgentResponse.Error("invalid_path", "A remote upload path must be an absolute file path without dot segments.");
+            case "files.rename":
+                return request.Path!.StartsWith('/') && request.Destination!.StartsWith('/')
+                    ? null
+                    : AgentResponse.Error("invalid_path", "A remote rename requires absolute paths.");
+            case "files.delete":
+                return request.Recursive && IsRemoteRoot(request.Path!)
+                    ? AgentResponse.Error("invalid_path", "Refusing to delete the remote root directory recursively.")
+                    : null;
+            default:
+                return null;
         }
     }
 
@@ -580,7 +683,7 @@ public sealed partial class AgentGateway
             return false;
         }
         var trimmed = rawPath.TrimStart();
-        if (trimmed.StartsWith(@"\\", StringComparison.Ordinal) || trimmed.StartsWith("//", StringComparison.Ordinal))
+        if (trimmed.Length >= 2 && (trimmed[0] is '\\' or '/') && (trimmed[1] is '\\' or '/' or '?'))
         {
             error = AgentResponse.Error("invalid_path", $"Network UNC and device paths are not allowed for local {verb} operations.");
             return false;
@@ -593,9 +696,10 @@ public sealed partial class AgentGateway
             return false;
         }
         var root = Path.GetPathRoot(fullPath) ?? string.Empty;
-        if (string.IsNullOrEmpty(root)
-            || root.StartsWith(@"\\", StringComparison.Ordinal)
-            || fullPath[root.Length..].Contains(':'))
+        var validRoot = OperatingSystem.IsWindows()
+            ? root.Length == 3 && char.IsAsciiLetter(root[0]) && root[1] == ':' && root[2] == '\\'
+            : root == "/";
+        if (!validRoot || fullPath[root.Length..].Contains(':'))
         {
             error = AgentResponse.Error("invalid_path", $"The local {verb} path must be a standard local file path without alternate data streams.");
             return false;
@@ -622,7 +726,8 @@ public sealed partial class AgentGateway
     {
         if (!TryNormalizeLocalPath(request.LocalPath, upload: true, out var localPath, out var pathError))
             return pathError!;
-        if (!request.Path!.StartsWith('/')) return AgentResponse.Error("invalid_path", "A remote upload path must be absolute.");
+        if (!IsValidRemoteFileWritePath(request.Path!))
+            return AgentResponse.Error("invalid_path", "A remote upload path must be an absolute file path without dot segments.");
         FileStream localFile;
         try
         {
@@ -644,13 +749,17 @@ public sealed partial class AgentGateway
         {
             await using var source = localFile;
             var length = source.Length;
-            await RemoteFileWrite.WriteAsync(files, request.Path, length, null, request.Overwrite,
+            await RemoteFileWrite.WriteAsync(files, request.Path!, length, null, request.Overwrite,
                 async (stream, token) =>
                 {
                     source.Position = 0;
                     await source.CopyToAsync(stream, 81920, token).ConfigureAwait(false);
                 }, ct, validateDestination: token => CheckTransferControlAsync(grant, token)).ConfigureAwait(false);
             return AgentResponse.Ok(new { path = request.Path, localPath, bytesWritten = length, overwrite = request.Overwrite });
+        }
+        catch (ArgumentException ex)
+        {
+            return AgentResponse.Error("invalid_path", ex.Message);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -684,7 +793,7 @@ public sealed partial class AgentGateway
             var published = false;
             try
             {
-                if (LocalDownloadPath.IsSafeExistingFile(localPath) && !request.Overwrite)
+                if (!request.Overwrite && LocalDownloadPath.IsSafeExistingFile(localPath))
                     return AgentResponse.Error("local_file_exists", "The local download path already exists. Set overwrite=true to allow a numbered sibling name.");
                 // Close the remote source before publishing the destination. A failed
                 // close must not publish a file behind a read_failed response.
@@ -736,6 +845,8 @@ public sealed partial class AgentGateway
     {
         if (request.TailBytes is not null)
         {
+            if (request.MaxBytes is not null)
+                return AgentResponse.Error("invalid_arguments", "Specify either maxBytes or tailBytes, not both.");
             if (request.Offset is not null)
                 return AgentResponse.Error("invalid_arguments", "Specify either offset or tailBytes, not both.");
             if (request.TailBytes <= 0)
@@ -796,15 +907,27 @@ public sealed partial class AgentGateway
         ct.ThrowIfCancellationRequested();
     }
 
-    /// <summary>True when every segment is a dot segment, i.e. the path names the POSIX root.</summary>
+    /// <summary>True when normalized segments resolve to the POSIX root.</summary>
     private static bool IsRemoteRoot(string path)
     {
+        var depth = 0;
         foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (segment is not ("." or "..")) return false;
+            if (segment == ".") continue;
+            if (segment == "..")
+            {
+                if (depth > 0) depth--;
+            }
+            else
+            {
+                depth++;
+            }
         }
-        return true;
+        return depth == 0;
     }
+
+    private static string? SanitizeAuditPath(string? path) =>
+        path is { Length: <= 512 } p && !p.Any(char.IsControl) ? p : null;
 
     private bool IsHumanOperating(Grant grant)
     {
@@ -850,10 +973,21 @@ public sealed partial class AgentGateway
     {
         bool expired;
         lock (_gate) expired = ExpireControlIfIdle(grant);
+        if (expired) RaiseControlExpired(grant.ConnectionKey, grant.Info.Handle);
         return expired && IsControlOperation(request.Method)
             ? AgentResponse.Error("control_expired",
                 "Terminal control expired after inactivity. Allow control again in the desktop Agent panel.")
             : null;
+    }
+
+    private void RaiseControlExpired(string connectionKey, string handle)
+    {
+        if (ControlExpired is not { } handlers) return;
+        foreach (Action<string, string> handler in handlers.GetInvocationList())
+        {
+            try { handler(connectionKey, handle); }
+            catch (Exception) { }
+        }
     }
 
     private static AgentResponse? CheckFilePermission(Grant grant, string method)

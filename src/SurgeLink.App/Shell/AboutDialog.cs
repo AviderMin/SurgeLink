@@ -28,7 +28,7 @@ internal sealed class AboutDialog : Component<AboutDialogProps>
             VStack(AppTheme.SpacingS,
                 Subtitle("SurgeLink"),
                 Caption(Str.F("app.aboutVersion", "Version {0}",
-                    typeof(AboutDialog).Assembly.GetName().Version?.ToString(4) ?? "1.0.3.7"))
+                    typeof(AboutDialog).Assembly.GetName().Version?.ToString(4) ?? "unknown"))
                     .Foreground(Theme.SecondaryText)),
             Card(Body(Str.T("app.aboutBody",
                     "A multi-protocol terminal for Windows. Terminal, SFTP and remote monitoring, built with WinUI 3 + Reactor."))

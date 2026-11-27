@@ -157,7 +157,7 @@ public sealed class AppServices : IAsyncDisposable
             hostKeys,
             hostKeyPrompt: (challenge, ct) => interaction!.RequestHostKeyTrustAsync(challenge, ct),
             interactivePrompt: (prompt, ct) => interaction!.RequestSecretAsync(
-                new SecretRequest("Authentication", prompt.Question, prompt.IsSecret), ct),
+                new SecretRequest(Str.T("shell.editor.auth", "Authentication"), prompt.Question, prompt.IsSecret), ct),
             webAuthenticationPrompt: (challenge, ct) => interaction!.RequestConfirmationAsync(
                 new ConfirmationRequest(
                     Str.T("shell.auth.webTitle", "Tailscale SSH authentication"),

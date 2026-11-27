@@ -55,6 +55,7 @@ internal sealed class SerialTerminal : IRemoteTerminal
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        Exception? fatal = null;
         await _writeGate.WaitAsync(linked.Token).ConfigureAwait(false);
         try
         {
@@ -75,10 +76,14 @@ internal sealed class SerialTerminal : IRemoteTerminal
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or TimeoutException)
         {
-            Complete(exception);
+            fatal = exception;
             throw SerialProtocolPlugin.MapError(exception, _portName);
         }
-        finally { _writeGate.Release(); }
+        finally
+        {
+            _writeGate.Release();
+            if (fatal is not null) Complete(fatal);
+        }
     }
 
     public Task ResizeAsync(int columns, int rows, CancellationToken cancellationToken = default)
@@ -137,7 +142,10 @@ internal sealed class SerialTerminal : IRemoteTerminal
                 catch (TimeoutException) { continue; } // Idle port, not a disconnection.
                 if (count == 0) break;
                 if (!_lifetime.IsCancellationRequested)
-                    OutputReceived?.Invoke(this, new TerminalOutputEventArgs(buffer.AsMemory(0, count).ToArray()));
+                {
+                    try { OutputReceived?.Invoke(this, new TerminalOutputEventArgs(buffer.AsMemory(0, count).ToArray())); }
+                    catch (Exception exception) { _logger.LogDebug(exception, "A serial terminal output handler failed."); }
+                }
             }
         }
         catch (Exception exception)

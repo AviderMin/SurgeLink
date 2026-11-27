@@ -141,4 +141,40 @@ public sealed class JsonHostKeyStoreTests
         Assert.Throws<IOException>(() => store.List());
         Assert.Throws<IOException>(() => store.TryGetFingerprint("host:22", out _));
     }
+
+    [Fact]
+    public void EndpointNormalizationMatchesIpv6BracketsTrailingDotAndMappedIpv4()
+    {
+        using var temp = new TempDirectory();
+        var store = new JsonHostKeyStore(temp.File("known-hosts.json"));
+        store.Save(Entry("2001:db8::1:22", "SHA256:v6"));
+        store.Save(Entry("::ffff:192.0.2.1:22", "SHA256:mapped"));
+        store.Save(Entry("Example.COM.:022", "SHA256:dns"));
+
+        Assert.True(store.TryGetFingerprint("[2001:db8::1]:22", out var v6));
+        Assert.Equal("SHA256:v6", v6.FingerprintSha256);
+        Assert.True(store.TryGetFingerprint("2001:db8:0:0::1:22", out _));
+
+        Assert.True(store.TryGetFingerprint("192.0.2.1:22", out var v4));
+        Assert.Equal("SHA256:mapped", v4.FingerprintSha256);
+
+        Assert.True(store.TryGetFingerprint("example.com:22", out var dns));
+        Assert.Equal("SHA256:dns", dns.FingerprintSha256);
+        Assert.True(store.Remove("example.com:22"));
+        Assert.False(store.TryGetFingerprint("Example.COM.:22", out _));
+    }
+
+    [Theory]
+    [InlineData(" ", "ssh-ed25519", "SHA256:abc")]
+    [InlineData("host:22", " ", "SHA256:abc")]
+    [InlineData("host:22", "ssh-ed25519", " ")]
+    public void SaveRejectsBlankFieldsWithoutPoisoningStore(string endpoint, string algorithm, string fingerprint)
+    {
+        using var temp = new TempDirectory();
+        var store = new JsonHostKeyStore(temp.File("known-hosts.json"));
+        store.Save(Entry("good:22"));
+
+        Assert.ThrowsAny<ArgumentException>(() => store.Save(Entry(endpoint, fingerprint, algorithm)));
+        Assert.Single(store.List());
+    }
 }

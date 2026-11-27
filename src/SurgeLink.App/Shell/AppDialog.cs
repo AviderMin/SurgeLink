@@ -124,6 +124,10 @@ internal sealed class AppDialog : Component<AppDialogProps>
                 Resize();
                 if (control.XamlRoot is { } root)
                 {
+                    if (sizingRoot.Current is { } previousRoot && sizingHandler.Current is { } previousHandler)
+                    {
+                        previousRoot.Changed -= previousHandler;
+                    }
                     sizingRoot.Current = root;
                     sizingHandler.Current = (_, _) => Resize();
                     root.Changed += sizingHandler.Current;

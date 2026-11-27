@@ -74,6 +74,7 @@ public sealed class RemoteMonitorSampler
                     continue;
                 }
                 MonitorSample result;
+                var collectedProcesses = false;
                 try
                 {
                     var snapshot = await _monitor.SampleAsync(lifetime.Token).ConfigureAwait(false);
@@ -90,6 +91,7 @@ public sealed class RemoteMonitorSampler
                         try { processes = await _monitor.GetTopProcessesAsync(15, lifetime.Token).ConfigureAwait(false); }
                         catch (Exception exception) when (exception is not OperationCanceledException) { }
                     }
+                    collectedProcesses = needsProcesses;
                     result = new MonitorSample(snapshot, processes, null);
                 }
                 catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
@@ -101,8 +103,14 @@ public sealed class RemoteMonitorSampler
                     // Views mounted during a sample or sharing the exact same cadence
                     // lock into phase so SidebarMonitor and MonitorView do not double-poll.
                     var completed = _clock.Elapsed;
-                    var dueIntervals = _subscriptions.Where(item => item.Next <= completed).Select(item => item.Interval).ToHashSet();
-                    due = _subscriptions.Where(item => item.Next <= completed || (!item.Once && dueIntervals.Contains(item.Interval))).ToArray();
+                    var dueIntervals = _subscriptions
+                        .Where(item => item.Next <= completed && (collectedProcesses || !item.Processes || result.Error is not null))
+                        .Select(item => item.Interval)
+                        .ToHashSet();
+                    due = _subscriptions
+                        .Where(item => (item.Next <= completed || (!item.Once && dueIntervals.Contains(item.Interval)))
+                            && (collectedProcesses || !item.Processes || result.Error is not null))
+                        .ToArray();
                     foreach (var item in due)
                     {
                         // Reserve delivery before leaving the scheduling lock.

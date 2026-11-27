@@ -84,7 +84,7 @@ public sealed partial class TerminalBridge : IAsyncDisposable, ITerminalAutomati
 
     private void OnSettingsChanged(object? sender, EventArgs args)
     {
-        if (IsClosed || _settings is null) return;
+        if (_settings is null) return;
         Emulator.SetScrollbackLimit(_settings.Current.TerminalScrollbackLines);
         ApplyTerminalTheme();
         RaiseInvalidated();

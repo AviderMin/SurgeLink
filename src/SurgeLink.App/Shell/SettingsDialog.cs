@@ -29,6 +29,7 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
             ?? throw new InvalidOperationException("The component must be inside the shell service context.");
         var store = services.Settings;
         var settings = UseExternalStore(store.Subscribe, () => store.Current);
+        var initialSettings = UseRef(store.Current);
         var (draft, setDraft) = UseState(store.Current);
         var (saveError, setSaveError) = UseState<string?>(null);
         var closed = UseRef(false);
@@ -51,7 +52,7 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
         }
         void CancelFailedSave(ContentDialog sender, ContentDialogButtonClickEventArgs args)
         {
-            if (!SettingsDialogSave.TryApply(store, draftRef.Current, error =>
+            if (!SettingsDialogSave.TryApply(store, initialSettings.Current, draftRef.Current, error =>
                 {
                     Props.OnSaveFailed(error);
                     setSaveError(error.Message);
@@ -101,7 +102,13 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
                     ComboBox(
                             [Str.T("shell.settings.theme.system", "System"), Str.T("shell.settings.theme.light", "Light"), Str.T("shell.settings.theme.dark", "Dark")],
                             Optional<int>.Of((int)draft.Theme),
-                            index => setDraft(draft with { Theme = (ThemeMode)index }))
+                            index =>
+                            {
+                                if (index >= 0 && index <= (int)ThemeMode.Dark)
+                                {
+                                    setDraft(draft with { Theme = (ThemeMode)index });
+                                }
+                            })
                         .AutomationName(Str.T("shell.settings.theme", "Theme"))
                         .AutomationId("SettingsTheme")
                         .MinWidth(200))),
@@ -113,10 +120,16 @@ internal sealed class SettingsDialog : Component<SettingsDialogProps>
                     ComboBox(
                             fontChoices.ToArray(),
                             Optional<int>.Of(FontIndex(fontChoices, draft.TerminalFontFamily)),
-                            index => setDraft(draft with
+                            index =>
                             {
-                                TerminalFontFamily = index <= 0 ? string.Empty : fontChoices[index],
-                            }))
+                                if (index >= 0 && index < fontChoices.Count)
+                                {
+                                    setDraft(draft with
+                                    {
+                                        TerminalFontFamily = index == 0 ? string.Empty : fontChoices[index],
+                                    });
+                                }
+                            })
                         .AutomationName(Str.T("shell.settings.fontFamily", "Font family"))
                         .AutomationId("SettingsFontFamily")
                         .MinWidth(200)),

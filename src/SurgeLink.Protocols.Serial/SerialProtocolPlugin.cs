@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.IO.Ports;
+using System.Security;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Sessions;
 
@@ -79,8 +81,14 @@ public sealed class SerialProtocolPlugin : IProtocolPlugin
 
     private static IReadOnlyList<string> DiscoverPorts()
     {
-        try { return SerialPort.GetPortNames().Order(StringComparer.OrdinalIgnoreCase).ToArray(); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        try
+        {
+            return SerialPort.GetPortNames()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException or SecurityException or Win32Exception)
         { return []; }
     }
 }

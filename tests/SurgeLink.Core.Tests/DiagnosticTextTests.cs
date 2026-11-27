@@ -11,4 +11,10 @@ public sealed class DiagnosticTextTests
             DiagnosticText.Escape("Linux\r\n[INF] forged\u001b[2J\u202e\u2028"));
         Assert.Equal("正常 diagnostic 🙂", DiagnosticText.Escape("正常 diagnostic 🙂"));
     }
+
+    [Fact]
+    public void EscapesSupplementaryFormatCharactersAndUnpairedSurrogates()
+    {
+        Assert.Equal("ok\\U000E0041\\uD800end", DiagnosticText.Escape("ok\U000E0041\uD800end"));
+    }
 }

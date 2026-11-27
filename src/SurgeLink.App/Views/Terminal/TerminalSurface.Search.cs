@@ -268,7 +268,7 @@ internal sealed partial class TerminalSurface
 
     private string SelectedTextForSearch()
     {
-        TerminalSelectionRange range = TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret);
+        TerminalSelectionRange range = TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret, _allowSingleCellSelection);
         if (!range.HasSelection)
         {
             return string.Empty;
@@ -440,14 +440,19 @@ internal sealed partial class TerminalSurface
 
     private void NavigateSearch(int delta)
     {
+        bool flushedDebounce = false;
         if (_searchInputTimer is { IsRunning: true } timer)
         {
             timer.Stop();
+            flushedDebounce = true;
             RefreshSearch(resetCurrent: true);
         }
         if (_searchRunning || _searchPending)
         {
-            _searchNavigationPending += delta;
+            if (!flushedDebounce || delta < 0)
+            {
+                _searchNavigationPending += delta;
+            }
             return;
         }
         MoveSearchSelection(delta);

@@ -205,6 +205,52 @@ public sealed class AuditRegressionTests
         Assert.DoesNotContain(await files.ListAsync("/home/demo", default), f => f.Name.StartsWith(".surge-", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task RemoteEditorTreatsExternalBinaryAndOversizedChangesAsConflicts()
+    {
+        var files = new DemoFileSystem();
+        const string path = "/home/demo/demo.txt";
+        var baseline = await ReadAsync(files, path);
+
+        byte[] binaryPayload = [0x00, 0xFF, 0xFE, 0x01];
+        await WriteAsync(files, path, binaryPayload);
+        await Assert.ThrowsAsync<RemoteFileConflictException>(() =>
+            RemoteTextEdit.SaveAsync(files, path, baseline, "my edit", 1024, default));
+        await using (var afterBinary = await files.OpenReadAsync(path, default))
+        {
+            using var copy = new MemoryStream();
+            await afterBinary.CopyToAsync(copy);
+            Assert.Equal(binaryPayload, copy.ToArray());
+        }
+
+        var oversizedPayload = new byte[2048];
+        Array.Fill(oversizedPayload, (byte)'a');
+        await WriteAsync(files, path, oversizedPayload);
+        await Assert.ThrowsAsync<RemoteFileConflictException>(() =>
+            RemoteTextEdit.SaveAsync(files, path, baseline, "my edit", 1024, default));
+        Assert.Equal(2048, (await files.StatAsync(path, default)).Size);
+    }
+
+    [Fact]
+    public async Task RemoteFileWriteRejectsDotSegmentsAndMasksPrivilegeBits()
+    {
+        var files = new DemoFileSystem();
+        await Assert.ThrowsAsync<ArgumentException>(() => RemoteFileWrite.WriteAsync(
+            files, "/home/demo/sub/../escape.txt", 2, null, true,
+            (output, ct) => output.WriteAsync("ok"u8.ToArray(), ct).AsTask(), default));
+        await Assert.ThrowsAsync<ArgumentException>(() => RemoteFileWrite.WriteAsync(
+            files, "/home/demo/./same.txt", 2, null, true,
+            (output, ct) => output.WriteAsync("ok"u8.ToArray(), ct).AsTask(), default));
+
+        const string modePath = "/home/demo/mode-check.txt";
+        await RemoteFileWrite.WriteAsync(
+            files, modePath, 2, null, true,
+            (output, ct) => output.WriteAsync("ok"u8.ToArray(), ct).AsTask(), default,
+            unixMode: 0x0FFF);
+        var stat = await files.StatAsync(modePath, default);
+        Assert.Equal(0x1FF, stat.UnixMode);
+    }
+
     private static async Task<TextFileDocument> ReadAsync(IRemoteFileSystem files, string path)
     {
         await using var input = await files.OpenReadAsync(path, default);

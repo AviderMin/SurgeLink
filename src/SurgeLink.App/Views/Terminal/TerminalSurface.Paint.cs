@@ -35,9 +35,10 @@ internal sealed partial class TerminalSurface
         int scrollback;
         int viewportOffset;
         int rows;
+        bool alternate;
         bool captureRows;
         bool repaintAll = _allRowsDirty;
-        var selection = TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret);
+        var selection = TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret, _allowSingleCellSelection);
         Dictionary<int, List<TerminalSearchSpan>>? searchRows = null;
 
         // A background search will retry the frame after releasing the emulator.
@@ -58,6 +59,7 @@ internal sealed partial class TerminalSurface
             visibleRows = Math.Min(emulator.Rows, _scratchRows.Length);
             version = emulator.Version;
             searchRows = BuildSearchHighlights(emulator, visibleRows);
+            alternate = emulator.Modes.AlternateScreen;
             scrollback = emulator.ScrollbackLength;
             viewportOffset = emulator.ViewportOffset;
             rows = emulator.Rows;
@@ -81,11 +83,22 @@ internal sealed partial class TerminalSurface
         _updatingScrollBar = true;
         try
         {
-            _scrollBar.Maximum = scrollback;
-            _scrollBar.ViewportSize = rows;
-            _scrollBar.LargeChange = Math.Max(1, rows - 1);
-            _scrollBar.Value = scrollback - viewportOffset;
-            _scrollBar.IsEnabled = scrollback > 0;
+            if (alternate)
+            {
+                _scrollBar.Maximum = 0;
+                _scrollBar.ViewportSize = rows;
+                _scrollBar.LargeChange = Math.Max(1, rows - 1);
+                _scrollBar.Value = 0;
+                _scrollBar.IsEnabled = false;
+            }
+            else
+            {
+                _scrollBar.Maximum = scrollback;
+                _scrollBar.ViewportSize = rows;
+                _scrollBar.LargeChange = Math.Max(1, rows - 1);
+                _scrollBar.Value = scrollback - viewportOffset;
+                _scrollBar.IsEnabled = scrollback > 0;
+            }
         }
         finally { _updatingScrollBar = false; }
 

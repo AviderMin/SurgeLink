@@ -281,7 +281,7 @@ public static class PsParser
     {
         var trimmed = value.TrimEnd('%');
         if (!double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ||
-            double.IsNaN(parsed) || parsed < 0)
+            !double.IsFinite(parsed) || parsed < 0)
         {
             return 0d;
         }

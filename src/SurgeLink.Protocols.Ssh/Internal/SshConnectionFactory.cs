@@ -61,15 +61,58 @@ internal sealed class SshConnectionFactory
     /// <summary>Port that will be dialled.</summary>
     public int Port => _request.Port > 0 ? _request.Port : SshProtocolPlugin.DefaultPort;
 
+    /// <summary>Normalized unbracketed host used for dialling and forwarding.</summary>
+    public string DialHost => HostKeyVerifier.NormalizeHost(_request.Host);
+
     /// <summary>Endpoint text used in messages and host key storage.</summary>
-    public string Endpoint => string.Concat(_request.Host, ":", Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    public string Endpoint => HostKeyVerifier.FormatEndpoint(_request.Host, Port);
+
+    internal static void ValidateEndpoint(ConnectionRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(HostKeyVerifier.NormalizeHost(request.Host)))
+        {
+            throw new ProtocolException("SSH host name is required.", ProtocolFailureKind.Configuration);
+        }
+
+        if (request.Port < 0 || request.Port > ushort.MaxValue)
+        {
+            throw new ProtocolException($"SSH port {request.Port} must be between 1 and 65535.", ProtocolFailureKind.Configuration);
+        }
+    }
+
+    internal static void DisposeAuthenticationMethods(IEnumerable<SshAuthenticationMethod>? methods)
+    {
+        if (methods is null)
+        {
+            return;
+        }
+
+        foreach (var method in methods)
+        {
+            if (method is PrivateKeyAuthenticationMethod keyAuth)
+            {
+                foreach (var key in keyAuth.KeyFiles)
+                {
+                    if (key is IDisposable disposableKey)
+                    {
+                        try { disposableKey.Dispose(); } catch { }
+                    }
+                }
+            }
+
+            if (method is IDisposable disposable)
+            {
+                try { disposable.Dispose(); } catch { }
+            }
+        }
+    }
 
     /// <summary>Keep-alive interval requested for the connection; zero or negative disables keep-alives.</summary>
     public TimeSpan KeepAliveInterval => _request.KeepAliveInterval;
 
     /// <summary>Creates a verifier bound to the supplied cancellation token.</summary>
     public HostKeyVerifier CreateVerifier(CancellationToken cancellationToken, SshConnectBudget? budget = null) =>
-        new(_request.Host, Port, _context.HostKeyStore,
+        new(DialHost, Port, _context.HostKeyStore,
             _context.HostKeyPrompt is { } prompt && budget is not null
                 ? async (challenge, token) =>
                 {
@@ -89,19 +132,29 @@ internal sealed class SshConnectionFactory
         string? dialHostOverride = null,
         int? dialPortOverride = null)
     {
+        ValidateEndpoint(_request);
         var methods = BuildAuthenticationMethods(budget, cancellationToken);
-        var host = string.IsNullOrWhiteSpace(dialHostOverride) ? (_dialHostOverride ?? _request.Host) : dialHostOverride;
-        var port = dialPortOverride is > 0 ? dialPortOverride.Value : (_dialPortOverride ?? Port);
-        var info = new ConnectionInfo(host, port, _request.Username, methods)
+        try
         {
-            Timeout = _options.ConnectTimeout,
-            Encoding = _options.Encoding,
-        };
+            var host = HostKeyVerifier.NormalizeHost(
+                string.IsNullOrWhiteSpace(dialHostOverride) ? (_dialHostOverride ?? _request.Host) : dialHostOverride);
+            var port = dialPortOverride is > 0 ? dialPortOverride.Value : (_dialPortOverride ?? Port);
+            var info = new ConnectionInfo(host, port, _request.Username, methods)
+            {
+                Timeout = _options.ConnectTimeout,
+                Encoding = _options.Encoding,
+            };
 
-        ApplyAlgorithmPreferences(info);
-        if (_context.WebAuthenticationPrompt is { } webPrompt)
-            info.AuthenticationBanner += new SshWebAuthentication(Endpoint, webPrompt, budget, cancellationToken).Handle;
-        return info;
+            ApplyAlgorithmPreferences(info);
+            if (_context.WebAuthenticationPrompt is { } webPrompt)
+                info.AuthenticationBanner += new SshWebAuthentication(Endpoint, webPrompt, budget, cancellationToken).Handle;
+            return info;
+        }
+        catch
+        {
+            DisposeAuthenticationMethods(methods);
+            throw;
+        }
     }
 
     private SshAuthenticationMethod[] BuildAuthenticationMethods(SshConnectBudget? budget, CancellationToken cancellationToken)

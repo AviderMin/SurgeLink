@@ -31,7 +31,7 @@ internal static class FileEditorWindows
 
         var editor = ReactorApp.OpenWindow(new WindowSpec
         {
-            Title = Str.F("sftp.editor.windowTitle", "{0} — Text editor", target.Name),
+            Title = PrivacyDisplay.Mask(Str.F("sftp.editor.windowTitle", "{0} — Text editor", target.Name)),
             Width = 1000,
             Height = 720,
             MinWidth = 640,

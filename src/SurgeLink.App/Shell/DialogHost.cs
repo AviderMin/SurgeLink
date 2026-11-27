@@ -145,7 +145,7 @@ internal sealed class DialogHost : Component
                         "The key presented by {0} does not match the fingerprint trusted before. This can mean the server " +
                         "was reinstalled — or that the connection is being intercepted. Only trust it when you can " +
                         "explain the change.",
-                        PrivacyDisplay.Mask(challenge.Endpoint))).ToolTip(challenge.Endpoint)
+                        PrivacyDisplay.Mask(challenge.Endpoint))).ToolTip(PrivacyDisplay.Mask(challenge.Endpoint))
                 .Error()
             : InfoBar(
                     Str.T("shell.dialog.hostKey.unknownTitle", "Unknown host"),
@@ -288,7 +288,7 @@ internal sealed class DialogHost : Component
         PendingInteraction pending,
         InteractionService interaction)
     {
-        var bar = InfoBar(message: PrivacyDisplay.Mask(request.Message)).ToolTip(request.Message).IsClosable(false);
+        var bar = InfoBar(message: PrivacyDisplay.Mask(request.Message)).ToolTip(PrivacyDisplay.Mask(request.Message)).IsClosable(false);
         var content = isError ? bar.Error() : bar.Informational();
 
         // An explicit positive button keeps the dialog's command space non-empty;

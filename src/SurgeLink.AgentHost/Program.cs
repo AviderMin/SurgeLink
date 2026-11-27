@@ -43,7 +43,7 @@ await using var server = McpServer.Create(new StdioServerTransport("SurgeLink", 
             CallToolHandler = (request, ct) =>
             {
                 desktop.ClientConnected(request.Server.ClientInfo?.Name);
-                return new ValueTask<CallToolResult>(adapter.CallAsync(request.Params!, ct));
+                return new ValueTask<CallToolResult>(adapter.CallAsync(request.Params, ct));
             },
         },
     }, NullLoggerFactory.Instance);

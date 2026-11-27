@@ -152,6 +152,11 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
 
     private TerminalCell GetBufferCell(int row, int column)
     {
+        if (_screen.IsAlternate)
+        {
+            return (uint)row < (uint)_screen.Rows ? _screen.GetCell(row, column) : TerminalCell.Blank;
+        }
+
         int index = _scrollback.Count - _viewportOffset + row;
         if (index < 0)
         {
@@ -272,6 +277,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             BeginBatch();
             try
             {
+                BreakScrollbackWrap();
                 _primaryScreen.Reset();
                 _alternateScreen.Reset();
                 ResetSessionState();
@@ -291,11 +297,20 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             BeginBatch();
             try
             {
+                BreakScrollbackWrap();
                 _primaryScreen.ResetShellState();
                 _alternateScreen.Reset();
                 ResetSessionState();
             }
             finally { EndBatch(); }
+        }
+    }
+
+    private void BreakScrollbackWrap()
+    {
+        if (_scrollback.Count > 0)
+        {
+            _scrollback[_scrollback.Count - 1].WrappedColumns = 0;
         }
     }
 
@@ -407,12 +422,15 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     public string GetSelectionText(TerminalSelection selection)
     {
         (TerminalPosition first, TerminalPosition last) = selection.Normalized();
-        int startRow = Math.Clamp(first.Row, -_scrollback.Count + _viewportOffset, Rows - 1 + _viewportOffset);
-        int endRow = Math.Clamp(last.Row, -_scrollback.Count + _viewportOffset, Rows - 1 + _viewportOffset);
-        if (endRow < startRow)
+        int minRow = _screen.IsAlternate ? 0 : -_scrollback.Count + _viewportOffset;
+        int maxRow = _screen.IsAlternate ? Rows - 1 : Rows - 1 + _viewportOffset;
+        if (last.Row < minRow || first.Row > maxRow)
         {
             return string.Empty;
         }
+
+        int startRow = Math.Max(first.Row, minRow);
+        int endRow = Math.Min(last.Row, maxRow);
 
         var builder = new StringBuilder();
         int previousWrappedColumns = 0;
@@ -438,6 +456,11 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
 
     private int GetWrappedColumns(int row)
     {
+        if (_screen.IsAlternate)
+        {
+            return (uint)row < (uint)_screen.Rows ? _screen.LineAt(row).WrappedColumns : 0;
+        }
+
         int index = _scrollback.Count - _viewportOffset + row;
         if (index < 0)
         {
@@ -760,8 +783,9 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         UpdateEraseCell();
         if (intermediates.Length > 0)
         {
-            if (intermediates[0] == '#' && final == '8')
+            if (intermediates.Length == 1 && intermediates[0] == '#' && final == '8')
             {
+                if (!_screen.IsAlternate) { BreakScrollbackWrap(); }
                 _screen.FillScreen("E");
             }
             else if (intermediates.Length == 1 && intermediates[0] == '(')
@@ -821,6 +845,11 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
     {
         _joinNextRune = false;
         UpdateEraseCell();
+        if (final != 'm' && parameterIsSub.Contains(true))
+        {
+            return;
+        }
+
         char intermediate = intermediates.Length > 0 ? intermediates[0] : '\0';
         bool standard = privateMarker == '\0' && intermediates.IsEmpty;
         switch (final)
@@ -867,9 +896,11 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 _screen.EraseInLine(ParameterOrZero(parameters, 0));
                 break;
             case 'L' when standard:
+                if (!_screen.IsAlternate && _screen.CursorRow == 0 && _screen.ScrollTop == 0) { BreakScrollbackWrap(); }
                 _screen.InsertLines(Parameter(parameters, 0, 1));
                 break;
             case 'M' when standard:
+                if (!_screen.IsAlternate && _screen.CursorRow == 0 && _screen.ScrollTop == 0) { BreakScrollbackWrap(); }
                 _screen.DeleteLines(Parameter(parameters, 0, 1));
                 break;
             case 'P' when standard:
@@ -881,6 +912,7 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             case 'T' when standard:
                 if (parameters.Length <= 1)
                 {
+                    if (!_screen.IsAlternate && _screen.ScrollTop == 0) { BreakScrollbackWrap(); }
                     _screen.ScrollDownRegion(Parameter(parameters, 0, 1));
                 }
 
@@ -925,12 +957,12 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
             case 'g' when standard:
                 _screen.ClearTabStops(ParameterOrZero(parameters, 0));
                 break;
-            case 'h':
-            case 'l':
+            case 'h' when intermediates.IsEmpty:
+            case 'l' when intermediates.IsEmpty:
                 ApplyModes(final == 'h', privateMarker, parameters);
                 break;
             case 'm':
-                if (privateMarker == '\0')
+                if (privateMarker == '\0' && intermediates.IsEmpty)
                 {
                     ApplySgr(parameters, parameterIsSub);
                 }
@@ -953,21 +985,21 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
                 else if (privateMarker == '>') { QueueResponse("\x1b[>0;1;0c"); }
                 break;
             case 'q':
-                if (intermediate == ' ')
+                if (privateMarker == '\0' && intermediates.Length == 1 && intermediate == ' ')
                 {
                     ApplyCursorStyle(ParameterOrZero(parameters, 0));
                 }
 
                 break;
             case 'p':
-                if (intermediate == '!')
+                if (privateMarker == '\0' && intermediates.Length == 1 && intermediate == '!')
                 {
                     SoftReset();
                 }
 
                 break;
             case 'r':
-                if (privateMarker == '\0' && !intermediates.Contains('$'))
+                if (privateMarker == '\0' && intermediates.IsEmpty)
                 {
                     SetScrollRegion(parameters);
                 }
@@ -1171,6 +1203,11 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
 
     private void AppendRowRange(StringBuilder builder, int row, int fromColumn, int toColumnInclusive, bool trimEnd = true)
     {
+        if (fromColumn > 0 && GetBufferCell(row, fromColumn).Width == CellWidth.Continuation)
+        {
+            fromColumn--;
+        }
+
         if (toColumnInclusive < fromColumn)
         {
             return;
@@ -1520,6 +1557,11 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
 
     private void EraseInDisplay(int mode)
     {
+        if (!_screen.IsAlternate && (mode is 1 or 2 || (mode == 0 && _screen.CursorRow == 0)))
+        {
+            BreakScrollbackWrap();
+        }
+
         _screen.EraseInDisplay(mode);
         if (mode == 3)
         {
@@ -1529,6 +1571,11 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
 
     private void ApplyCursorStyle(int style)
     {
+        if (style < 0 || style > 6)
+        {
+            return;
+        }
+
         TerminalCursorShape shape = style switch
         {
             3 or 4 => TerminalCursorShape.Underline,
@@ -1659,20 +1706,49 @@ public sealed partial class TerminalEmulator : ITerminalEmulator, IScreenHost
         }
 
         int nextMode = parameters[modeIndex];
-        if (modeIndex + 1 < parameters.Length && parameterIsSub[modeIndex + 1]) { return modeIndex; }
-        if (nextMode == 5 && modeIndex + 1 < parameters.Length)
+        if (nextMode is not (2 or 5))
         {
-            SetIndexedColor(code, parameters[modeIndex + 1]);
-            return modeIndex + 2;
+            return end;
         }
 
-        if (nextMode == 2 && modeIndex + 3 < parameters.Length)
+        if (nextMode == 5 && modeIndex + 1 < parameters.Length && !parameterIsSub[modeIndex + 1])
         {
-            SetRgbColor(code, parameters[modeIndex + 1], parameters[modeIndex + 2], parameters[modeIndex + 3]);
-            return modeIndex + 4;
+            SetIndexedColor(code, parameters[modeIndex + 1]);
+            return SkipTrailingSubparameters(parameterIsSub, modeIndex + 2);
+        }
+
+        if (nextMode == 2)
+        {
+            int redIndex = modeIndex + 1;
+            int greenIndex = redIndex < parameters.Length && !parameterIsSub[redIndex]
+                ? SkipTrailingSubparameters(parameterIsSub, redIndex + 1)
+                : -1;
+            int blueIndex = greenIndex >= 0 && greenIndex < parameters.Length && !parameterIsSub[greenIndex]
+                ? SkipTrailingSubparameters(parameterIsSub, greenIndex + 1)
+                : -1;
+            if (blueIndex >= 0 && blueIndex < parameters.Length && !parameterIsSub[blueIndex])
+            {
+                int after = SkipTrailingSubparameters(parameterIsSub, blueIndex + 1);
+                if (greenIndex == redIndex + 1 && blueIndex == greenIndex + 1)
+                {
+                    SetRgbColor(code, parameters[redIndex], parameters[greenIndex], parameters[blueIndex]);
+                }
+
+                return after;
+            }
         }
 
         return modeIndex + 1;
+    }
+
+    private static int SkipTrailingSubparameters(ReadOnlySpan<bool> parameterIsSub, int index)
+    {
+        while (index < parameterIsSub.Length && parameterIsSub[index])
+        {
+            index++;
+        }
+
+        return index;
     }
 
     private void SetIndexedColor(int code, int index)

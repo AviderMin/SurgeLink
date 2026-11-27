@@ -262,6 +262,7 @@ internal sealed partial class TerminalSurface : ContentControl
             ApplySettings(_settings.Current, initial: false);
             if (_formatRegular is null && _metrics is not null) ApplyRunFont(_metrics);
             _bridge.Invalidated += OnBridgeInvalidated;
+            _bridge.Closed += OnBridgeClosed;
             _bridge.Emulator.ClipboardCopyRequested += OnClipboardCopyRequested;
             _settings.Changed += OnSettingsChanged;
         }
@@ -297,6 +298,7 @@ internal sealed partial class TerminalSurface : ContentControl
         ReleasePointerCaptures();
         _paintQueued = false;
         _bridge.Invalidated -= OnBridgeInvalidated;
+        _bridge.Closed -= OnBridgeClosed;
         _bridge.Emulator.ClipboardCopyRequested -= OnClipboardCopyRequested;
         _settings.Changed -= OnSettingsChanged;
         _searchRefreshTimer?.Stop();
@@ -331,8 +333,26 @@ internal sealed partial class TerminalSurface : ContentControl
         InvalidatePaint(force: false);
     }
 
+    private void OnBridgeClosed(object? sender, EventArgs e)
+    {
+        StopBlink();
+        InvalidatePaint(force: true);
+    }
+
     private void OnSettingsChanged(object? sender, EventArgs e)
     {
+        if (DispatcherQueue is { HasThreadAccess: false } queue)
+        {
+            queue.TryEnqueue(() =>
+            {
+                if (!_loaded) { return; }
+                ApplySettings(_settings.Current, initial: false);
+                ApplySearchLocalization();
+            });
+            return;
+        }
+
+        if (!_loaded) { return; }
         ApplySettings(_settings.Current, initial: false);
         ApplySearchLocalization();
     }

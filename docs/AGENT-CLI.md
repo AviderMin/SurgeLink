@@ -402,8 +402,13 @@ and `clientName` metadata for presence only; they are not MCP tools or capabilit
   `terminal.output` / `terminal.wait`) and the current `screen` tail without
   locking the session. Pass a small `timeoutMilliseconds` for commands that
   prompt for input. The returned output keeps the end of the stream so the
-  sentinel and final result are present when `maxBytes` truncates a long response.
-  Trailing newlines are trimmed before building the shell input. Completion is best effort
+  final result is available when `maxBytes` truncates a long response. Terminal
+  wait and exec cap the returned output at 128 KiB. If capture stops at a gap or
+  reaches its limit before seeing the marker, exec returns `status=output_incomplete`
+  and a cursor for reading additional retained output. It cannot recover history
+  already discarded by the terminal.
+  Trailing newlines are trimmed before building the shell input. A wrapped line
+  exceeding 4,000 UTF-8 bytes is rejected before any write. Completion is best effort
   for POSIX bash/sh; non-POSIX shells time out without an exit code.
 - sessions.check supports `brief=true` (compact screen) and `minimal=true`
   (compact screen plus only handle, label, target, control state and fileRead instead of

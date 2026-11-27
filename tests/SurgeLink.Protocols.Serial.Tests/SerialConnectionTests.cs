@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
@@ -163,6 +164,49 @@ public sealed class SerialConnectionTests
         Assert.True(descriptor.AuthenticatesInTerminal);
         Assert.Equal(SessionCapabilities.Terminal, descriptor.Capabilities);
         Assert.NotNull(descriptor.DiscoverEndpoints);
+    }
+
+    [Fact]
+    public async Task ThrowingOutputHandlerDoesNotStopReadLoop()
+    {
+        var port = new FakeSerialConnection();
+        await using var session = await Connect(port);
+        var terminal = session.Terminal!;
+        var firstHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondChunk = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var count = 0;
+        terminal.OutputReceived += (_, e) =>
+        {
+            if (Interlocked.Increment(ref count) == 1)
+            {
+                firstHandled.TrySetResult();
+                throw new InvalidOperationException("subscriber failed");
+            }
+
+            secondChunk.TrySetResult(Encoding.UTF8.GetString(e.Data.Span));
+        };
+        await terminal.StartAsync(new TerminalStartOptions(), CancellationToken.None);
+        await port.ReadStarted.Task.WaitAsync(TestTimeout);
+
+        port.Inject("first"u8.ToArray());
+        await firstHandled.Task.WaitAsync(TestTimeout);
+        port.Inject("second"u8.ToArray());
+        Assert.Equal("second", await secondChunk.Task.WaitAsync(TestTimeout));
+    }
+
+    [Fact]
+    public async Task WriteTimeoutReleasesWriteGateBeforeRaisingClosed()
+    {
+        var port = new FakeSerialConnection { WriteAction = _ => throw new TimeoutException("CTS timeout") };
+        await using var session = await Connect(port);
+        var terminal = session.Terminal!;
+        var writeGate = (SemaphoreSlim)terminal.GetType().GetField("_writeGate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(terminal)!;
+        var observedGateFreeCount = -1;
+        terminal.Closed += (_, _) => observedGateFreeCount = writeGate.CurrentCount;
+
+        await terminal.StartAsync(new TerminalStartOptions(), CancellationToken.None);
+        await Assert.ThrowsAsync<ProtocolException>(() => terminal.WriteAsync(new byte[] { 1 }).AsTask());
+        Assert.Equal(1, observedGateFreeCount);
     }
 
     private static Task<IProtocolSession> Connect(FakeSerialConnection port) =>

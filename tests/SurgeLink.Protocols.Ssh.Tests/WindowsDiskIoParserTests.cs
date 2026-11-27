@@ -33,4 +33,11 @@ public sealed class WindowsDiskIoParserTests
     {
         Assert.Equal(new DiskIoRates(0, 0), WindowsDiskIoParser.Parse("_Total|Infinity|Infinity"));
     }
+
+    [Fact]
+    public void OverflowingFiniteSumsClampToZero()
+    {
+        var rates = WindowsDiskIoParser.Parse("C:|1e308|1e308\nD:|1e308|1e308\n");
+        Assert.Equal(new DiskIoRates(0, 0), rates);
+    }
 }

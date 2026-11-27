@@ -1,3 +1,4 @@
+using System.Globalization;
 using SurgeLink.Core.Storage;
 using SurgeLink.Core.Security;
 
@@ -17,9 +18,11 @@ internal static class CrashLog
     {
         try
         {
-            var path = Path.Combine(AppPaths.LogsDirectory, "crash-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
+            var now = DateTime.Now;
+            var path = Path.Combine(AppPaths.LogsDirectory, "crash-" + now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".log");
             Directory.CreateDirectory(AppPaths.LogsDirectory);
-            var text = $"{DateTimeOffset.Now:O} [{DiagnosticText.Escape(source)}]{Environment.NewLine}{DiagnosticText.Escape(exception?.ToString() ?? string.Empty)}{Environment.NewLine}";
+            var timestamp = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture);
+            var text = $"{timestamp} [{DiagnosticText.Escape(source)}]{Environment.NewLine}{DiagnosticText.Escape(exception?.ToString() ?? string.Empty)}{Environment.NewLine}";
             lock (Gate)
             {
                 File.AppendAllText(path, text);
@@ -27,15 +30,7 @@ internal static class CrashLog
 
             return path;
         }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return null;
-        }
-        catch (NotSupportedException)
+        catch (Exception)
         {
             return null;
         }

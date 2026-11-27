@@ -2,15 +2,17 @@
 
 Effective date: 2026-11-23
 
-SurgeLink is a Windows desktop SSH terminal, file transfer and remote monitoring
-application. The application does not include analytics, advertising or an
+SurgeLink is a Windows desktop SSH, Telnet and serial terminal, file transfer and remote
+monitoring application. The application does not include analytics, advertising or an
 automatic diagnostic upload service.
 
-Connections are initiated by the user to the servers they select. Usernames,
-authentication data, terminal input, remote commands and transferred files are
-sent to those servers as required by the selected operation over SSH. Remote
-monitoring runs system queries on the connected server. The server operator's
-data handling policies apply to information received by that server.
+Connections are initiated by the user to the servers or local serial devices they select.
+Usernames, authentication data, terminal input, remote commands and transferred files are
+sent to those endpoints as required by the selected operation. SSH encrypts network
+traffic; Telnet transmits session data and credentials without encryption; serial ports
+exchange raw bytes directly with local or attached hardware. Remote monitoring runs system
+queries on connected servers that support it. The remote operator's data handling
+policies apply to information received by a server.
 
 Saved connection profiles (including hostnames, usernames and key file paths),
 settings and trusted host fingerprints are stored locally. Remembered passwords
@@ -24,8 +26,9 @@ programs running as the same Windows user to read that connection's label, host
 information, visible screen, retained incremental output and metrics. File access
 additionally allows directory listings and text-file reads. Terminal control allows
 selecting the shared tab/view and writing text or key sequences into the same
-interactive terminal the user sees; it also includes file access. Such input
-can execute commands and modify the remote system with the connected account's
+interactive terminal the user sees; it also authorizes remote file mutations (`files.write`,
+`files.delete`, `files.rename`, `files.mkdir`, `files.upload`, and `files.download`). Such input
+and file operations can modify remote state with the connected account's
 permissions. Execution policy and command approval belong to the external Agent
 application; SurgeLink does not prompt for individual commands or file reads after
 access is enabled. Typing in a controlled terminal pauses Agent input for that

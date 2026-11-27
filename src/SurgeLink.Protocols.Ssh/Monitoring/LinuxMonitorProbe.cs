@@ -26,8 +26,8 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
     private ProcStatSample? _previousStat;
     private IReadOnlyList<DiskIoStat> _lastDiskIoStatistics = Array.Empty<DiskIoStat>();
     private DateTimeOffset? _lastDiskIoSampleUtc;
-    private long _lastDiskReadBytes;
-    private long _lastDiskWriteBytes;
+    private long _lastDiskReadSectors;
+    private long _lastDiskWriteSectors;
     private int _disposed;
 
     /// <summary>Creates a probe over an arbitrary command executor.</summary>
@@ -62,6 +62,7 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
         await _sampleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             SshCommandResult result;
             try
             {
@@ -125,25 +126,25 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
             if (diskIo is not null)
             {
                 var (readSectors, writeSectors) = DiskStatsParser.SumWholeDeviceSectors(diskIo);
-                var readBytes = readSectors * 512L;
-                var writeBytes = writeSectors * 512L;
                 if (_lastDiskIoSampleUtc is { } previous)
                 {
                     var seconds = (sampledAt - previous).TotalSeconds;
                     if (seconds > 0.05)
                     {
-                        diskReadRate = readBytes >= _lastDiskReadBytes
-                            ? (readBytes - _lastDiskReadBytes) / seconds
+                        var readCandidate = readSectors >= _lastDiskReadSectors
+                            ? (readSectors - _lastDiskReadSectors) * 512d / seconds
                             : 0d;
-                        diskWriteRate = writeBytes >= _lastDiskWriteBytes
-                            ? (writeBytes - _lastDiskWriteBytes) / seconds
+                        var writeCandidate = writeSectors >= _lastDiskWriteSectors
+                            ? (writeSectors - _lastDiskWriteSectors) * 512d / seconds
                             : 0d;
+                        diskReadRate = double.IsFinite(readCandidate) ? readCandidate : 0d;
+                        diskWriteRate = double.IsFinite(writeCandidate) ? writeCandidate : 0d;
                     }
                 }
 
                 _lastDiskIoSampleUtc = sampledAt;
-                _lastDiskReadBytes = readBytes;
-                _lastDiskWriteBytes = writeBytes;
+                _lastDiskReadSectors = readSectors;
+                _lastDiskWriteSectors = writeSectors;
             }
 
             return new SystemSnapshot
@@ -185,6 +186,7 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
         await _processLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             foreach (var command in TopProcessCommands)
             {
                 SshCommandResult result;
@@ -217,7 +219,7 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
         }
     }
 
-    /// <summary>Releases the internal synchronisation primitives; safe to call twice.</summary>
+    /// <summary>Marks the probe as disposed; safe to call twice.</summary>
     public ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -225,8 +227,8 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
             return ValueTask.CompletedTask;
         }
 
-        SafeDispose(_sampleLock);
-        SafeDispose(_processLock);
+        // Leave the managed semaphores undisposed so queued async waiters can wake
+        // cleanly and observe ObjectDisposedException instead of hanging forever.
         GC.SuppressFinalize(this);
         return ValueTask.CompletedTask;
     }
@@ -249,18 +251,6 @@ public sealed class LinuxMonitorProbe : IRemoteSystemMonitor, IAsyncDisposable
         catch (ObjectDisposedException)
         {
             // The probe was disposed while an operation was running.
-        }
-    }
-
-    private static void SafeDispose(SemaphoreSlim semaphore)
-    {
-        try
-        {
-            semaphore.Dispose();
-        }
-        catch (ObjectDisposedException)
-        {
-            // Already disposed.
         }
     }
 }

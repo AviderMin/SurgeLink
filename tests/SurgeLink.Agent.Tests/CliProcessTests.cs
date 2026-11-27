@@ -37,6 +37,38 @@ public sealed class CliProcessTests
         Assert.Equal("input_sent", receipt.RootElement.GetProperty("data").GetProperty("status").GetString());
         Assert.Equal(0, (await RunAsync(inputArgs)).ExitCode);
         Assert.Equal(1, terminal.Writes);
+
+        var startInvalidEnv = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        startInvalidEnv.Environment["SURGELINK_INSTANCE"] = "not-a-pid";
+        startInvalidEnv.ArgumentList.Add(typeof(CliArguments).Assembly.Location);
+        startInvalidEnv.ArgumentList.Add("sessions");
+        startInvalidEnv.ArgumentList.Add("list");
+        var badEnv = await RunProcessAsync(startInvalidEnv);
+        Assert.Equal(2, badEnv.ExitCode);
+        using var badEnvJson = JsonDocument.Parse(badEnv.Output);
+        Assert.Equal("usage", badEnvJson.RootElement.GetProperty("errorCode").GetString());
+    }
+
+    [Fact]
+    public async Task InvalidUtf8FromRedirectedStdinIsAUsageError()
+    {
+        var start = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var argument in new[] { typeof(CliArguments).Assembly.Location, "files", "write",
+            "--session", "unused", "--path", "/tmp/input.txt", "--text-stdin", "--instance", "2147483647" })
+            start.ArgumentList.Add(argument);
+
+        var result = await RunProcessAsync(start, [0xff]);
+
+        Assert.Equal(2, result.ExitCode);
+        using var error = JsonDocument.Parse(result.Output);
+        Assert.Equal("usage", error.RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("Could not read standard input:", error.RootElement.GetProperty("message").GetString());
     }
 
     [Fact]
@@ -96,13 +128,21 @@ public sealed class CliProcessTests
         return RunProcessAsync(start);
     }
 
-    private static async Task<(int ExitCode, string Output)> RunProcessAsync(ProcessStartInfo start)
+    private static async Task<(int ExitCode, string Output)> RunProcessAsync(ProcessStartInfo start, byte[]? input = null)
     {
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync();
         var errors = process.StandardError.ReadToEndAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        try { await process.WaitForExitAsync(timeout.Token); }
+        try
+        {
+            if (input is not null)
+            {
+                await process.StandardInput.BaseStream.WriteAsync(input, timeout.Token);
+                process.StandardInput.Close();
+            }
+            await process.WaitForExitAsync(timeout.Token);
+        }
         catch { if (!process.HasExited) process.Kill(entireProcessTree: true); throw; }
         Assert.Equal("", await errors);
         return (process.ExitCode, await output);

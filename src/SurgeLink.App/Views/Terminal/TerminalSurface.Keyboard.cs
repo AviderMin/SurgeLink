@@ -9,17 +9,19 @@ internal sealed partial class TerminalSurface
 {
     /// <summary>
     /// Set when the key we just handled may also raise CharacterReceived. WinUI
-    /// suppresses it for handled keys, but swallowing it here as well keeps a
-    /// terminal from ever echoing a double character.
+    /// suppresses it for handled keys, but matching the expected control character or
+    /// modifier chord avoids swallowing an unrelated printable keystroke.
     /// </summary>
-    private bool _suppressCharacterInput;
+    private char? _suppressedCharacter;
+    private bool _suppressModifierChar;
 
     /// <summary>First half of a surrogate pair, waiting for its partner.</summary>
     private char _pendingHighSurrogate;
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        _suppressCharacterInput = false;
+        _suppressedCharacter = null;
+        _suppressModifierChar = false;
         if (IsSearchBarEvent(e.OriginalSource)) { return; }
 
         bool control = IsKeyDown(VirtualKey.Control);
@@ -181,7 +183,13 @@ internal sealed partial class TerminalSurface
         if (_bridge.SendKey(key, control, alt, shift))
         {
             e.Handled = true;
-            _suppressCharacterInput = true;
+            _suppressedCharacter = e.Key switch
+            {
+                VirtualKey.Enter => '\r',
+                VirtualKey.Tab => '\t',
+                _ => null,
+            };
+            _suppressModifierChar = control || alt;
         }
         // Keys the encoder cannot map (for example the extra < > | key on a German
         // layout, VK_OEM_102) are deliberately left unhandled so CharacterReceived
@@ -195,9 +203,12 @@ internal sealed partial class TerminalSurface
         e.Handled = true;
         if (IsSearchBarEvent(e.OriginalSource)) { return; }
 
-        if (_suppressCharacterInput)
+        bool shouldSuppress = (_suppressedCharacter is { } suppressed && character == suppressed)
+            || (_suppressModifierChar && (IsKeyDown(VirtualKey.Control) || IsKeyDown(VirtualKey.Menu)));
+        _suppressedCharacter = null;
+        _suppressModifierChar = false;
+        if (shouldSuppress)
         {
-            _suppressCharacterInput = false;
             return;
         }
 

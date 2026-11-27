@@ -165,7 +165,7 @@ internal sealed class MonitorProcessTable : Component<MonitorProcessTableProps>
             1 => process => process.User ?? string.Empty,
             3 => process => process.MemoryPercent,
             4 => process => process.ResidentBytes,
-            5 => process => process.CommandLine ?? process.Name,
+            5 => process => string.IsNullOrEmpty(process.CommandLine) ? process.Name : process.CommandLine,
             _ => process => process.CpuPercent,
         };
 

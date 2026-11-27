@@ -24,9 +24,11 @@ internal sealed partial class TerminalSurface
     private const double MaxFontSize = 28;
     private const double DefaultFontSize = 13;
 
-    private bool HasSelection => TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret).HasSelection;
+    private bool HasSelection => TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret, _allowSingleCellSelection).HasSelection;
     private TerminalMouseButton _remoteMouseButton = TerminalMouseButton.None;
     private (int Row, int Column, TerminalMouseButton Button)? _lastMouseMove;
+    private bool _allowSingleCellSelection;
+    private int _wheelRemainder;
 
     private bool ReportMouse(Point point, TerminalMouseButton button, TerminalMouseAction action, bool completePress = false)
     {
@@ -51,9 +53,14 @@ internal sealed partial class TerminalSurface
         Focus(FocusState.Pointer);
         var point = e.GetCurrentPoint(this);
 
-        var button = point.Properties.IsLeftButtonPressed ? TerminalMouseButton.Left
-            : point.Properties.IsMiddleButtonPressed ? TerminalMouseButton.Middle : TerminalMouseButton.Right;
-        if (ReportMouse(point.Position, button, TerminalMouseAction.Press))
+        var button = point.Properties.PointerUpdateKind switch
+        {
+            Microsoft.UI.Input.PointerUpdateKind.LeftButtonPressed => TerminalMouseButton.Left,
+            Microsoft.UI.Input.PointerUpdateKind.MiddleButtonPressed => TerminalMouseButton.Middle,
+            Microsoft.UI.Input.PointerUpdateKind.RightButtonPressed => TerminalMouseButton.Right,
+            _ => TerminalMouseButton.None,
+        };
+        if (button != TerminalMouseButton.None && ReportMouse(point.Position, button, TerminalMouseAction.Press))
         {
             _remoteMouseButton = button;
             _lastMouseMove = null;
@@ -93,6 +100,7 @@ internal sealed partial class TerminalSurface
         {
             _selectionAnchor = cell;
             _selectionCaret = cell;
+            _allowSingleCellSelection = false;
         }
 
         _selecting = true;
@@ -106,21 +114,26 @@ internal sealed partial class TerminalSurface
         if (IsScrollBarEvent(e) || IsSearchBarEvent(e.OriginalSource)) { return; }
         if (!_selecting)
         {
-            var point = e.GetCurrentPoint(this);
-            var button = point.Properties.IsLeftButtonPressed ? TerminalMouseButton.Left
-                : point.Properties.IsMiddleButtonPressed ? TerminalMouseButton.Middle
-                : point.Properties.IsRightButtonPressed ? TerminalMouseButton.Right : TerminalMouseButton.None;
-            var mouseCell = CellFromPoint(point.Position);
-            var move = (mouseCell.Row, mouseCell.Column, button);
-            if (_lastMouseMove != move && ReportMouse(point.Position, button, TerminalMouseAction.Move))
+            bool mouseTracking;
+            lock (_bridge.Emulator.SyncRoot)
             {
-                _lastMouseMove = move;
-                e.Handled = true;
-                return;
+                mouseTracking = _bridge.Emulator.Modes.MouseTracking;
             }
-        }
-        if (!_selecting)
-        {
+            if (mouseTracking)
+            {
+                var point = e.GetCurrentPoint(this);
+                var button = point.Properties.IsLeftButtonPressed ? TerminalMouseButton.Left
+                    : point.Properties.IsMiddleButtonPressed ? TerminalMouseButton.Middle
+                    : point.Properties.IsRightButtonPressed ? TerminalMouseButton.Right : TerminalMouseButton.None;
+                var mouseCell = CellFromPoint(point.Position);
+                var move = (mouseCell.Row, mouseCell.Column, button);
+                if (_lastMouseMove != move && ReportMouse(point.Position, button, TerminalMouseAction.Move))
+                {
+                    _lastMouseMove = move;
+                    e.Handled = true;
+                    return;
+                }
+            }
             return;
         }
 
@@ -139,10 +152,24 @@ internal sealed partial class TerminalSurface
         if (_remoteMouseButton == TerminalMouseButton.None && IsSearchBarEvent(e.OriginalSource)) { return; }
         if (_remoteMouseButton != TerminalMouseButton.None)
         {
-            ReportMouse(e.GetCurrentPoint(this).Position, _remoteMouseButton, TerminalMouseAction.Release, completePress: true);
-            _remoteMouseButton = TerminalMouseButton.None;
+            var point = e.GetCurrentPoint(this);
+            var released = point.Properties.PointerUpdateKind switch
+            {
+                Microsoft.UI.Input.PointerUpdateKind.LeftButtonReleased => TerminalMouseButton.Left,
+                Microsoft.UI.Input.PointerUpdateKind.MiddleButtonReleased => TerminalMouseButton.Middle,
+                Microsoft.UI.Input.PointerUpdateKind.RightButtonReleased => TerminalMouseButton.Right,
+                _ => _remoteMouseButton,
+            };
+            ReportMouse(point.Position, released, TerminalMouseAction.Release, completePress: true);
+            var remaining = point.Properties.IsLeftButtonPressed ? TerminalMouseButton.Left
+                : point.Properties.IsMiddleButtonPressed ? TerminalMouseButton.Middle
+                : point.Properties.IsRightButtonPressed ? TerminalMouseButton.Right : TerminalMouseButton.None;
+            _remoteMouseButton = remaining;
             _lastMouseMove = null;
-            ReleasePointerCapture(e.Pointer);
+            if (remaining == TerminalMouseButton.None)
+            {
+                ReleasePointerCapture(e.Pointer);
+            }
             e.Handled = true;
             return;
         }
@@ -191,19 +218,35 @@ internal sealed partial class TerminalSurface
             : (delta > 0 ? TerminalMouseButton.WheelUp : TerminalMouseButton.WheelDown);
         if (ReportMouse(point.Position, wheel, TerminalMouseAction.Wheel))
         {
+            _wheelRemainder = 0;
             for (var notch = 1; notch < Math.Abs(delta / 120); notch++) { ReportMouse(point.Position, wheel, TerminalMouseAction.Wheel); }
+            e.Handled = true;
+            return;
+        }
+
+        if (point.Properties.IsHorizontalMouseWheel)
+        {
             e.Handled = true;
             return;
         }
 
         if (IsKeyDown(VirtualKey.Control))
         {
+            _wheelRemainder = 0;
             ZoomFont(delta > 0 ? 1 : -1);
             e.Handled = true;
             return;
         }
 
-        int lines = (delta / 120) * LinesPerWheelNotch;
+        if ((_wheelRemainder > 0 && delta < 0) || (_wheelRemainder < 0 && delta > 0))
+        {
+            _wheelRemainder = 0;
+        }
+
+        _wheelRemainder += delta;
+        int notches = _wheelRemainder / 120;
+        _wheelRemainder %= 120;
+        int lines = notches * LinesPerWheelNotch;
         if (lines != 0)
         {
             ScrollHistory(lines);
@@ -237,48 +280,22 @@ internal sealed partial class TerminalSurface
     private void SelectWordAt(TerminalPosition position)
     {
         var emulator = _bridge.Emulator;
-        int columns;
-        var word = new List<bool>(128);
-
+        (int StartColumn, int EndColumn)? bounds;
         lock (emulator.SyncRoot)
         {
-            if (position.Row < 0 || position.Row >= emulator.Rows)
-            {
-                return;
-            }
-
-            columns = emulator.Columns;
-            for (int column = 0; column < columns; column++)
-            {
-                string text = emulator.GetCell(position.Row, column).Text ?? string.Empty;
-                word.Add(text.Length == 1 && IsWordCharacter(text[0]));
-            }
+            bounds = TerminalWordSelection.FindWordBounds(emulator, position.Row, position.Column);
         }
 
-        if (position.Column < 0 || position.Column >= word.Count || !word[position.Column])
+        if (bounds is not { } word)
         {
             return;
         }
 
-        int start = position.Column;
-        while (start > 0 && word[start - 1])
-        {
-            start--;
-        }
-
-        int end = position.Column;
-        while (end < word.Count - 1 && word[end + 1])
-        {
-            end++;
-        }
-
-        _selectionAnchor = new TerminalPosition(position.Row, start);
-        _selectionCaret = new TerminalPosition(position.Row, end);
+        _selectionAnchor = new TerminalPosition(position.Row, word.StartColumn);
+        _selectionCaret = new TerminalPosition(position.Row, word.EndColumn);
+        _allowSingleCellSelection = true;
         InvalidatePaint(force: true);
     }
-
-    private static bool IsWordCharacter(char character) =>
-        char.IsLetterOrDigit(character) || character is '_' or '-' or '.' or '/' or '~' or '@' or ':';
 
     private void SelectAll()
     {
@@ -293,18 +310,20 @@ internal sealed partial class TerminalSurface
 
         _selectionAnchor = new TerminalPosition(0, 0);
         _selectionCaret = new TerminalPosition(Math.Max(0, rows - 1), Math.Max(0, columns - 1));
+        _allowSingleCellSelection = true;
         InvalidatePaint(force: true);
     }
 
     private void ClearSelection()
     {
-        if (_selectionAnchor is null && _selectionCaret is null)
+        if (_selectionAnchor is null && _selectionCaret is null && !_allowSingleCellSelection)
         {
             return;
         }
 
         _selectionAnchor = null;
         _selectionCaret = null;
+        _allowSingleCellSelection = false;
     }
 
     private void ScrollViewportByPage(bool back)
@@ -338,7 +357,7 @@ internal sealed partial class TerminalSurface
 
     private bool CopySelection()
     {
-        TerminalSelectionRange range = TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret);
+        TerminalSelectionRange range = TerminalSelectionRange.FromAnchors(_selectionAnchor, _selectionCaret, _allowSingleCellSelection);
         if (!range.HasSelection)
         {
             return false;
@@ -399,14 +418,13 @@ internal sealed partial class TerminalSurface
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.find", "Find…"), "\uE721", () => OpenSearch(), true));
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.copy", "Copy"), "\uE8C8", () => CopySelection(), HasSelection));
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.paste", "Paste"), "\uE77F", PasteFromClipboard, true));
-        var remoteClipboard = new ToggleMenuFlyoutItem
-        {
-            Text = Str.T("terminal.remoteClipboard", "Allow this shell to write to the clipboard"),
-            IsChecked = _bridge.AllowRemoteClipboard,
-            IsEnabled = !_bridge.IsClosed,
-        };
-        remoteClipboard.Click += (_, _) => _bridge.AllowRemoteClipboard = remoteClipboard.IsChecked;
-        flyout.Items.Add(remoteClipboard);
+        // Mixing ToggleMenuFlyoutItem with icon items triggers WinUI's CheckAndIconPlaceholder
+        // state, adding an empty checkmark gutter to the left of every item's icon.
+        flyout.Items.Add(CreateMenuItem(
+            Str.T("terminal.remoteClipboard", "Allow this shell to write to the clipboard"),
+            _bridge.AllowRemoteClipboard ? "\uE73A" : "\uE739",
+            () => _bridge.AllowRemoteClipboard = !_bridge.AllowRemoteClipboard,
+            !_bridge.IsClosed));
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.selectAll", "Select all"), "\uE8B3", SelectAll, true));
         flyout.Items.Add(CreateMenuItem(Str.T("terminal.clear", "Clear"), "\uE894", ClearScreen, true));
         flyout.ShowAt(this, new FlyoutShowOptions { Position = position });

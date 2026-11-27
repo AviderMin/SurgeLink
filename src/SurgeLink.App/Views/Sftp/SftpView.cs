@@ -1,3 +1,4 @@
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
@@ -61,6 +62,11 @@ internal sealed class SftpView : Component<SftpViewProps>
         var deleteRunning = UseRef(false);
         var currentListing = UseRef(listingRequest);
         currentListing.Current = listingRequest;
+        var activeListingId = UseRef(0L);
+        var openDialogRef = UseRef(dialog);
+        openDialogRef.Current = dialog;
+        var currentCwdRef = UseRef(cwd);
+        currentCwdRef.Current = cwd;
         var clipboard = UseRef<(IRemoteFileSystem? FileSystem, IReadOnlyList<RemoteFileEntry> Entries, bool Cut)>((fileSystem, Array.Empty<RemoteFileEntry>(), false));
         var pasteRunning = UseRef(false);
         if (!ReferenceEquals(clipboard.Current.FileSystem, fileSystem))
@@ -99,13 +105,24 @@ internal sealed class SftpView : Component<SftpViewProps>
         UseEffect(
             () =>
             {
+                var requestId = ++activeListingId.Current;
                 if (fileSystem is null || !online)
                 {
                     setLoading(false);
-                    return () => { };
+                    return () => { activeListingId.Current++; };
                 }
 
+                var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
                 var cancellation = new CancellationTokenSource();
+                var remainingOwners = 2;
+                void ReleaseCancellation()
+                {
+                    if (Interlocked.Decrement(ref remainingOwners) == 0)
+                    {
+                        cancellation.Dispose();
+                    }
+                }
+
                 var target = listingRequest.Path;
                 setLoading(true);
                 _ = Task.Run(async () =>
@@ -121,15 +138,26 @@ internal sealed class SftpView : Component<SftpViewProps>
                             return;
                         }
 
-                        setCwd(path);
-                        var paths = selections.Current.TryGetValue(path, out var saved) ? saved : Array.Empty<string>();
-                        var restored = listing.Where(entry => paths.Contains(entry.FullPath, StringComparer.Ordinal)).ToArray();
-                        selections.Current[path] = restored.Select(entry => entry.FullPath).ToArray();
-                        setSelected(restored);
-                        setEntries(listing);
-                        setError(null);
-                        setLoading(false);
-                        Props.PathChanged?.Invoke(path);
+                        void CommitSuccess()
+                        {
+                            if (activeListingId.Current != requestId)
+                            {
+                                return;
+                            }
+
+                            setCwd(path);
+                            var paths = selections.Current.TryGetValue(path, out var saved) ? saved : Array.Empty<string>();
+                            var restored = listing.Where(entry => paths.Contains(entry.FullPath, StringComparer.Ordinal)).ToArray();
+                            selections.Current[path] = restored.Select(entry => entry.FullPath).ToArray();
+                            setSelected(restored);
+                            setEntries(listing);
+                            setError(null);
+                            setLoading(false);
+                            Props.PathChanged?.Invoke(path);
+                        }
+
+                        if (dispatcher is not null) { dispatcher.TryEnqueue(CommitSuccess); }
+                        else { CommitSuccess(); }
                     }
                     catch (OperationCanceledException)
                     {
@@ -141,12 +169,32 @@ internal sealed class SftpView : Component<SftpViewProps>
                             return;
                         }
 
-                        setError(ex.Message);
-                        setLoading(false);
+                        void CommitError()
+                        {
+                            if (activeListingId.Current != requestId)
+                            {
+                                return;
+                            }
+
+                            setError(ex.Message);
+                            setLoading(false);
+                        }
+
+                        if (dispatcher is not null) { dispatcher.TryEnqueue(CommitError); }
+                        else { CommitError(); }
+                    }
+                    finally
+                    {
+                        ReleaseCancellation();
                     }
                 });
 
-                return () => cancellation.Cancel();
+                return () =>
+                {
+                    activeListingId.Current++;
+                    cancellation.Cancel();
+                    ReleaseCancellation();
+                };
             },
             fileSystem,
             online,
@@ -351,7 +399,7 @@ internal sealed class SftpView : Component<SftpViewProps>
             setDialog(new SftpDialogState(SftpDialogKind.Permissions, entry));
         }
 
-        async Task ExecuteAsync(string title, Func<IRemoteFileSystem, CancellationToken, Task> operation)
+        async Task ExecuteAsync(string title, Func<IRemoteFileSystem, CancellationToken, Task> operation, bool refreshOnSuccess = true)
         {
             if (!IsOnline() || fileSystem is null)
             {
@@ -362,7 +410,7 @@ internal sealed class SftpView : Component<SftpViewProps>
             try
             {
                 await operation(fileSystem, token).ConfigureAwait(true);
-                if (!token.IsCancellationRequested)
+                if (refreshOnSuccess && !token.IsCancellationRequested)
                 {
                     Refresh();
                 }
@@ -523,7 +571,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                     token.ThrowIfCancellationRequested();
                     setBanner(new SftpBanner(InfoBarSeverity.Success, Str.T("sftp.menu.paste", "Paste"),
                         Str.T("sftp.clipboard.complete", "Paste complete.")));
-                }).ConfigureAwait(true);
+                }, refreshOnSuccess: false).ConfigureAwait(true);
             }
             finally
             {
@@ -539,7 +587,9 @@ internal sealed class SftpView : Component<SftpViewProps>
             try
             {
                 var folder = await fileSystem.StatAsync(path, token).ConfigureAwait(true);
-                if (!token.IsCancellationRequested)
+                if (!token.IsCancellationRequested
+                    && openDialogRef.Current.Kind == SftpDialogKind.None
+                    && string.Equals(currentCwdRef.Current, path, StringComparison.Ordinal))
                 {
                     setDialog(new SftpDialogState(SftpDialogKind.Properties, folder));
                 }
@@ -689,7 +739,7 @@ internal sealed class SftpView : Component<SftpViewProps>
                 Str.T("sftp.offline.body", "Reconnect before using remote files or starting transfers.")).Severity(InfoBarSeverity.Warning)
             : banner is null
             ? null
-            : InfoBar(banner.Title, banner.Message)
+            : InfoBar(PrivacyDisplay.Mask(banner.Title), PrivacyDisplay.Mask(banner.Message))
                 .Severity(banner.Severity)
                 .IsClosable(true)
                 .Closed(() => setBanner(null));
@@ -752,24 +802,25 @@ internal sealed class SftpView : Component<SftpViewProps>
         var transferPanel = Component<SftpTransferPanel, FileTransferQueue>(queue);
 
         var dialogs = new List<Element>();
+        var dialogKey = dialog.Id.ToString("n");
         if (dialog.Kind == SftpDialogKind.NewFile)
         {
-            dialogs.Add(SftpDialogs.NewFile(true, dialogText, setDialogText, CommitDialog, CloseDialog));
+            dialogs.Add(SftpDialogs.NewFile(true, dialogText, setDialogText, CommitDialog, CloseDialog).WithKey(dialogKey));
         }
         else if (dialog.Kind == SftpDialogKind.NewFolder)
         {
-            dialogs.Add(SftpDialogs.NewFolder(true, dialogText, setDialogText, CommitDialog, CloseDialog));
+            dialogs.Add(SftpDialogs.NewFolder(true, dialogText, setDialogText, CommitDialog, CloseDialog).WithKey(dialogKey));
         }
         else if (dialog.Target is { } target)
         {
-            dialogs.Add(dialog.Kind switch
+            dialogs.Add((dialog.Kind switch
             {
                 SftpDialogKind.Rename => SftpDialogs.Rename(true, target, dialogText, setDialogText, CommitDialog, CloseDialog),
                 SftpDialogKind.Delete => SftpDialogs.Delete(true, dialog.DeleteTargets, CommitDialog, CloseDialog),
                 SftpDialogKind.Permissions => SftpDialogs.Permissions(true, target, dialogMode, setDialogMode, CommitDialog, CloseDialog),
                 SftpDialogKind.Properties => SftpDialogs.Properties(target, CloseDialog),
                 _ => Empty(),
-            });
+            }).WithKey(dialogKey));
         }
 
 

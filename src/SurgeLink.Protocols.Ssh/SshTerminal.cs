@@ -151,9 +151,8 @@ public sealed class SshTerminal : IRemoteTerminal, IBorrowedTerminalOutput
                 Name = "SurgeLink SSH terminal reader",
             };
             _reader = reader;
+            reader.Start();
         }
-
-        reader.Start();
     }
 
     private async Task DisposeLateShellAsync(Task<ShellStream> opening)
@@ -182,7 +181,16 @@ public sealed class SshTerminal : IRemoteTerminal, IBorrowedTerminalOutput
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await Task.Run(() => WriteToStream(stream, data), cancellationToken).ConfigureAwait(false);
+            ObjectDisposedException.ThrowIf(IsDisposed, this);
+            var activeStream = _stream;
+            if (activeStream is null)
+            {
+                throw new ProtocolException(
+                    "The remote shell is not open.",
+                    ProtocolFailureKind.Configuration);
+            }
+
+            await Task.Run(() => WriteToStream(activeStream, data), cancellationToken).ConfigureAwait(false);
         }
         catch (ObjectDisposedException exception)
         {
@@ -241,12 +249,27 @@ public sealed class SshTerminal : IRemoteTerminal, IBorrowedTerminalOutput
     /// <summary>Closes the shell channel and stops the reader thread; safe to call twice.</summary>
     public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        CancellationTokenSource? cancellation;
+        ShellStream? stream;
+        Thread? reader;
+        bool wasStarted;
+        lock (_gate)
         {
-            return ValueTask.CompletedTask;
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return ValueTask.CompletedTask;
+            }
+
+            cancellation = _readCancellation;
+            _readCancellation = null;
+            stream = _stream;
+            _stream = null;
+            reader = _reader;
+            _reader = null;
+            _open = false;
+            wasStarted = Volatile.Read(ref _started) != 0;
         }
 
-        var cancellation = Interlocked.Exchange(ref _readCancellation, null);
         try
         {
             cancellation?.Cancel();
@@ -256,7 +279,6 @@ public sealed class SshTerminal : IRemoteTerminal, IBorrowedTerminalOutput
             // Already disposed.
         }
 
-        var stream = Interlocked.Exchange(ref _stream, null);
         try
         {
             stream?.Dispose();
@@ -266,24 +288,16 @@ public sealed class SshTerminal : IRemoteTerminal, IBorrowedTerminalOutput
             _logger.LogDebug(exception, "Failed to close the SSH shell stream cleanly.");
         }
 
-        var reader = _reader;
         if (reader is not null && !ReferenceEquals(reader, Thread.CurrentThread) && reader.IsAlive)
         {
             _ = reader.Join(ReaderJoinTimeoutMilliseconds);
         }
 
         cancellation?.Dispose();
-        _open = false;
-        try
-        {
-            _writeLock.Dispose();
-        }
-        catch (ObjectDisposedException)
-        {
-            // Already disposed.
-        }
 
-        if (Volatile.Read(ref _started) != 0)
+        // Keep _writeLock undisposed so any queued async WaitAsync waiter can unwind
+        // cleanly when the active writer releases instead of hanging forever.
+        if (wasStarted)
         {
             RaiseClosed();
         }

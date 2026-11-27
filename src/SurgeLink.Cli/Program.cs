@@ -43,6 +43,7 @@ if (args is ["--help"] or ["-h"] or [])
         input_sent acknowledges input only; it does not report command completion or an exit code.
         terminal wait returns when output has been quiet for --idle-ms, which is an observation, not a command boundary.
         terminal exec appends a POSIX shell sentinel and waits up to --timeout-ms (max 50000), returning exitCode when observed or status=timed_out with screen tail and output.cursor to continue reading.
+        terminal exec rejects wrapped lines over 4000 UTF-8 bytes before writing. If output capture stops before completion, status=output_incomplete leaves the outcome unknown.
         SURGELINK_INSTANCE can supply the desktop PID when --instance is omitted.
         Results are always JSON. Exit codes: 0 success, 2 usage, 3 unavailable,
         4 operation declined/failed, 130 cancelled. Execution policy is managed by your Agent application.
@@ -77,7 +78,7 @@ try
             cliPath = Environment.ProcessPath,
             mcpHostPath = host,
             mcpHostExists = host is not null && File.Exists(host),
-            environmentInstance = EnvironmentInstance(),
+            environmentInstance = ParseEnvironmentInstance(throwOnInvalid: false),
             desktops = AgentEndpoint.DiscoverDesktopProcesses(),
             instruction = "The desktop must be running and the CLI must use the same Windows account. If mcpHostExists is false, rebuild or reinstall SurgeLink.AgentHost.",
         }), AgentJson.Options));
@@ -86,19 +87,18 @@ try
 
     var parsed = CliArguments.Parse(args);
     var request = parsed.Request;
+    const int maxTextInputBytes = 1024 * 1024;
     if (parsed.TextFile is { } textFile)
     {
-        if (!File.Exists(textFile)) throw new ArgumentException($"Text file not found: {textFile}");
-        request = request with { Text = await File.ReadAllTextAsync(textFile, cancellation.Token) };
+        request = request with { Text = await ReadBoundedTextFileAsync(textFile, maxTextInputBytes, cancellation.Token) };
     }
     if (parsed.TextFromStdin)
     {
-        if (Console.IsInputRedirected) Console.InputEncoding = new UTF8Encoding(false);
-        request = request with { Text = await Console.In.ReadToEndAsync(cancellation.Token) };
+        request = request with { Text = await ReadBoundedStdinAsync(maxTextInputBytes, cancellation.Token) };
     }
     if (request.Method == "files.write" && request.Text is { } writeText && System.Text.Encoding.UTF8.GetByteCount(writeText) > 900_000)
         throw new ArgumentException("files.write text is limited to 900000 UTF-8 bytes per request; split the file into smaller writes.");
-    var instance = parsed.Instance ?? EnvironmentInstance();
+    var instance = parsed.Instance ?? ParseEnvironmentInstance(throwOnInvalid: true);
     desktop = AgentEndpoint.ResolveDesktopProcess(instance);
     response = await AgentProcessLifetime.RunAsync(desktop.Value,
         ct => new AgentClient(AgentEndpoint.ForProcess(desktop.Value)).SendAsync(request, ct), cancellation.Token);
@@ -132,8 +132,78 @@ catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or
 Console.WriteLine(JsonSerializer.Serialize(response, AgentJson.Options));
 return exitCode;
 
-static int? EnvironmentInstance() =>
-    int.TryParse(Environment.GetEnvironmentVariable("SURGELINK_INSTANCE"), out var pid) && pid > 0 ? pid : null;
+static int? ParseEnvironmentInstance(bool throwOnInvalid)
+{
+    var raw = Environment.GetEnvironmentVariable("SURGELINK_INSTANCE");
+    if (string.IsNullOrWhiteSpace(raw)) return null;
+    if (int.TryParse(raw.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var pid) && pid > 0)
+        return pid;
+    if (throwOnInvalid) throw new ArgumentException("SURGELINK_INSTANCE must be a positive desktop process ID.");
+    return null;
+}
+
+static async Task<string> ReadBoundedTextFileAsync(string path, int maxBytes, CancellationToken ct)
+{
+    try
+    {
+        if (!File.Exists(path)) throw new ArgumentException($"Text file not found: {path}");
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
+        if (stream.CanSeek && stream.Length > maxBytes)
+            throw new ArgumentException($"Text file exceeds the {maxBytes} byte limit.");
+        return await ReadBoundedUtf8Async(stream, maxBytes, "Text file", ct).ConfigureAwait(false);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
+    {
+        throw new ArgumentException($"Could not read text file '{path}': {ex.Message}", ex);
+    }
+}
+
+static async Task<string> ReadBoundedStdinAsync(int maxBytes, CancellationToken ct)
+{
+    try
+    {
+        if (Console.IsInputRedirected)
+        {
+            using var stream = Console.OpenStandardInput();
+            return await ReadBoundedUtf8Async(stream, maxBytes, "Standard input", ct).ConfigureAwait(false);
+        }
+
+        var builder = new StringBuilder();
+        var buffer = new char[4096];
+        var byteCount = 0;
+        while (true)
+        {
+            var read = await Console.In.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false);
+            if (read == 0) break;
+            byteCount += Encoding.UTF8.GetByteCount(buffer, 0, read);
+            if (byteCount > maxBytes)
+                throw new ArgumentException($"Standard input exceeds the {maxBytes} byte limit.");
+            builder.Append(buffer, 0, read);
+        }
+        return builder.ToString();
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
+    {
+        throw new ArgumentException($"Could not read standard input: {ex.Message}", ex);
+    }
+}
+
+static async Task<string> ReadBoundedUtf8Async(Stream stream, int maxBytes, string source, CancellationToken ct)
+{
+    using var memory = new MemoryStream();
+    var buffer = new byte[8192];
+    while (true)
+    {
+        var read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false);
+        if (read == 0) break;
+        if (memory.Length + read > maxBytes)
+            throw new ArgumentException($"{source} exceeds the {maxBytes} byte limit.");
+        memory.Write(buffer, 0, read);
+    }
+    var bytes = memory.GetBuffer().AsSpan(0, (int)memory.Length);
+    if (bytes.StartsWith("\xEF\xBB\xBF"u8)) bytes = bytes[3..];
+    return new UTF8Encoding(false, true).GetString(bytes);
+}
 
 static string? FindMcpHost()
 {

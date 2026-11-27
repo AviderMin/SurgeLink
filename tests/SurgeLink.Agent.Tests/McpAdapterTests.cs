@@ -123,4 +123,15 @@ public sealed class McpAdapterTests
         Assert.True((await client.CallToolAsync("send_terminal_text", arguments, cancellationToken: timeout.Token)).IsError);
         Assert.Equal(1, terminal.Writes);
     }
+
+    [Fact]
+    public async Task NullCallToolRequestReturnsInvalidArgumentsError()
+    {
+        var adapter = new McpAdapter((_, _) => throw new InvalidOperationException("Must not forward null requests"));
+
+        var result = await adapter.CallAsync(null, default);
+
+        Assert.True(result.IsError);
+        Assert.Equal("invalid_arguments", result.StructuredContent!.Value.GetProperty("errorCode").GetString());
+    }
 }

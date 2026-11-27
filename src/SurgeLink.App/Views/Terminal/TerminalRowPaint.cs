@@ -16,9 +16,9 @@ internal readonly record struct TerminalSelectionRange(TerminalPosition First, T
     public static TerminalSelectionRange None => default;
 
     /// <summary>Builds a range from drag anchors; empty anchors mean no selection.</summary>
-    public static TerminalSelectionRange FromAnchors(TerminalPosition? anchor, TerminalPosition? caret)
+    public static TerminalSelectionRange FromAnchors(TerminalPosition? anchor, TerminalPosition? caret, bool allowSingleCell = false)
     {
-        if (anchor is not { } start || caret is not { } end || start == end)
+        if (anchor is not { } start || caret is not { } end || (!allowSingleCell && start == end))
         {
             return None;
         }

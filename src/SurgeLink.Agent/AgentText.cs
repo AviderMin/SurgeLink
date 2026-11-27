@@ -29,6 +29,29 @@ internal static class AgentText
         return removed ? result.TrimStart('\r', '\n') : result;
     }
 
+    public static string StripWrappedExecEcho(string text, string submittedLine)
+    {
+        if (text.Length == 0) return text;
+        var ansi = FindAnsiSpans(text);
+        var visible = StripAnsi(text, ansi);
+        const string prefix = "command eval ";
+        var index = visible.AsSpan(0, Math.Min(64 + prefix.Length, visible.Length))
+            .IndexOf(prefix, StringComparison.Ordinal);
+        if (index < 0 || visible.AsSpan(0, index).TrimStart("\r\n").IndexOfAny('\r', '\n') >= 0) return text;
+
+        // Strip a redraw only when the entire submitted line, including its
+        // unique completion marker, matches through physical line breaks.
+        foreach (var expected in submittedLine)
+        {
+            while (index < visible.Length && visible[index] is '\r' or '\n') index++;
+            if (index >= visible.Length || visible[index++] != expected) return text;
+        }
+        if (index < visible.Length && visible[index] == '\r') index++;
+        if (index >= visible.Length || visible[index] != '\n') return text;
+
+        return text[RawEndAfterVisible(text, ansi, index + 1)..];
+    }
+
     /// <summary>
     /// The echo is a complete line: an optional short prompt, the sent command, then the
     /// line break. Requiring the match to end its line keeps those same characters alive
@@ -356,6 +379,11 @@ internal static class AgentText
                     if (cursor < text.Length && text[cursor] is >= '\u0040' and <= '\u007E')
                     {
                         end = cursor + 1;
+                        complete = true;
+                    }
+                    else if (cursor < text.Length)
+                    {
+                        end = cursor;
                         complete = true;
                     }
                     else

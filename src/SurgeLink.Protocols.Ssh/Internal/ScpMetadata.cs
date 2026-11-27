@@ -14,7 +14,7 @@ internal static class ScpMetadata
     // Paths and link targets are hex-encoded before entering the ASCII wire
     // format. NUL fields and an explicit terminator detect partial responses.
     // GNU/BusyBox stat are supported; missing tools fail closed, never to ls.
-    private const string Functions = """
+    private static readonly string Functions = """
             export LC_ALL=C
             hex() {
                 encoded=$(printf '%s' "$1" | od -An -v -tx1) || return 1
@@ -31,7 +31,7 @@ internal static class ScpMetadata
                 fi
                 printf '%s\000%s\000%s\000' "$metadata" "$identity" "$target"
             }
-            """;
+            """.ReplaceLineEndings("\n");
 
     internal static string BuildCommand(string path, bool directory)
     {
@@ -46,7 +46,7 @@ internal static class ScpMetadata
                         emit "$entry" || exit 1
                     fi
                 done
-                """;
+                """.ReplaceLineEndings("\n");
         }
         else { script += "emit \"$p\" || exit 1\n"; }
         script += "\nprintf 'END\\000'\n";
@@ -63,7 +63,7 @@ internal static class ScpMetadata
         fi
         identity=$(hex "$home") || exit 1
         printf 'SURGELINK-PWD-1\000%s\000END\000' "$identity"
-        """);
+        """.ReplaceLineEndings("\n"));
 
     internal static string ParseHome(string output)
     {

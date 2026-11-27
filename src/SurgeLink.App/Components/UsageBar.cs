@@ -24,16 +24,17 @@ internal sealed class UsageBar : Component<UsageBarProps>
     public override Element Render()
     {
         _ = UseColorScheme(); // repaint when the theme changes
-        var fraction = double.IsNaN(Props.Fraction) ? 0d : Math.Clamp(Props.Fraction, 0d, 1d);
+        var fraction = double.IsFinite(Props.Fraction) ? Math.Clamp(Props.Fraction, 0d, 1d) : 0d;
+        var height = double.IsFinite(Props.Height) ? Math.Max(Props.Height, 2) : 8d;
 
         // Star(0) is not a valid grid length, so clamp both sides to a hair.
         var bar = Grid(
             columns: [GridSize.Star(Math.Max(fraction, 0.001)), GridSize.Star(Math.Max(1 - fraction, 0.001))],
-            rows: [GridSize.Px(Math.Max(Props.Height, 2))],
+            rows: [GridSize.Px(height)],
             // One continuous track avoids transparent seams where two rounded
             // segments would otherwise meet in the middle of the bar.
-            Border(Empty()).Background(ChartPalette.Track).CornerRadius(AppTheme.ControlRadius).Grid(row: 0, column: 0, columnSpan: 2),
-            Border(Empty()).Background(ChartPalette.Severity(fraction)).CornerRadius(AppTheme.ControlRadius).Grid(row: 0, column: 0));
+            Border(Empty()).Background(ChartPalette.TrackRef).CornerRadius(AppTheme.ControlRadius).Grid(row: 0, column: 0, columnSpan: 2),
+            Border(Empty()).Background(ChartPalette.SeverityRef(fraction)).CornerRadius(AppTheme.ControlRadius).Grid(row: 0, column: 0));
 
         if (Props.Label is null && Props.Detail is null)
         {

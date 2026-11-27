@@ -208,7 +208,8 @@ internal sealed class AgentPanel : Component<AgentPanelProps>
                         peers.Count == 0 ? Empty() : Caption(string.Join(", ", peers.Select(p => p.Name)))
                             .TextWrapping(TextWrapping.Wrap).Foreground(Theme.SecondaryText),
                         ComboBox([Str.T("shell.agent.mcp.generic", "Generic MCP (JSON)"), "Codex", "Claude Code", "Cursor"],
-                                Optional<int>.Of(clientIndex), setClientIndex)
+                                Optional<int>.Of(clientIndex),
+                                index => { if (Enum.IsDefined(typeof(AgentMcpClient), index)) setClientIndex(index); })
                             .HAlign(HorizontalAlignment.Stretch).AutomationName(Str.T("shell.agent.mcp.client", "MCP client"))
                             .AutomationId("AgentMcpClient"),
                         Caption(McpSetupHint(client)).TextWrapping(TextWrapping.Wrap).Foreground(Theme.SecondaryText),

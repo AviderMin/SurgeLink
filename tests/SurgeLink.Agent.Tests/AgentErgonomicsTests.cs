@@ -57,6 +57,23 @@ public sealed class AgentErgonomicsTests
     }
 
     [Fact]
+    public async Task TerminalWaitDoesNotReportIdleAfterLosingHistory()
+    {
+        var terminal = new RichTerminal("hello", cursor: 5) { EmptyAfterFirstPage = true, Gap = true };
+        var gateway = new AgentGateway();
+        var handle = gateway.GrantSession("tab", "Demo", new AgentGatewayTests.TestSession(), null, terminal);
+
+        var response = await gateway.ExecuteAsync(new("terminal.wait", handle,
+            Cursor: 0, IdleMilliseconds: 100, TimeoutMilliseconds: 3000), default);
+
+        Assert.True(response.Success, response.Message);
+        var data = response.Data!.Value;
+        Assert.True(data.GetProperty("gap").GetBoolean());
+        Assert.False(data.GetProperty("idle").GetBoolean());
+        Assert.False(data.GetProperty("timedOut").GetBoolean());
+    }
+
+    [Fact]
     public async Task ReadingAccessCannotWriteFiles()
     {
         var files = new MemoryFiles();
@@ -482,6 +499,81 @@ public sealed class AgentErgonomicsTests
     }
 
     [Fact]
+    public async Task TerminalExecRejectsAnOversizedWrappedLineWithoutConsumingTheCheck()
+    {
+        var terminal = new ExecTerminal();
+        var gateway = new AgentGateway();
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+        var input = await TerminalControlTests.CheckedInputAsync(gateway, handle);
+        var oversized = input with { Method = "terminal.exec", Text = new string('字', 1400) };
+
+        var rejected = await gateway.ExecuteAsync(oversized, default);
+        Assert.Equal("invalid_arguments", rejected.ErrorCode);
+        Assert.Equal(0, terminal.Writes);
+
+        var accepted = await gateway.ExecuteAsync(oversized with { Text = "echo hi" }, default);
+        Assert.True(accepted.Success, accepted.Message);
+        Assert.Equal(1, terminal.Writes);
+    }
+
+    [Fact]
+    public async Task TerminalExecRemovesWrappedEchoAndKeepsRealOutputMatchingTheInput()
+    {
+        var terminal = new ExecTerminal { WrappedEcho = true, CommandOutput = "ls" };
+        var gateway = new AgentGateway();
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+        var input = await TerminalControlTests.CheckedInputAsync(gateway, handle);
+
+        var response = await gateway.ExecuteAsync(input with { Method = "terminal.exec", Text = "ls" }, default);
+
+        Assert.True(response.Success, response.Message);
+        Assert.Equal("ls\nprompt> ", response.Data!.Value.GetProperty("output").GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task TerminalExecCachesAReplayableResponseForLargeEscapedOutput()
+    {
+        var terminal = new ExecTerminal { CommandOutput = new string('\u0001', 200 * 1024) };
+        var gateway = new AgentGateway();
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+        var input = await TerminalControlTests.CheckedInputAsync(gateway, handle);
+        var request = input with { Method = "terminal.exec", Text = "echo hi", MaxBytes = int.MaxValue };
+
+        var first = await gateway.ExecuteAsync(request, default);
+        var replay = await gateway.ExecuteAsync(request with { MaxBytes = 1024 }, default);
+
+        Assert.True(first.Success, first.Message);
+        Assert.True(first.Data!.Value.GetProperty("output").GetProperty("truncated").GetBoolean());
+        Assert.Equal(AgentWire.Serialize(first), AgentWire.Serialize(replay));
+        Assert.Equal(1, terminal.Writes);
+    }
+
+    [Fact]
+    public async Task TerminalExecReportsIncompleteOutputWhenTheCaptureCapPrecedesCompletion()
+    {
+        var terminal = new ExecTerminal { CommandOutput = new string('x', 513 * 1024), EmitCompletion = false };
+        var gateway = new AgentGateway();
+        var session = new AgentGatewayTests.TestSession();
+        var handle = gateway.GrantSession("tab", "Demo", session, null, terminal, true,
+            target: new AgentSessionTarget(session.SessionId, "host.test", 22, "alice"));
+        var input = await TerminalControlTests.CheckedInputAsync(gateway, handle);
+
+        var response = await gateway.ExecuteAsync(input with { Method = "terminal.exec", Text = "echo hi" }, default);
+
+        Assert.True(response.Success, response.Message);
+        var data = response.Data!.Value;
+        Assert.Equal("output_incomplete", data.GetProperty("status").GetString());
+        Assert.False(data.GetProperty("commandCompletionKnown").GetBoolean());
+        Assert.True(data.GetProperty("output").GetProperty("truncated").GetBoolean());
+    }
+
+    [Fact]
     public async Task TerminalExecReportsHumanTakeoverAsFailureAfterSendingInput()
     {
         var terminal = new ExecTerminal();
@@ -682,13 +774,14 @@ public sealed class AgentErgonomicsTests
     {
         private int _reads;
         public bool EmptyAfterFirstPage { get; init; }
+        public bool Gap { get; init; }
         public TerminalScreenSnapshot ReadScreen() => new(text, 80, 24, 0, 0, true, false, false, false, 0, cursor, false, false);
         public TerminalOutputPage ReadOutput(long? requested)
         {
             var start = requested ?? 0;
             if (EmptyAfterFirstPage && _reads++ > 0) return new("", text.Length, 0, text.Length, false, false);
             var pageText = start < text.Length ? text[(int)start..] : string.Empty;
-            return new(pageText, text.Length, 0, text.Length, false, start + pageText.Length < text.Length);
+            return new(pageText, text.Length, 0, text.Length, Gap, start + pageText.Length < text.Length);
         }
         public Task<TerminalInputReceipt> SendTextAsync(string value, bool submit, long expectedRevision, CancellationToken ct) =>
             Task.FromResult(new TerminalInputReceipt(expectedRevision + 1, cursor, value.Length, submit));
@@ -712,6 +805,9 @@ public sealed class AgentErgonomicsTests
         public int Writes { get; private set; }
         public string? LastWrittenText { get; private set; }
         public Action? AfterWrite { get; set; }
+        public bool WrappedEcho { get; init; }
+        public bool EmitCompletion { get; init; } = true;
+        public string CommandOutput { get; init; } = "hi";
         public TerminalScreenSnapshot ReadScreen() => new(_screen, 80, 24, 0, 0, true, false, false, false, _revision, _output.Length, false, false);
         public TerminalOutputPage ReadOutput(long? cursor)
         {
@@ -728,7 +824,9 @@ public sealed class AgentErgonomicsTests
             _screen = "hi\n";
             var marker = ReadExecMarker(text);
             Assert.NotEqual("__SURGELINK_EXIT_exec-1__", marker);
-            _output = "\u001b[?2004l\r" + text + "\r\nhi\r\n" + marker + ":0\r\nprompt> ";
+            var echo = WrappedEcho ? text.Insert(40, "\r\n") : text;
+            _output = "\u001b[?2004l\r" + echo + "\r\n" + CommandOutput + "\r\n";
+            if (EmitCompletion) _output += marker + ":0\r\nprompt> ";
             AfterWrite?.Invoke();
             return Task.FromResult(new TerminalInputReceipt(_revision, 0, text.Length, submit));
         }

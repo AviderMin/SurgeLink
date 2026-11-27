@@ -14,7 +14,9 @@ public sealed record AgentAuditEntry(
     string? TargetPath,
     string? OperationId,
     bool Success,
-    string OutcomeCode);
+    string OutcomeCode,
+    string? LocalPath = null,
+    string? Destination = null);
 
 /// <summary>Thread-safe bounded ring buffer of structured Agent audit records.</summary>
 public sealed class AgentAuditLog

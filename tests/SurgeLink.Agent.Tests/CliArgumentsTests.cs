@@ -108,6 +108,13 @@ public sealed class CliArgumentsTests
     [InlineData("terminal send --session h --text cmd --text-stdin --revision 0 --operation-id x --check-token t")]
     [InlineData("terminal send --session h --text-file a.txt --text-stdin --revision 0 --operation-id x --check-token t")]
     [InlineData("files write --session h --path /tmp/a --text hi --text-stdin")]
+    [InlineData("terminal wait --session h --idle-ms 0")]
+    [InlineData("terminal wait --session h --timeout-ms 0")]
+    [InlineData("terminal output --session h --max-bytes 0")]
+    [InlineData("terminal output --session h --max-lines 0")]
+    [InlineData("terminal screen --session h --tail-rows 0")]
+    [InlineData("files list --session h --path / --limit 0")]
+    [InlineData("files read --session h --path /tmp/a --max-bytes 10 --tail-bytes 10")]
     public void InvalidArgumentsAreRejected(string arguments) =>
         Assert.Throws<ArgumentException>(() => CliArguments.Parse(arguments.Split(' ')));
 }

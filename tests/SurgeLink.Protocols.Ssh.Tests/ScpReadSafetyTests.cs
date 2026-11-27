@@ -20,7 +20,7 @@ public sealed class ScpReadSafetyTests
         var factory = new SshConnectionFactory(request, options, context, NullLogger.Instance);
         await using var files = new ScpFileSystem(factory, options, NullLogger.Instance);
 
-        var error = Assert.Throws<ProtocolException>(() => { _ = files.OpenWriteAsync(path, null, null, default); });
+        var error = await Assert.ThrowsAsync<ProtocolException>(() => files.OpenWriteAsync(path, null, null, default));
         Assert.Equal(ProtocolFailureKind.Configuration, error.Kind);
     }
 

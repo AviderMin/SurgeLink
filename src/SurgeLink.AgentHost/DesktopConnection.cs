@@ -1,5 +1,6 @@
-using System.Security.Cryptography;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text.Json;
 using SurgeLink.Agent;
 
 namespace SurgeLink.AgentHost;
@@ -29,10 +30,21 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
         if (Volatile.Read(ref _selectedDesktop) is > 0 and var selected)
         {
             var identity = Volatile.Read(ref _selectedIdentity);
-            if (identity is null || identity.StartedUtc is null)
+            if (identity is null || identity.ProcessId != selected || identity.StartedUtc is null)
             {
                 var current = KnownDesktops().FirstOrDefault(p => p.ProcessId == selected);
-                if (current?.StartedUtc is not null) Volatile.Write(ref _selectedIdentity, new(selected, current.StartedUtc));
+                if (current?.StartedUtc is not null)
+                {
+                    lock (_orderedGate)
+                    {
+                        if (_selectedDesktop == selected
+                            && (_selectedIdentity is null
+                                || (_selectedIdentity.ProcessId == selected && _selectedIdentity.StartedUtc is null)))
+                        {
+                            Volatile.Write(ref _selectedIdentity, new(selected, current.StartedUtc));
+                        }
+                    }
+                }
             }
             return selected;
         }
@@ -101,7 +113,10 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
             if (request.Method == "desktops.select") return await SelectDesktopAsync(request.DesktopProcessId, ct).ConfigureAwait(false);
             if (request.Method == "client.heartbeat") return await SendHeartbeatAsync(request, ct).ConfigureAwait(false);
             desktop = ResolveDesktop();
-            if (CurrentDesktop() is { StartedUtc: not null } initial && Volatile.Read(ref _selectedIdentity)?.StartedUtc is { } started
+            var selectedIdentity = Volatile.Read(ref _selectedIdentity);
+            if (selectedIdentity?.ProcessId == desktop
+                && selectedIdentity.StartedUtc is { } started
+                && CurrentDesktop(desktop) is { StartedUtc: not null } initial
                 && initial.StartedUtc != started)
                 return DiscoveryError("desktop_instance_expired", "The selected desktop process ID was reused by a new desktop. Call list_desktops and explicitly select the intended replacement before retrying. Terminal grants never carry over to the replacement; uncertain input must not be replayed.", [desktop]);
             return await new AgentClient(AgentEndpoint.ForProcess(desktop)).SendAsync(request, ct).ConfigureAwait(false);
@@ -111,7 +126,7 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return AgentResponse.Error("cancelled", "The request was cancelled."); }
         catch (OperationCanceledException)
         { return DiscoveryError("desktop_ipc_timeout", "The desktop did not respond before the request deadline. For uncertain terminal input, preserve the original operation ID and arguments; observe before retrying."); }
-        catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException or PlatformNotSupportedException)
+        catch (Exception ex) when (ex is IOException or JsonException or TimeoutException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
             var running = KnownDesktops();
             var expired = SelectedInstanceExpired(running, desktop);
@@ -123,18 +138,17 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
         }
     }
 
-    private AgentDesktopProcess? CurrentDesktop()
-    {
-        var identity = Volatile.Read(ref _selectedIdentity);
-        return identity is null ? null : KnownDesktops().FirstOrDefault(p => p.ProcessId == identity.ProcessId);
-    }
+    private AgentDesktopProcess? CurrentDesktop(int desktop) =>
+        KnownDesktops().FirstOrDefault(p => p.ProcessId == desktop);
 
     private bool SelectedInstanceExpired(IReadOnlyList<AgentDesktopProcess> running, int desktop)
     {
-        if (Volatile.Read(ref _selectedDesktop) <= 0) return false;
+        var selected = Volatile.Read(ref _selectedDesktop);
+        if (selected <= 0 || selected != desktop) return false;
         var current = running.FirstOrDefault(p => p.ProcessId == desktop);
         var identity = Volatile.Read(ref _selectedIdentity);
-        return current is null || identity?.StartedUtc is not null && current.StartedUtc is not null && current.StartedUtc != identity.StartedUtc;
+        return current is null
+            || (identity?.ProcessId == desktop && identity.StartedUtc is not null && current.StartedUtc is not null && current.StartedUtc != identity.StartedUtc);
     }
 
     private IReadOnlyList<AgentDesktopProcess> KnownDesktops()
@@ -260,7 +274,7 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
                     await SendAsync(new("client.heartbeat", ClientId: _clientId,
                         ClientName: Volatile.Read(ref _clientName)), budget.Token).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException or UnauthorizedAccessException or PlatformNotSupportedException)
+                catch (Exception ex) when (ex is IOException or JsonException or TimeoutException or OperationCanceledException or UnauthorizedAccessException or PlatformNotSupportedException)
                 { /* Desktop restart/offline is recoverable; tool discovery must still succeed. */ }
             } while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false));
         }
@@ -314,7 +328,8 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
                     try
                     {
                         exited = watched is null || watched.HasExited
-                            || identity?.StartedUtc is { } started && watched.StartTime.ToUniversalTime() != started.UtcDateTime;
+                            || (identity?.ProcessId == selected && identity.StartedUtc is { } started
+                                && watched.StartTime.ToUniversalTime() != started.UtcDateTime);
                     }
                     catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
                     {
@@ -326,9 +341,16 @@ public sealed class DesktopConnection(int? instance = null, Func<int>? resolveDe
                     watched?.Dispose();
                     watched = null;
                     watchedRevision = -1;
-                    var count = _discoverDesktops().Count;
-                    if (count > 0) sawDesktop = true;
-                    exited = sawDesktop && count == 0;
+                    try
+                    {
+                        var count = _discoverDesktops().Count;
+                        if (count > 0) sawDesktop = true;
+                        exited = sawDesktop && count == 0;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or System.ComponentModel.Win32Exception)
+                    {
+                        exited = false;
+                    }
                 }
 
                 // A tool may have selected another instance during observation.

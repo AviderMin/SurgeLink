@@ -48,8 +48,15 @@ public static class DiskStatsParser
                 continue;
             }
 
-            read += disk.SectorsRead;
-            write += disk.SectorsWritten;
+            if (disk.SectorsRead > 0)
+            {
+                read = read > long.MaxValue - disk.SectorsRead ? long.MaxValue : read + disk.SectorsRead;
+            }
+
+            if (disk.SectorsWritten > 0)
+            {
+                write = write > long.MaxValue - disk.SectorsWritten ? long.MaxValue : write + disk.SectorsWritten;
+            }
         }
 
         return (read, write);

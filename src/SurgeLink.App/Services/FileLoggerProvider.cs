@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Threading.Channels;
 using SurgeLink.Core.Security;
@@ -65,13 +66,26 @@ public sealed class FileLoggerProvider : ILoggerProvider
         try
         {
             Directory.CreateDirectory(_directory);
-            var path = Path.Combine(_directory, $"surge-{day:yyyyMMdd}.log");
+            var path = Path.Combine(_directory, $"surge-{day.ToString("yyyyMMdd", CultureInfo.InvariantCulture)}.log");
             if (_lastPruneDate != day)
             {
                 _lastPruneDate = day;
                 PruneOldLogs(day);
             }
-            await File.AppendAllTextAsync(path, batch, Encoding.UTF8).ConfigureAwait(false);
+
+            const int maxAttempts = 3;
+            for (var attempt = 0; attempt < maxAttempts; attempt++)
+            {
+                try
+                {
+                    await File.AppendAllTextAsync(path, batch, Encoding.UTF8).ConfigureAwait(false);
+                    return;
+                }
+                catch (IOException) when (attempt + 1 < maxAttempts)
+                {
+                    await Task.Delay(30).ConfigureAwait(false);
+                }
+            }
         }
         catch (IOException)
         {
@@ -88,9 +102,21 @@ public sealed class FileLoggerProvider : ILoggerProvider
         foreach (var file in Directory.EnumerateFiles(_directory, "surge-*.log"))
         {
             var name = Path.GetFileNameWithoutExtension(file);
-            if (name.Length != 14 || !DateOnly.TryParseExact(name.AsSpan(6), "yyyyMMdd", out var fileDate))
+            if (name.Length != 14 || !DateOnly.TryParseExact(name.AsSpan(6), "yyyyMMdd",
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out var fileDate))
                 continue;
             if (fileDate >= cutoff) continue;
+            try { File.Delete(file); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+
+        foreach (var file in Directory.EnumerateFiles(_directory, "crash-*.log"))
+        {
+            var name = Path.GetFileNameWithoutExtension(file);
+            if (name.Length < 14 || !DateOnly.TryParseExact(name.AsSpan(6, 8), "yyyyMMdd",
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out var crashDate))
+                continue;
+            if (crashDate >= cutoff) continue;
             try { File.Delete(file); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
@@ -119,7 +145,8 @@ public sealed class FileLoggerProvider : ILoggerProvider
             }
 
             var message = formatter(state, exception);
-            var line = $"{DateTime.Now:HH:mm:ss.fff} [{Short(logLevel)}] {_category}: {message}";
+            var timestamp = DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture);
+            var line = $"{timestamp} [{Short(logLevel)}] {_category}: {message}";
             if (exception is not null)
             {
                 line += Environment.NewLine + exception;

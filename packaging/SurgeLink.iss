@@ -52,6 +52,10 @@ Name: "chinesesimplified"; MessagesFile: "Languages\ChineseSimplified.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\cli"
+Type: filesandordirs; Name: "{app}\agent"
+
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Languages\LICENSE.txt"; DestDir: "{app}\Licenses"; DestName: "InnoSetup-ChineseSimplified.txt"; Flags: ignoreversion

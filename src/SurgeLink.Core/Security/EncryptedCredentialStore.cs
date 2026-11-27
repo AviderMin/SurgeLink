@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using SurgeLink.Core.Storage;
 
@@ -107,7 +108,15 @@ public sealed class EncryptedCredentialStore : ICredentialStore
             return null;
         }
 
-        return Convert.ToBase64String(_protector.Protect(Encoding.UTF8.GetBytes(plaintext)));
+        var plainBytes = Encoding.UTF8.GetBytes(plaintext);
+        try
+        {
+            return Convert.ToBase64String(_protector.Protect(plainBytes));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plainBytes);
+        }
     }
 
     private string? Unprotect(string? protectedBase64, out bool failed)
@@ -118,11 +127,13 @@ public sealed class EncryptedCredentialStore : ICredentialStore
             return null;
         }
 
+        byte[]? plainBytes = null;
         try
         {
-            return Encoding.UTF8.GetString(_protector.Unprotect(Convert.FromBase64String(protectedBase64)));
+            plainBytes = _protector.Unprotect(Convert.FromBase64String(protectedBase64));
+            return Encoding.UTF8.GetString(plainBytes);
         }
-        catch (System.Security.Cryptography.CryptographicException)
+        catch (CryptographicException)
         {
             failed = true;
             return null;
@@ -131,6 +142,13 @@ public sealed class EncryptedCredentialStore : ICredentialStore
         {
             failed = true;
             return null;
+        }
+        finally
+        {
+            if (plainBytes is not null)
+            {
+                CryptographicOperations.ZeroMemory(plainBytes);
+            }
         }
     }
 }

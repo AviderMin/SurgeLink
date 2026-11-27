@@ -8,7 +8,7 @@ implementation.
 
 ```
             +-----------------------------+
-            |        SurgeLink.App        |   WinUI 3 + Reactor (no XAML)
+            |        SurgeLink.App        |   WinUI 3 + Reactor (embedded ScrollBar XAML)
             |  shell, views, composition  |
             +--------------+--------------+
                            |
@@ -102,11 +102,7 @@ never has to know about history. `Version` and the coalesced `Invalidated` event
 proportional to output, not to keystrokes. `FindText` searches the retained scrollback and the
 current viewport under the same lock and returns absolute line/column spans; the surface paints
 them as search bands without rebuilding terminal text or allocating per-cell elements.
-Narrowing the window keeps hidden cells behind a shorter logical row, so widening restores the
-original text; none of the resize paths attempt logical-line reflow. Before an active-screen
-edit moves cells, a wide glyph cut by the current right edge is removed together with its hidden
-continuation, and the remaining hidden cells are cleared, so widening cannot resurrect erased
-text or leave an orphan half.
+With `ReflowOnResize = true` (enabled by `TerminalBridge` on desktop terminals), horizontal resizes unwrap and re-wrap soft-wrapped primary-screen and scrollback lines to the new column width; when `ReflowOnResize = false` (the standalone `TerminalEmulator` default), narrowing hides right-edge columns behind a longer logical row so widening restores original text. The alternate screen never reflows and simply crops or pads on resize. Before an active-screen edit moves cells, a wide glyph cut by the current right edge is removed together with its hidden continuation, and the remaining hidden cells are cleared, so widening cannot resurrect erased text or leave an orphan half.
 
 ## Remote monitoring
 
@@ -219,6 +215,7 @@ protocols.Register(new DemoProtocolPlugin());
   terminal type, NAWS and TCP connection/close behaviour against local test servers.
 - `tests/SurgeLink.Protocols.Serial.Tests` — COM-port option validation, raw byte I/O, cancellation,
   open/write timeouts, unplug faults and deterministic teardown using a bounded fake port.
+- `tests/SurgeLink.Agent.Tests` — `AgentGateway` single-use checks, rate limiting, replay cache, file safety, `AgentFilePage`, audit log, `DesktopConnection`, MCP host adapter, and CLI argument/process contracts.
 - `tests/SurgeLink.Core.Tests` — stores, catalog, session manager behaviour with fake protocols.
 - `tests/SurgeLink.Protocols.Conformance` — a protocol-agnostic conformance suite. Any protocol is
   validated by adding one `ProtocolFixture` subclass; it checks capability handles, session

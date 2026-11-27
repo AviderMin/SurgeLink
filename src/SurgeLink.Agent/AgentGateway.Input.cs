@@ -7,6 +7,9 @@ namespace SurgeLink.Agent;
 
 public sealed partial class AgentGateway
 {
+    // Leave room for paste delimiters and Enter within a 4096-byte canonical PTY line.
+    private const int MaximumExecLineBytes = 4000;
+
     private async Task<AgentResponse> ExecuteInputAsync(Grant grant, AgentRequest request,
         System.Diagnostics.Stopwatch requestClock, CancellationToken ct)
     {
@@ -32,8 +35,8 @@ public sealed partial class AgentGateway
             return AgentResponse.Error("invalid_arguments", "expectedInputRevision from read_terminal is required.");
         if ((request.Method is "terminal.text" or "terminal.exec") && (request.Text is null || request.Text.Length > 16384 || request.Text.Length == 0 && !request.Submit))
             return AgentResponse.Error("invalid_arguments", "Supply text up to 16384 characters, or submit an empty line explicitly.");
-        if (request.Method == "terminal.exec" && request.Text!.Contains('\0'))
-            return AgentResponse.Error("invalid_arguments", "A POSIX shell command cannot contain NUL.");
+        if (request.Method == "terminal.exec" && (string.IsNullOrWhiteSpace(request.Text) || request.Text.Contains('\0')))
+            return AgentResponse.Error("invalid_arguments", "Supply a non-empty POSIX shell command without NUL.");
         if (request.Method == "terminal.key" && (string.IsNullOrWhiteSpace(request.Key) || request.Key.Length > 64))
             return AgentResponse.Error("invalid_arguments", "Supply a terminal key such as Enter, Tab, Ctrl+C or Up.");
         var isText = request.Method is "terminal.text" or "terminal.exec";
@@ -41,6 +44,10 @@ public sealed partial class AgentGateway
             ? "__SURGELINK_EXIT_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) + "__"
             : null;
         var sendText = marker is null ? request.Text : BuildExecText(request.Text!, marker);
+        if (marker is not null && Encoding.UTF8.GetByteCount(sendText!) > MaximumExecLineBytes)
+            return AgentResponse.Error("invalid_arguments", "The wrapped command exceeds the 4000-byte PTY input limit. No input was sent.");
+        if (marker is not null && RemainingWaitMilliseconds(requestClock) < 100)
+            return ExecDeadlineBeforeWrite();
 
         // Consume a rate permit before consuming the one-time check token. A
         // throttled request must remain replayable without another Check Sessions.
@@ -62,6 +69,8 @@ public sealed partial class AgentGateway
             if (_timeProvider.GetUtcNow() >= check.ExpiresUtc || !grant.Terminal.ReadScreen().MatchesContent(check.Screen)
                 || grant.Activate is not null && grant.IsActive is not null && !grant.IsActive())
                 return AgentResponse.Error("session_check_required", "The target changed or the check expired while selecting the terminal. Run Check Sessions again.");
+            if (marker is not null && RemainingWaitMilliseconds(requestClock) < 100)
+                return ExecDeadlineBeforeWrite();
             var receipt = isText
                 ? await grant.Terminal.SendCheckedTextAsync(sendText!, request.Method == "terminal.exec" || request.Submit, check.Screen, ct).ConfigureAwait(false)
                 : await grant.Terminal.SendCheckedKeyAsync(request.Key!, check.Screen, ct).ConfigureAwait(false);
@@ -69,10 +78,9 @@ public sealed partial class AgentGateway
             TouchControl(grant);
             if (marker is not null)
             {
-                grant.LastInputText = request.Text;
                 var (wait, exitCode) = await WaitOutputAsync(grant, request with { Cursor = receipt.OutputCursor }, ct,
-                    marker + ":", RemainingWaitMilliseconds(requestClock)).ConfigureAwait(false);
-                response = BuildExecResponse(operationId, receipt, wait, exitCode, marker, request.Text);
+                    marker + ":", RemainingWaitMilliseconds(requestClock), sendText).ConfigureAwait(false);
+                response = BuildExecResponse(operationId, receipt, wait, exitCode);
             }
             else
             {
@@ -89,11 +97,14 @@ public sealed partial class AgentGateway
         catch (InvalidOperationException) { response = AgentResponse.Error("terminal_unavailable", "The terminal is closed or unavailable."); }
         catch (Exception) { response = AgentResponse.Error("input_outcome_unknown", "The input outcome is uncertain. Observe the terminal before continuing."); }
         if (response.ErrorCode == "input_outcome_unknown") grant.InputOutcomeUnknown = true;
-        if (response.Success) grant.LastInputText = request.Method is "terminal.text" or "terminal.exec" ? request.Text : null;
+        if (inputWritten) grant.LastInputText = isText ? sendText : null;
         grant.Inputs.Remember(operationId, fingerprint, response);
         // Do not replace a successful acknowledgement with cancellation after bytes were accepted.
         return response;
     }
+
+    private static AgentResponse ExecDeadlineBeforeWrite() =>
+        AgentResponse.Error("cancelled", "The command's wait budget expired before writing. No input was sent.");
 
     private static string BuildExecText(string command, string marker)
     {
@@ -110,30 +121,8 @@ public sealed partial class AgentGateway
         return line.Append("')\"; printf '\\n").Append(marker).Append(":%d\\n' \"$?\"").ToString();
     }
 
-    private static string CleanExecOutput(string text, string marker, string? echoText)
-    {
-        var command = echoText?.Trim();
-        var echoRemoved = false;
-        var filtered = new List<string>();
-        foreach (var line in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
-        {
-            if (line.Contains(marker, StringComparison.Ordinal))
-                continue;
-            if (!echoRemoved && !string.IsNullOrEmpty(command)
-                && string.Equals(line.Trim(), command, StringComparison.Ordinal))
-            {
-                echoRemoved = true;
-                continue;
-            }
-            filtered.Add(line);
-        }
-        while (filtered.Count > 0 && string.IsNullOrEmpty(filtered[0])) filtered.RemoveAt(0);
-        while (filtered.Count > 0 && string.IsNullOrEmpty(filtered[^1])) filtered.RemoveAt(filtered.Count - 1);
-        return string.Join('\n', filtered);
-    }
-
     private static AgentResponse BuildExecResponse(string operationId, TerminalInputReceipt receipt, AgentResponse wait,
-        int? exitCode, string marker, string? echoText)
+        int? exitCode)
     {
         if (!wait.Success)
         {
@@ -146,9 +135,9 @@ public sealed partial class AgentGateway
         }
 
         var data = wait.Data!.Value;
-        var text = CleanExecOutput(data.GetProperty("text").GetString() ?? string.Empty, marker, echoText);
+        var text = (data.GetProperty("text").GetString() ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n').Trim('\n');
         var timedOut = data.GetProperty("timedOut").GetBoolean();
-        var status = exitCode is not null ? "executed" : timedOut ? "timed_out" : "input_sent";
+        var status = exitCode is not null ? "executed" : timedOut ? "timed_out" : "output_incomplete";
 
         return AgentResponse.Ok(new
         {

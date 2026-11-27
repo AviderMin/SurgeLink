@@ -45,7 +45,7 @@ public static class ZhProtocols
         ["shell.editor.devicesHint"] = "选择已检测到的串口，或在上方手动输入名称；插入适配器后可刷新列表。",
         ["shell.editor.refreshDevices"] = "刷新",
         ["shell.editor.connectionOptions"] = "连接参数",
-        ["shell.editor.connectionOptionsHint"] = "请与目标设备的串口参数保持一致。",
+        ["shell.editor.connectionOptionsHint"] = "请与目标设备的连接参数保持一致。",
         ["shell.editor.optionInvalid"] = "请检查“{0}”的值。",
         ["shell.editor.deviceNamePlaceholder"] = "默认为设备名称",
     };

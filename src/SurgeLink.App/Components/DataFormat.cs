@@ -34,19 +34,23 @@ internal static class DataFormat
         return value.ToString(format, CultureInfo.CurrentCulture) + " " + ByteUnits[unit];
     }
 
-    /// <summary>Formats a byte rate, e.g. <c>2.4 MB/s</c>; negative values mean "not available".</summary>
+    /// <summary>Formats a byte rate, e.g. <c>2.4 MB/s</c>; negative or non-finite values mean "not available".</summary>
     public static string Rate(double bytesPerSecond) =>
-        bytesPerSecond < 0
+        !double.IsFinite(bytesPerSecond) || bytesPerSecond < 0
             ? Str.T("monitor.na", "n/a")
-            : Bytes((long)bytesPerSecond) + "/s";
+            : Bytes((long)Math.Min(Math.Round(bytesPerSecond), long.MaxValue)) + "/s";
 
     /// <summary>Formats a 0..1 fraction as a percentage, e.g. <c>63%</c>.</summary>
     public static string Percent(double fraction) =>
-        (Math.Clamp(fraction, 0d, 1d) * 100).ToString("0", CultureInfo.CurrentCulture) + "%";
+        !double.IsFinite(fraction)
+            ? Str.T("monitor.na", "n/a")
+            : (Math.Clamp(fraction, 0d, 1d) * 100).ToString("0", CultureInfo.CurrentCulture) + "%";
 
     /// <summary>Formats a 0..100 value as a whole percentage, e.g. <c>12%</c>.</summary>
     public static string PercentValue(double percent) =>
-        percent.ToString("0", CultureInfo.CurrentCulture) + "%";
+        !double.IsFinite(percent)
+            ? Str.T("monitor.na", "n/a")
+            : percent.ToString("0", CultureInfo.CurrentCulture) + "%";
 
     /// <summary>Formats an uptime as <c>12d 0h 43m</c>, <c>3h 12m</c> or <c>45s</c>.</summary>
     public static string Duration(TimeSpan value)

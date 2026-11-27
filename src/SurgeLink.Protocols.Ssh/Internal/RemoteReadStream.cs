@@ -64,7 +64,11 @@ internal sealed class RemoteReadStream : Stream
         }
         catch (OperationCanceledException)
         {
-            await _lifetime.CancelAsync().ConfigureAwait(false);
+            if (!_lifetime.IsCancellationRequested)
+            {
+                try { await _lifetime.CancelAsync().ConfigureAwait(false); }
+                catch (ObjectDisposedException) { }
+            }
             throw;
         }
     }
@@ -124,6 +128,8 @@ internal sealed class RemoteReadStream : Stream
 
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            lifetime.ThrowIfCancellationRequested();
             if (buffer.IsEmpty) return;
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime);
             var token = linked.Token;

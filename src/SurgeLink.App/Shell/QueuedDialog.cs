@@ -39,10 +39,21 @@ internal sealed class QueuedDialog : Component<QueuedDialogProps>
         var settingsStore = AppServices.Current!.Settings;
         var settings = UseExternalStore(settingsStore.Subscribe, () => settingsStore.Current);
 
+        var isOpen = Props.Dialog.IsOpen;
+        var cancellationToken = Props.CancellationToken;
         UseEffect(() =>
         {
+            if (!isOpen)
+            {
+                return () => { };
+            }
+            if (cancellationToken.IsCancellationRequested)
+            {
+                Finish(ContentDialogResult.None);
+                return () => { };
+            }
             var dispatcher = DispatcherQueue.GetForCurrentThread();
-            var registration = Props.CancellationToken.Register(() => dispatcher?.TryEnqueue(() =>
+            var registration = cancellationToken.Register(() => dispatcher?.TryEnqueue(() =>
             {
                 // A waiting prompt has no native popup to hide. Complete it
                 // without flashing it after the current dialog eventually closes.
@@ -54,7 +65,7 @@ internal sealed class QueuedDialog : Component<QueuedDialogProps>
                 registration.Dispose();
                 queue.Remove(id.Current);
             };
-        }, queue);
+        }, queue, isOpen, cancellationToken);
 
         void Finish(ContentDialogResult result)
         {

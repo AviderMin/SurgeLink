@@ -598,6 +598,130 @@ public sealed class AgentGatewayTests
         await Assert.ThrowsAsync<IOException>(() => AgentWire.ReadAsync<AgentRequest>(stream, default));
     }
 
+    [Fact]
+    public async Task TailBytesAndMaxBytesCannotBeCombinedInFileRead()
+    {
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var handle = gateway.GrantSession("tab", "Demo", new TestSession { FileSystem = new CountingFiles() }, null, allowFileRead: true);
+
+        var response = await gateway.ExecuteAsync(new("files.read", handle, "/config", MaxBytes: 16, TailBytes: 16), default);
+
+        Assert.False(response.Success);
+        Assert.Equal("invalid_arguments", response.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData("/tmp/..")]
+    [InlineData("/a/b/../..")]
+    public async Task RecursiveDeleteRejectsNormalizedRootTraversal(string path)
+    {
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var session = new TestSession { FileSystem = new CountingFiles() };
+        var handle = gateway.GrantSession("tab", "Demo", session, null, new CountingTerminal(), allowControl: true,
+            target: new AgentSessionTarget(session.SessionId, "server.test", 22, "alice"));
+
+        var response = await gateway.ExecuteAsync(new("files.delete", handle, path, Recursive: true), default);
+
+        Assert.Equal("invalid_path", response.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData("relative.txt", "/abs.txt")]
+    [InlineData("/abs.txt", "relative.txt")]
+    public async Task FilesRenameRequiresAbsoluteSourceAndDestination(string source, string destination)
+    {
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var session = new TestSession { FileSystem = new CountingFiles() };
+        var handle = gateway.GrantSession("tab", "Demo", session, null, new CountingTerminal(), allowControl: true,
+            target: new AgentSessionTarget(session.SessionId, "server.test", 22, "alice"));
+
+        var response = await gateway.ExecuteAsync(new("files.rename", handle, source, Destination: destination), default);
+
+        Assert.Equal("invalid_path", response.ErrorCode);
+    }
+
+    [Fact]
+    public void ControlExpiredEventFiresOutsideGatewayLock()
+    {
+        var clock = new TestClock { Now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) };
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true), clock, TimeSpan.FromMinutes(1));
+        var oldHandle = gateway.GrantSession("tab", "Demo", new TestSession(), null, new CountingTerminal(), allowControl: true);
+        (string Key, string Handle)? notification = null;
+        string? replacementHandle = null;
+        gateway.ControlExpired += (key, _) =>
+        {
+            replacementHandle = Task.Run(async () =>
+            {
+                await gateway.RevokeAsync(key);
+                return gateway.GrantSession(key, "Demo", new TestSession(), null, new CountingTerminal(), allowControl: true);
+            }).WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        };
+        gateway.ControlExpired += (key, handle) => notification = (key, handle);
+
+        clock.Now = clock.Now.AddMinutes(2);
+        var mode = gateway.GetMode("tab");
+
+        Assert.Equal(("tab", oldHandle), notification);
+        Assert.Equal(AgentAccessMode.Observe, mode);
+        Assert.NotNull(replacementHandle);
+        Assert.NotEqual(oldHandle, replacementHandle);
+        Assert.Equal(AgentAccessMode.Control, gateway.GetMode("tab"));
+    }
+
+    [Fact]
+    public async Task FileMutationIoFailureReturnsWriteFailed()
+    {
+        var gateway = new AgentGateway((_, _) => Task.FromResult(true));
+        var session = new TestSession { FileSystem = new FailingMutationFiles() };
+        var handle = gateway.GrantSession("tab", "Demo", session, null, new CountingTerminal(), allowControl: true,
+            target: new AgentSessionTarget(session.SessionId, "server.test", 22, "alice"));
+
+        var mkdir = await gateway.ExecuteAsync(new("files.mkdir", handle, "/newdir"), default);
+
+        Assert.False(mkdir.Success);
+        Assert.Equal("write_failed", mkdir.ErrorCode);
+    }
+
+    [Fact]
+    public async Task TruncatedUtf8AtEndOfFileThrowsDecoderFallback()
+    {
+        await using var stream = new MemoryStream([(byte)'A', 0xE4, 0xBD]);
+        await Assert.ThrowsAsync<DecoderFallbackException>(() => AgentFilePage.ReadAsync(stream, 0, 64, default));
+    }
+
+    [Fact]
+    public void InputReplayCacheRefreshDoesNotGetEvictedByStaleQueueEntry()
+    {
+        var cache = new InputReplayCache(maximumEntries: 2, maximumBytes: 1024 * 1024);
+        var ok = AgentResponse.Ok(new { status = "input_sent" });
+
+        cache.Remember("a", "f1", ok);
+        cache.Remember("b", "f2", ok);
+        cache.Remember("a", "f1-updated", ok);
+        cache.Remember("c", "f3", ok);
+
+        Assert.Equal(2, cache.Count);
+        Assert.True(cache.TryGetValue("a", out var refreshed));
+        Assert.Equal("f1-updated", refreshed.Fingerprint);
+        Assert.False(cache.TryGetValue("b", out _));
+        Assert.True(cache.TryGetValue("c", out _));
+    }
+
+    private sealed class FailingMutationFiles : IRemoteFileSystem
+    {
+        public bool SupportsPermissions => false;
+        public Task<string> GetHomeDirectoryAsync(CancellationToken ct) => throw new NotSupportedException();
+        public Task<string> GetCurrentDirectoryAsync(CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string path, CancellationToken ct) => throw new IOException("read err");
+        public Task<RemoteFileEntry> StatAsync(string path, CancellationToken ct) => throw new IOException("stat err");
+        public Task<Stream> OpenReadAsync(string path, CancellationToken ct) => throw new IOException("read err");
+        public Task<Stream> OpenWriteAsync(string path, long? size, IProgress<TransferProgress>? progress, CancellationToken ct) => throw new IOException("write err");
+        public Task CreateDirectoryAsync(string path, CancellationToken ct) => throw new IOException("mkdir err");
+        public Task DeleteAsync(string path, bool recursive, CancellationToken ct) => throw new IOException("delete err");
+        public Task RenameAsync(string source, string destination, CancellationToken ct) => throw new IOException("rename err");
+        public Task SetPermissionsAsync(string path, int mode, CancellationToken ct) => throw new IOException("chmod err");
+    }
+
     internal sealed class TestSession : IProtocolSession
     {
         public string SessionId { get; } = Guid.NewGuid().ToString();

@@ -163,7 +163,7 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
             entryPath = "/";
         }
 
-        var name = entryPath[(entryPath.LastIndexOf('/') + 1)..];
+        var name = entryPath == "/" ? "/" : entryPath[(entryPath.LastIndexOf('/') + 1)..];
         // A final "." or ".." must be interpreted by the server; keep the listing-based
         // spelling that delete and rename already rely on for those paths.
         if (SftpNoFollow.IsAvailable && name is not ("." or ".."))
@@ -296,12 +296,17 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
 
         try
         {
-            // Resolve the source through its parent listing so a final symlink is
-            // renamed rather than its target. RenameFileAsync would canonicalize both
-            // paths first. MoveTo sends the raw FullName with SSH_FXP_RENAME and then
-            // issues a post-rename REALPATH of the destination only to refresh its name.
-            var entry = await GetEntryNoFollowAsync(client, sourceFullPath, cancellationToken).ConfigureAwait(false);
-            await Task.Run(() => entry.MoveTo(destinationFullPath), cancellationToken).ConfigureAwait(false);
+            if (SftpNoFollow.CanRename(overwrite: false))
+            {
+                await SftpNoFollow.RenameAsync(client, sourceFullPath, destinationFullPath, overwrite: false, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                // Fallback when the private session accessor is unavailable: resolve via parent
+                // listing so a final symlink is renamed rather than its target.
+                var entry = await GetEntryNoFollowAsync(client, sourceFullPath, cancellationToken).ConfigureAwait(false);
+                await Task.Run(() => entry.MoveTo(destinationFullPath), cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -421,11 +426,21 @@ public sealed class SftpFileSystem : IRemoteFileSystem, IAsyncDisposable
     {
         using var budget = _factory.CreateConnectBudget(cancellationToken);
         var connectionInfo = _factory.CreateConnectionInfo(budget.Token, budget);
-        var verifier = _factory.CreateVerifier(budget.Token, budget);
-        var client = new SftpClient(connectionInfo)
+        HostKeyVerifier verifier;
+        SftpClient client;
+        try
         {
-            OperationTimeout = SftpOperationTimeout,
-        };
+            verifier = _factory.CreateVerifier(budget.Token, budget);
+            client = new SftpClient(connectionInfo)
+            {
+                OperationTimeout = SftpOperationTimeout,
+            };
+        }
+        catch
+        {
+            SshConnectionFactory.DisposeAuthenticationMethods(connectionInfo.AuthenticationMethods);
+            throw;
+        }
 
         if (_factory.KeepAliveInterval > TimeSpan.Zero)
         {

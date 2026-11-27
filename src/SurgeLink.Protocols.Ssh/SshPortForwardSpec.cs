@@ -45,7 +45,7 @@ public sealed record SshPortForwardSpec(
     public static SshPortForwardSpec ParseSingle(string entry)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(entry);
-        var parts = entry.Split(':', StringSplitOptions.TrimEntries);
+        var parts = SplitOutsideBrackets(entry);
         if (parts.Length < 2)
         {
             throw new ProtocolException($"Invalid port forwarding specification '{entry}'.", ProtocolFailureKind.Configuration);
@@ -65,7 +65,7 @@ public sealed record SshPortForwardSpec(
                 }
                 if (parts.Length == 5)
                 {
-                    var bindHost = string.IsNullOrEmpty(parts[1]) ? "127.0.0.1" : parts[1];
+                    var bindHost = NormalizeBindHost(parts[1], entry);
                     var bindPort = ParsePort(parts[2], entry);
                     var targetHost = RequireHost(parts[3], entry);
                     var targetPort = ParsePort(parts[4], entry);
@@ -80,7 +80,7 @@ public sealed record SshPortForwardSpec(
                 }
                 if (parts.Length == 3)
                 {
-                    var bindHost = string.IsNullOrEmpty(parts[1]) ? "127.0.0.1" : parts[1];
+                    var bindHost = NormalizeBindHost(parts[1], entry);
                     return new SshPortForwardSpec(SshPortForwardKind.Dynamic, bindHost, ParsePort(parts[2], entry), null, 0);
                 }
                 throw new ProtocolException($"Invalid D port forwarding specification '{entry}'.", ProtocolFailureKind.Configuration);
@@ -88,6 +88,53 @@ public sealed record SshPortForwardSpec(
             default:
                 throw new ProtocolException($"Unsupported port forwarding type '{parts[0]}' in '{entry}'. Use L, R, or D.", ProtocolFailureKind.Configuration);
         }
+    }
+
+    private static string[] SplitOutsideBrackets(string entry)
+    {
+        var parts = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < entry.Length; i++)
+        {
+            switch (entry[i])
+            {
+                case '[':
+                    depth++;
+                    break;
+                case ']':
+                    if (depth == 0)
+                        throw new ProtocolException($"Invalid port forwarding specification '{entry}'.", ProtocolFailureKind.Configuration);
+                    depth--;
+                    break;
+                case ':' when depth == 0:
+                    parts.Add(entry[start..i].Trim());
+                    start = i + 1;
+                    break;
+            }
+        }
+        if (depth != 0)
+            throw new ProtocolException($"Invalid port forwarding specification '{entry}'.", ProtocolFailureKind.Configuration);
+        parts.Add(entry[start..].Trim());
+        return parts.ToArray();
+    }
+
+    private static string NormalizeBindHost(string token, string entry)
+    {
+        if (string.IsNullOrEmpty(token)) return "127.0.0.1";
+        if (token == "*") return "0.0.0.0";
+        return StripBrackets(token, entry);
+    }
+
+    private static string StripBrackets(string host, string entry)
+    {
+        if (host.StartsWith('[') || host.EndsWith(']'))
+        {
+            if (host.Length <= 2 || !host.StartsWith('[') || !host.EndsWith(']'))
+                throw new ProtocolException($"Invalid bracketed host '{host}' in '{entry}'.", ProtocolFailureKind.Configuration);
+            return host[1..^1].Trim();
+        }
+        return host;
     }
 
     private static uint ParsePort(string text, string entry)
@@ -101,11 +148,12 @@ public sealed record SshPortForwardSpec(
 
     private static string RequireHost(string host, string entry)
     {
-        if (string.IsNullOrWhiteSpace(host))
+        var normalized = StripBrackets(host, entry);
+        if (string.IsNullOrWhiteSpace(normalized))
         {
             throw new ProtocolException($"Missing target host in '{entry}'.", ProtocolFailureKind.Configuration);
         }
-        return host;
+        return normalized;
     }
 }
 

@@ -146,7 +146,9 @@ public sealed class WorkspaceStore
     private readonly IAppSettingsStore? _settings;
     private readonly object _gate = new();
     private readonly Dictionary<Guid, (TaskCompletionSource Completion, bool KeepTab)> _closing = new();
+    private readonly HashSet<Guid> _reconnecting = new();
     private readonly object _profileGate = new();
+    private int _connectingCount;
     private WorkspaceSnapshot _snapshot = WorkspaceSnapshot.Empty;
 
     /// <summary>Creates the store and loads saved profiles.</summary>
@@ -194,7 +196,7 @@ public sealed class WorkspaceStore
         CancellationToken cancellationToken,
         WorkspaceTab? reconnecting = null)
     {
-        Update(s => s with { IsConnecting = true }, force: true);
+        Update(s => { _connectingCount++; return s with { IsConnecting = true }; }, force: true);
         IProtocolSession? session = null;
         TerminalBridge? terminal = null;
         WorkspaceTab? openingTab = null;
@@ -273,7 +275,7 @@ public sealed class WorkspaceStore
         }
         finally
         {
-            Update(s => s with { IsConnecting = false }, force: true);
+            Update(s => { _connectingCount = Math.Max(0, _connectingCount - 1); return s with { IsConnecting = _connectingCount > 0 }; }, force: true);
         }
     }
 
@@ -380,12 +382,23 @@ public sealed class WorkspaceStore
     /// </summary>
     public async Task ReconnectAsync(Guid tabId, ConnectOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var tab = Snapshot.Tabs.FirstOrDefault(item => item.Id == tabId);
-        if (tab is null || tab.IsClosing) { return; }
-        var profile = GetReconnectProfile(tabId);
-        if (profile is null) { return; }
-        cancellationToken.ThrowIfCancellationRequested();
-        await OpenCoreAsync(profile, options, cancellationToken, reconnecting: tab);
+        WorkspaceTab? tab;
+        lock (_gate)
+        {
+            tab = _snapshot.Tabs.FirstOrDefault(item => item.Id == tabId);
+            if (tab is null || tab.IsClosing || !_reconnecting.Add(tabId)) { return; }
+        }
+        try
+        {
+            var profile = GetReconnectProfile(tabId);
+            if (profile is null) { return; }
+            cancellationToken.ThrowIfCancellationRequested();
+            await OpenCoreAsync(profile, options, cancellationToken, reconnecting: tab);
+        }
+        finally
+        {
+            lock (_gate) { _reconnecting.Remove(tabId); }
+        }
     }
 
     /// <summary>Replaces only the exited shell, retaining the connection, files, monitor and transfers.</summary>
@@ -651,11 +664,16 @@ public sealed class WorkspaceStore
 
     private void OnTerminalClosed(WorkspaceTab tab, TerminalBridge terminal)
     {
-        if (tab.IsClosing || tab.State != ConnectionState.Connected
-            || !Snapshot.Tabs.Contains(tab) || !ReferenceEquals(tab.Terminal, terminal)) { return; }
-        // TerminalBridge dispatches Closed to the UI thread, so state can be updated directly.
-        tab.Message = "Remote shell exited.";
-        Update(s => s, force: true);
+        void Apply()
+        {
+            if (tab.IsClosing || tab.State != ConnectionState.Connected
+                || !Snapshot.Tabs.Contains(tab) || !ReferenceEquals(tab.Terminal, terminal)) { return; }
+            tab.Message = "Remote shell exited.";
+            Update(s => s, force: true);
+        }
+
+        if (_dispatcher.IsOnUiThread) { Apply(); }
+        else { _dispatcher.Post(Apply); }
     }
 
     private void Update(Func<WorkspaceSnapshot, WorkspaceSnapshot> mutate, bool force = false)

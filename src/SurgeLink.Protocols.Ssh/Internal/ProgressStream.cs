@@ -17,7 +17,7 @@ internal sealed class ProgressStream : Stream
     private readonly bool _leaveOpen;
     private long _written;
     private long _lastReported;
-    private bool _disposed;
+    private int _disposed;
 
     /// <summary>Wraps <paramref name="inner"/> and reports progress to <paramref name="progress"/>.</summary>
     public ProgressStream(Stream inner, long? totalBytes, string path, IProgress<TransferProgress>? progress, bool leaveOpen)
@@ -37,7 +37,7 @@ internal sealed class ProgressStream : Stream
     public override bool CanSeek => false;
 
     /// <inheritdoc />
-    public override bool CanWrite => !_disposed && _inner.CanWrite;
+    public override bool CanWrite => Volatile.Read(ref _disposed) == 0 && _inner.CanWrite;
 
     /// <inheritdoc />
     public override long Length => _inner.Length;
@@ -96,13 +96,12 @@ internal sealed class ProgressStream : Stream
     /// <inheritdoc />
     protected override void Dispose(bool disposing)
     {
-        if (!disposing || _disposed)
+        if (!disposing || Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             base.Dispose(disposing);
             return;
         }
 
-        _disposed = true;
         try
         {
             ReportFinal();
@@ -115,6 +114,30 @@ internal sealed class ProgressStream : Stream
             }
 
             base.Dispose(disposing);
+        }
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            ReportFinal();
+        }
+        finally
+        {
+            if (!_leaveOpen)
+            {
+                await _inner.DisposeAsync().ConfigureAwait(false);
+            }
+
+            await base.DisposeAsync().ConfigureAwait(false);
+            GC.SuppressFinalize(this);
         }
     }
 

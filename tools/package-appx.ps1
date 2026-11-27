@@ -1,15 +1,19 @@
 param(
     [ValidatePattern('^\d+\.\d+\.\d+(\.\d+)?$')]
-    [string]$Version = '1.0.2',
+    [string]$Version,
     [ValidateSet('x64', 'arm64')]
     [string]$Architecture = 'x64',
     [switch]$SkipPublish
 )
 
 $ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path $PSScriptRoot -Parent
+if (!$Version) {
+    [xml]$properties = Get-Content -LiteralPath (Join-Path $repoRoot 'Directory.Build.props') -Raw
+    $Version = @($properties.Project.PropertyGroup.Version | Where-Object { $_ })[0]
+}
 $parsedVersion = [version]$Version
 $packageVersion = if ($parsedVersion.Revision -lt 0) { "$Version.0" } else { $Version }
-$repoRoot = Split-Path $PSScriptRoot -Parent
 $appxRoot = Join-Path $repoRoot 'artifacts/appx'
 $outputRoot = if ($Architecture -eq 'x64') { $appxRoot } else { Join-Path $appxRoot $Architecture }
 $payload = Join-Path $outputRoot 'payload'
@@ -133,11 +137,12 @@ finally { $source.Dispose() }
 
 $makePri = Join-Path $sdk.Directory.FullName 'makepri.exe'
 $priInputs = Join-Path $outputRoot 'pri-inputs.resfiles'
-Get-ChildItem $payload -Filter '*.pri' | Where-Object Name -ne 'resources.pri' |
-    ForEach-Object FullName | Set-Content $priInputs
+$utf8NoBom = [Text.UTF8Encoding]::new($false)
+$priLines = @(Get-ChildItem $payload -Filter '*.pri' | Where-Object Name -ne 'resources.pri' | ForEach-Object FullName)
+[IO.File]::WriteAllLines($priInputs, [string[]]$priLines, $utf8NoBom)
 $priConfig = Join-Path $outputRoot 'priconfig.xml'
 $escapedRoot = [Security.SecurityElement]::Escape($outputRoot)
-@"
+$priConfigXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <resources targetOsVersion="10.0.0" majorVersion="1">
   <index root="$escapedRoot" startIndexAt="pri-inputs.resfiles">
@@ -146,7 +151,8 @@ $escapedRoot = [Security.SecurityElement]::Escape($outputRoot)
     <indexer-config type="RESFILES" qualifierDelimiter="." />
   </index>
 </resources>
-"@ | Set-Content $priConfig
+"@
+[IO.File]::WriteAllText($priConfig, $priConfigXml, $utf8NoBom)
 # Packaged MRT lookup requires resources.pri with the package identity. Merely
 # copying Reactor.pri and WinUI's standalone PRIs works only when unpackaged.
 & $makePri new /pr $payload /cf $priConfig /mn (Join-Path $payload 'AppxManifest.xml') `
@@ -192,7 +198,7 @@ finally {
 }
 
 $hash = Get-FileHash -LiteralPath $package -Algorithm SHA256
-"$($hash.Hash)  $([IO.Path]::GetFileName($package))" | Set-Content (Join-Path $outputRoot 'SHA256.txt')
+"$($hash.Hash)  $([IO.Path]::GetFileName($package))" | Set-Content (Join-Path $outputRoot 'SHA256.txt') -Encoding ascii
 Get-Item -LiteralPath $package | Select-Object FullName, Length
 
 $distribution = Join-Path $outputRoot "SurgeLink_$($Version)_$Architecture"
@@ -204,7 +210,7 @@ finally { $publicCertificate.Dispose() }
 $installer = Get-Content (Join-Path $repoRoot 'packaging/Install.ps1.template') -Raw
 $installer = $installer.Replace('__PACKAGE_NAME__', [IO.Path]::GetFileName($package)).Replace('__PACKAGE_HASH__', $hash.Hash).Replace('__CERT_THUMBPRINT__', $thumbprint)
 $installerPath = Join-Path $distribution 'Install.ps1'
-$installer | Set-Content -LiteralPath $installerPath -Encoding utf8BOM
+[IO.File]::WriteAllText($installerPath, $installer, [Text.UTF8Encoding]::new($true))
 $distributionPackage = Join-Path $distribution ([IO.Path]::GetFileName($package))
 $distributionCertificate = Join-Path $distribution 'SurgeLink-Development.cer'
 Copy-Item -LiteralPath $package -Destination $distributionPackage -Force

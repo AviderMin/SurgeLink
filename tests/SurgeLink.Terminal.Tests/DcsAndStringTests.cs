@@ -14,7 +14,14 @@ public sealed class DcsAndStringTests
         Assert.Empty(responses);
         terminal.Feed("\\X");
 
-        Assert.Equal("\u001bP1+r524742=38;5463=31;544E=787465726D2D646972656374;436F=323536\u001b\\", Assert.Single(responses));
+        Assert.Equal(
+            [
+                "\u001bP1+r524742=38\u001b\\",
+                "\u001bP1+r5463=31\u001b\\",
+                "\u001bP1+r544E=787465726D2D646972656374\u001b\\",
+                "\u001bP1+r436F=323536\u001b\\",
+            ],
+            responses);
         Assert.Equal("X", terminal.Line(0));
     }
 
@@ -27,7 +34,12 @@ public sealed class DcsAndStringTests
         terminal.Feed("\u001bP+qFFFF;524742\u001b\\");
         terminal.Feed("\u001bP+q524742\u0018");
         terminal.Feed("\u001bP+q" + new string('0', 300) + "\u001b\\");
-        Assert.Equal("\u001bP0+r\u001b\\", Assert.Single(responses));
+        Assert.Equal(
+            [
+                "\u001bP0+rFFFF\u001b\\",
+                "\u001bP1+r524742=38\u001b\\",
+            ],
+            responses);
     }
 
     [Fact]

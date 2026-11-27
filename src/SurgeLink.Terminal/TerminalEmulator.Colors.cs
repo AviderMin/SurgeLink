@@ -135,23 +135,34 @@ public sealed partial class TerminalEmulator
     internal void HandleDcs(ReadOnlySpan<byte> payload)
     {
         if (!payload.StartsWith("+q"u8)) { return; }
-        var reply = new StringBuilder();
+        var count = 0;
         foreach (var rawName in Encoding.ASCII.GetString(payload[2..]).Split(';'))
         {
+            if (rawName.Length == 0 || (rawName.Length & 1) != 0 || !IsAsciiHex(rawName)) { continue; }
+            if (count++ >= MaxPaletteQueries) { break; }
             var name = rawName.ToUpperInvariant();
             var value = name switch
             {
-                "524742" => "8",                 // RGB
-                "5463" => "1",                   // Tc
+                "524742" => "8",                      // RGB
+                "5463" => "1",                        // Tc
                 "544E" or "6E616D65" => TerminalType, // TN or name
-                "436F" or "636F6C6F7273" => "256", // Co or colors
+                "436F" or "636F6C6F7273" => "256",    // Co or colors
                 _ => null,
             };
-            if (value is null) { break; }
-            if (reply.Length != 0) { reply.Append(';'); }
-            reply.Append(name).Append('=').Append(Convert.ToHexString(Encoding.UTF8.GetBytes(value)));
+            QueueResponse(value is null
+                ? $"\x1bP0+r{name}\x1b\\"
+                : $"\x1bP1+r{name}={Convert.ToHexString(Encoding.UTF8.GetBytes(value))}\x1b\\");
         }
-        QueueResponse(reply.Length == 0 ? "\x1bP0+r\x1b\\" : $"\x1bP1+r{reply}\x1b\\");
+    }
+
+    private static bool IsAsciiHex(string text)
+    {
+        foreach (var ch in text)
+        {
+            if (!char.IsAsciiHexDigit(ch)) { return false; }
+        }
+
+        return true;
     }
 
     private static bool TryParseOscColor(string spec, out uint rgb)

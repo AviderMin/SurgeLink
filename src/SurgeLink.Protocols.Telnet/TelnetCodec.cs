@@ -207,6 +207,7 @@ internal sealed class TelnetCodec
     private static void ReplyEnvironment(ReadOnlySpan<byte> requests, List<byte> reply)
     {
         List<byte> payload = [EnvironIs];
+        var colorTermAdded = false;
         if (requests.IsEmpty) { AddColorTerm(); }
         for (var i = 0; i < requests.Length;)
         {
@@ -232,7 +233,12 @@ internal sealed class TelnetCodec
         }
         SendSubnegotiation(NewEnviron, CollectionsMarshal.AsSpan(payload), reply);
 
-        void AddColorTerm() => payload.AddRange([UserVar, .. "COLORTERM"u8, Value, .. "truecolor"u8]);
+        void AddColorTerm()
+        {
+            if (colorTermAdded) { return; }
+            colorTermAdded = true;
+            payload.AddRange([UserVar, .. "COLORTERM"u8, Value, .. "truecolor"u8]);
+        }
     }
 
     private static void SendSubnegotiation(byte option, ReadOnlySpan<byte> payload, List<byte> reply)

@@ -17,11 +17,34 @@ public static class RemoteTextEdit
         {
             await RemoteFileAccess.RequireRegularFileAsync(fileSystem, path, token).ConfigureAwait(false);
             await using var input = await fileSystem.OpenReadAsync(path, token).ConfigureAwait(false);
-            var current = await BoundedTextFile.ReadDocumentAsync(input, maximumBytes, token).ConfigureAwait(false);
-            if (!string.Equals(current.Sha256, baseline.Sha256, StringComparison.Ordinal)) throw new RemoteFileConflictException();
+            var currentSha256 = await ComputeBoundedSha256Async(input, maximumBytes, token).ConfigureAwait(false);
+            if (!string.Equals(currentSha256, baseline.Sha256, StringComparison.Ordinal)) throw new RemoteFileConflictException();
         }
         await RemoteFileWrite.WriteAsync(fileSystem, path, bytes.Length, null, true,
             (output, token) => output.WriteAsync(bytes, token).AsTask(), ct, ValidateAsync).ConfigureAwait(false);
         return new(text, baseline.Encoding, Convert.ToHexString(SHA256.HashData(bytes)));
+    }
+
+    private static async Task<string?> ComputeBoundedSha256Async(Stream input, int maximumBytes, CancellationToken ct)
+    {
+        using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[Math.Min(16384, Math.Max(1, maximumBytes + 1))];
+        long total = 0;
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer, ct).ConfigureAwait(false);
+            if (read == 0)
+            {
+                return Convert.ToHexString(hasher.GetHashAndReset());
+            }
+
+            total += read;
+            if (total > maximumBytes)
+            {
+                return null;
+            }
+
+            hasher.AppendData(buffer, 0, read);
+        }
     }
 }

@@ -17,7 +17,7 @@ internal sealed class TerminalSurfaceAutomationPeer : FrameworkElementAutomation
     {
     }
 
-    private string VisibleText => ((TerminalSurface)Owner).GetAccessibleText();
+    private string VisibleText => Owner is TerminalSurface surface ? surface.GetAccessibleText() : string.Empty;
 
     bool IValueProvider.IsReadOnly => true;
 
@@ -36,7 +36,7 @@ internal sealed class TerminalSurfaceAutomationPeer : FrameworkElementAutomation
     protected override string GetNameCore()
     {
         string text = VisibleText;
-        return string.IsNullOrEmpty(text) ? Str.T("terminal.label", "Terminal") : text;
+        return string.IsNullOrWhiteSpace(text) ? Str.T("terminal.label", "Terminal") : text;
     }
 
     /// <inheritdoc />

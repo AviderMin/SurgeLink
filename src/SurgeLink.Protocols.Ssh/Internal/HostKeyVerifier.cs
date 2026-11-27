@@ -1,8 +1,11 @@
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Renci.SshNet.Common;
 using SurgeLink.Core.Protocols;
 using SurgeLink.Core.Security;
-using System.Runtime.CompilerServices;
 
 namespace SurgeLink.Protocols.Ssh.Internal;
 
@@ -14,6 +17,7 @@ internal sealed class HostKeyVerifier
 {
     private readonly string _host;
     private readonly int _port;
+    private readonly string _endpoint;
     private readonly IHostKeyStore _store;
     private readonly Func<HostKeyChallenge, CancellationToken, Task<HostKeyDecision>>? _prompt;
     private readonly ILogger _logger;
@@ -32,8 +36,9 @@ internal sealed class HostKeyVerifier
         CancellationToken cancellationToken,
         StrongBox<string?>? sessionFingerprint = null)
     {
-        _host = host;
+        _host = NormalizeHost(host);
         _port = port;
+        _endpoint = FormatEndpoint(_host, port);
         _store = store;
         _prompt = prompt;
         _logger = logger;
@@ -42,7 +47,43 @@ internal sealed class HostKeyVerifier
     }
 
     /// <summary>Endpoint key used for storage and display.</summary>
-    public string Endpoint => string.Concat(_host, ":", _port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    public string Endpoint => _endpoint;
+
+    internal static string NormalizeHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = host.Trim();
+        if (trimmed.Length >= 2 && trimmed[0] == '[' && trimmed[^1] == ']')
+        {
+            trimmed = trimmed[1..^1].Trim();
+        }
+
+        if (IPAddress.TryParse(trimmed, out var ip))
+        {
+            if (ip.IsIPv4MappedToIPv6)
+            {
+                ip = ip.MapToIPv4();
+            }
+
+            return ip.ToString();
+        }
+
+        var withoutTrailingDot = trimmed.TrimEnd('.');
+        return (withoutTrailingDot.Length > 0 ? withoutTrailingDot : trimmed).ToLowerInvariant();
+    }
+
+    internal static string FormatEndpoint(string? host, int port)
+    {
+        var normalized = NormalizeHost(host);
+        var displayHost = IPAddress.TryParse(normalized, out var ip) && ip.AddressFamily == AddressFamily.InterNetworkV6
+            ? $"[{normalized}]"
+            : normalized;
+        return string.Concat(displayHost, ":", port.ToString(CultureInfo.InvariantCulture));
+    }
 
     /// <summary>Reason the last presented key was refused, or <c>null</c> when it was trusted.</summary>
     public string? RejectionReason

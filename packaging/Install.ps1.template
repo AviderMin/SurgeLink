@@ -52,8 +52,8 @@ try {
         }
     }
     if (!(Test-Path -LiteralPath $trustPath)) { throw 'The certificate is not trusted on this machine.' }
-    Add-AppxPackage -Path $packagePath -ErrorAction Stop
-    Write-Host 'SurgeLink installed successfully. Open SurgeLink from the Start menu.' -ForegroundColor Green
+    Add-AppxPackage -Path $packagePath -DeferRegistrationWhenPackagesAreInUse -ErrorAction Stop
+    Write-Host 'SurgeLink package accepted. If SurgeLink is running, close it to finish the update. Open SurgeLink from the Start menu.' -ForegroundColor Green
 }
 catch {
     Write-Error $_ -ErrorAction Continue

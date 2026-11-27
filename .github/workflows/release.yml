@@ -65,9 +65,10 @@ jobs:
         run: |
           $tag = ([string]$env:REQUESTED_VERSION).Trim()
           if ($env:GITHUB_REF_TYPE -eq 'tag') { $tag = $env:GITHUB_REF_NAME }
+          [xml]$props = Get-Content Directory.Build.props -Raw
+          $propsVersionRaw = [string]($props.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
           if ([string]::IsNullOrWhiteSpace($tag)) {
-            [xml]$props = Get-Content Directory.Build.props -Raw
-            $tag = [string]($props.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
+            $tag = $propsVersionRaw
           }
           $version = $tag -replace '^v', ''
           if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw 'Use a numeric version, optionally prefixed with v.' }
@@ -75,6 +76,9 @@ jobs:
           if (@($parsed.Major, $parsed.Minor, $parsed.Build, [Math]::Max(0, $parsed.Revision) | Where-Object { $_ -gt 65535 }).Count) { throw 'Version components must be <= 65535.' }
           if ($parsed.Major -eq 0 -and $parsed.Minor -eq 0 -and $parsed.Build -eq 0 -and $parsed.Revision -le 0) { throw 'Version must be greater than zero.' }
           $version = if ($parsed.Revision -lt 0) { "${parsed}.0" } else { $parsed.ToString() }
+          $propsParsed = [version]($propsVersionRaw.Trim() -replace '^v', '')
+          $propsVersion = if ($propsParsed.Revision -lt 0) { "${propsParsed}.0" } else { $propsParsed.ToString() }
+          if ($version -ne $propsVersion) { throw "Release version '$version' does not match Directory.Build.props version '$propsVersion'." }
           $sha = git rev-parse HEAD
           $existing = git rev-parse --verify "refs/tags/$tag^{commit}" 2>$null
           if ($LASTEXITCODE -eq 0 -and $existing -ne $sha) { throw 'The tag points to another commit. Run this workflow on that tag, or choose a new version.' }

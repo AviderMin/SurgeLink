@@ -135,5 +135,19 @@ public sealed class TelnetCodecTests
         Assert.Equal(new byte[] { 13, 0 }, codec.Receive([13, 0]).Data);
     }
 
+    [Fact]
+    public void NewEnvironEmitsColorTermAtMostOncePerReply()
+    {
+        var codec = new TelnetCodec(80, 24, "XTERM-DIRECT");
+        codec.Receive([255, 253, 39]);
+        var floodedRequest = new byte[] { 255, 250, 39, 1 }
+            .Concat(Enumerable.Repeat((byte)3, 100))
+            .Concat(new byte[] { 255, 240 })
+            .ToArray();
+
+        byte[] expect = [255, 250, 39, 0, 3, .. "COLORTERM"u8, 1, .. "truecolor"u8, 255, 240];
+        Assert.Equal(expect, codec.Receive(floodedRequest).Reply);
+    }
+
     private static TelnetCodec Create() => new(80, 24, "xterm-256color");
 }
